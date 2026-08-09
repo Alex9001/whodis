@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            binary: whodis
+          - goos: linux
+            goarch: arm64
+            binary: whodis
+          - goos: darwin
+            goarch: amd64
+            binary: whodis
+          - goos: darwin
+            goarch: arm64
+            binary: whodis
+          - goos: windows
+            goarch: amd64
+            binary: whodis.exe
+          - goos: windows
+            goarch: arm64
+            binary: whodis.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -trimpath -ldflags "-s -w -X main.version=${{ github.sha }}" -o "dist/${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.binary }}" ./cmd/whodis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whodis-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
