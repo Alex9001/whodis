@@ -1,0 +1,15 @@
+pkgbase = whodis
+	pkgdesc = Modern WHOIS alternative with automatic RDAP routing and structured output
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/Alex9001/whodis
+	arch = x86_64
+	license = MIT
+	makedepends = git
+	makedepends = go
+	depends = glibc
+	options = !lto
+	source = whodis_0.1.0_source.tar.gz::https://github.com/Alex9001/whodis/releases/download/v0.1.0/whodis_0.1.0_source.tar.gz
+	sha256sums = 04c41acac76a57d572b077645b72c8f76d6dc7a3073411cb99e9bdeaf9f45c1d
+
+pkgname = whodis

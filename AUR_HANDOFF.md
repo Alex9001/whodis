@@ -1,9 +1,10 @@
 # AUR publication handoff
 
-The `whodis` source package is ready to finish after GitHub release `v0.1.0`
-exists. An AUR account and its registered SSH key are required for the first
-push, so no concrete `PKGBUILD` or `.SRCINFO` is checked in yet. Do not publish
-the template with unresolved `@PKGVER@` or `@SHA256@` placeholders.
+The concrete `whodis` 0.1.0 source package is ready in `packaging/aur/` and has
+been built and checked against the published GitHub source archive. An AUR
+account and its registered SSH key are the only missing pieces for the first
+push. Copy `PKGBUILD`, `.SRCINFO`, and `LICENSE`; do not publish the `.in`
+templates with unresolved placeholders.
 
 The application is MIT-licensed. The separate `packaging/aur/LICENSE` applies
 0BSD only to the AUR packaging files, as recommended by the
@@ -15,6 +16,7 @@ The application is MIT-licensed. The separate `packaging/aur/LICENSE` applies
 - Maintainer: `Aleksandr Oreshkin <alex@cyberbrand.net>`
 - Upstream: `https://github.com/Alex9001/whodis`
 - Initial version: `0.1.0-1`
+- Released source SHA-256: `04c41acac76a57d572b077645b72c8f76d6dc7a3073411cb99e9bdeaf9f45c1d`
 - Architecture: `x86_64`
 - Installed binary: `/usr/bin/whodis`
 - Installed application license: `/usr/share/licenses/whodis/LICENSE`
@@ -83,20 +85,13 @@ deleting or overwriting it.
 ```bash
 git clone -c core.sshCommand='ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes' \
   ssh://aur@aur.archlinux.org/whodis.git ../whodis-aur
-
-whodis_aur_archive="$(mktemp)"
-curl --fail --location --proto '=https' --tlsv1.2 \
-  https://github.com/Alex9001/whodis/releases/download/v0.1.0/whodis_0.1.0_source.tar.gz \
-  --output "$whodis_aur_archive"
-whodis_aur_sha256="$(sha256sum "$whodis_aur_archive" | awk '{print $1}')"
-rm -f "$whodis_aur_archive"
-
-scripts/render-aur.sh 0.1.0 "$whodis_aur_sha256" ../whodis-aur
+cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO packaging/aur/LICENSE \
+  ../whodis-aur/
 
 (
   cd ../whodis-aur
   makepkg --verifysource
-  makepkg --printsrcinfo > .SRCINFO
+  makepkg --printsrcinfo | diff -u .SRCINFO -
   makepkg --cleanbuild --syncdeps
   namcap PKGBUILD
   namcap whodis-0.1.0-1-*.pkg.tar.zst
