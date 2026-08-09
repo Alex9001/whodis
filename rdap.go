@@ -74,7 +74,7 @@ func (a rdapAdapter) fetch(ctx context.Context, endpoint string) (rdapRecord, So
 		return rdapRecord{}, Source{}, lookupError(ErrorUnavailable, "could not prepare RDAP request", err)
 	}
 	req.Header.Set("Accept", "application/rdap+json, application/json;q=0.9")
-	req.Header.Set("User-Agent", "whodis/0.1 (+https://github.com/whodis/whodis)")
+	req.Header.Set("User-Agent", "whodis/0.1 (+https://github.com/Alex9001/whodis)")
 	client := &http.Client{
 		Timeout: a.client.timeout,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {

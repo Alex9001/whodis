@@ -8,10 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
-	"whodis"
+	"github.com/Alex9001/whodis"
 
 	"gopkg.in/yaml.v3"
 )
@@ -48,7 +49,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if options.showVersion {
-		fmt.Fprintln(stdout, "whodis", version)
+		fmt.Fprintln(stdout, "whodis", resolvedVersion())
 		return 0
 	}
 	if options.target == "" {
@@ -89,6 +90,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func resolvedVersion() string {
+	buildInfo, ok := debug.ReadBuildInfo()
+	return resolveVersion(version, buildInfo, ok)
+}
+
+func resolveVersion(injected string, buildInfo *debug.BuildInfo, buildInfoOK bool) string {
+	if injected = normalizeVersion(injected); isReleaseVersion(injected) {
+		return injected
+	}
+	if buildInfoOK && buildInfo != nil {
+		if moduleVersion := normalizeVersion(buildInfo.Main.Version); isReleaseVersion(moduleVersion) {
+			return moduleVersion
+		}
+	}
+	return "dev"
+}
+
+func normalizeVersion(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 1 && value[0] == 'v' && value[1] >= '0' && value[1] <= '9' {
+		return value[1:]
+	}
+	return value
+}
+
+func isReleaseVersion(value string) bool {
+	return value != "" && value != "dev" && value != "(devel)"
 }
 
 func parseArgs(args []string) (cliOptions, error) {

@@ -1,20 +1,113 @@
 # whodis
 
-`whodis` is a cross-platform registration-data client for domains, IP address ranges, and autonomous system numbers. It selects the authoritative protocol before it queries: RDAP when IANA's bootstrap registry lists an RDAP authority, and port-43 WHOIS when it does not.
+[![CI](https://github.com/Alex9001/whodis/actions/workflows/ci.yml/badge.svg)](https://github.com/Alex9001/whodis/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Alex9001/whodis?display_name=tag)](https://github.com/Alex9001/whodis/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-It is CLI-first. The Go lookup package has no terminal dependency, so a future Wails desktop application can use the same routing, transport, and normalized result model.
+**A modern WHOIS alternative that automatically uses RDAP where traditional WHOIS falls short.**
+
+The registry world is split between old-school WHOIS and modern RDAP. `whodis` hides that split: give it a domain, IP address, network, or ASN and it finds the right service automatically. No protocol trivia required.
+
+Instead of dumping a wall of registry text, it organizes the answer into a spreadsheet-like terminal grid.
+
+```text
+$ whodis google.com
+WHODIS · DOMAIN LOOKUP
+┌──────────────────┬──────────────────────┬────────────────────────────────────┐
+│ SECTION          │ FIELD                │ VALUE                              │
+├──────────────────┼──────────────────────┼────────────────────────────────────┤
+│ Lookup           │ Query                │ google.com                         │
+├──────────────────┼──────────────────────┼────────────────────────────────────┤
+│                  │ Protocol             │ rdap                               │
+├──────────────────┼──────────────────────┼────────────────────────────────────┤
+│ Registration     │ Name                 │ GOOGLE.COM                         │
+├──────────────────┼──────────────────────┼────────────────────────────────────┤
+│                  │ Registrar            │ MarkMonitor Inc.                   │
+├──────────────────┼──────────────────────┼────────────────────────────────────┤
+│ Nameservers      │ Nameserver           │ NS1.GOOGLE.COM                     │
+└──────────────────┴──────────────────────┴────────────────────────────────────┘
+```
+
+## What you get
+
+- **Automatic protocol selection** — RDAP for registries that support it, WHOIS where it is still needed.
+- **Readable terminal output** — the default grid groups registration details, dates, nameservers, contacts, notices, and source information.
+- **Script-friendly formats** — output plain text, JSON, YAML, Markdown, or the raw registry response.
+- **Direct file export** — use `--output result.json` and Whodis infers the format from the extension.
+- **More than domains** — look up IPv4, IPv6, CIDR networks, and autonomous system numbers such as `AS15169`.
+- **Cross-platform builds** — the same CLI is designed for Linux, macOS, and Windows.
+
+## Install
+
+### Linux and macOS
+
+```bash
+curl -fsSL https://github.com/Alex9001/whodis/releases/latest/download/install.sh | sh
+```
+
+The installer detects your operating system and CPU, verifies the release
+checksum, and places `whodis` in `/usr/local/bin`. It asks for `sudo` only if
+that directory is not writable.
+
+### Windows
+
+Run in PowerShell—no administrator window is required:
+
+```powershell
+irm https://github.com/Alex9001/whodis/releases/latest/download/install.ps1 | iex
+```
+
+The installer puts Whodis under your local application-data directory and adds
+it to your user `PATH` without creating duplicate entries.
+
+### With Go
+
+If you already have Go installed:
+
+```bash
+go install github.com/Alex9001/whodis/cmd/whodis@latest
+```
+
+Go installs the binary into `GOBIN` (normally `~/go/bin`). Make sure that
+directory is on `PATH`.
+
+Prebuilt archives for every supported platform and `checksums.txt` are also
+available on the [latest GitHub Release](https://github.com/Alex9001/whodis/releases/latest).
+
+The source-built AUR package is prepared but cannot be submitted until the
+maintainer's AUR account is registered. The exact one-time publication steps
+are preserved in [AUR_HANDOFF.md](AUR_HANDOFF.md); after publication Arch users
+will be able to install it with `yay -S whodis` or `paru -S whodis`.
 
 ## Quick start
 
-```bash
-go build -o bin/whodis ./cmd/whodis
+Once installed, use it from any directory:
 
-bin/whodis example.com
-bin/whodis 8.8.8.8 --format json
-bin/whodis AS15169 --output google-asn.yaml
+```bash
+whodis google.com
 ```
 
-The terminal default is a styled, spreadsheet-like grid with `Section`, `Field`, and `Value` columns. Use `--format plain` for unstyled text, or choose `json`, `yaml`, `markdown`, or `raw`.
+## Common examples
+
+```bash
+# Domains use RDAP or WHOIS automatically
+whodis example.com
+
+# IP addresses and ASNs work the same way
+whodis 8.8.8.8
+whodis AS15169
+
+# Print machine-readable data
+whodis example.com --format json
+
+# Export to a file; .yaml selects YAML automatically
+whodis AS15169 --output google-asn.yaml
+
+# Get clean, unstyled terminal text
+whodis example.com --format plain
+```
+
+## Command-line options
 
 ```text
 whodis <target> [options]
@@ -28,44 +121,53 @@ whodis <target> [options]
     --refresh-bootstrap
     --color auto|always|never
     --force
+-h, --help
+    --version
 ```
 
-When `--format` is omitted with `--output`, Whodis infers JSON, YAML, Markdown, or plain text from the file extension. Existing output files are protected until `--force` is supplied.
+When `--format` is omitted with `--output`, Whodis infers JSON, YAML, Markdown, or plain text from the filename. Existing files are protected unless `--force` is supplied.
 
-## Routing behavior
+## How protocol selection works
 
-Whodis fetches and caches IANA's `dns.json`, `ipv4.json`, `ipv6.json`, and `asn.json` RDAP bootstrap registries, respecting HTTP cache headers. Domain routes use the longest matching registry suffix; IP routes use longest CIDR prefixes; ASN routes use IANA's number ranges. HTTPS RDAP service URLs are preferred, and secondary listed URLs are tried before any protocol fallback.
+Whodis fetches and caches IANA's RDAP bootstrap registries for domains, IPv4, IPv6, and ASNs. Domain routes use the longest matching registry suffix, IP routes use the longest matching network prefix, and ASN routes use IANA's number ranges. HTTPS endpoints are preferred, and secondary endpoints are tried before switching protocols.
 
-For a target without an RDAP mapping, Whodis asks `whois.iana.org` for the authoritative WHOIS referral and follows a bounded WHOIS referral chain. In automatic mode this means the first registration lookup already uses the protocol known for that target's authority.
+When IANA does not list an RDAP service for a target, Whodis asks `whois.iana.org` for the authoritative WHOIS server and follows a bounded referral chain. The first registration lookup therefore goes to the protocol known for that target instead of blindly trying services in sequence.
 
-`--fallback unavailable` is the default: it tries the alternate protocol only when the chosen service is unavailable or unusable. Authoritative not-found and rate-limit responses remain visible. Use `--fallback any-error` for diagnostic coverage, or `--fallback none` for a strict single-protocol lookup.
+The default `--fallback unavailable` mode tries the alternate protocol only when the selected service is unavailable or unusable. Authoritative not-found and rate-limit responses remain visible. Use `--fallback any-error` for wider diagnostic coverage or `--fallback none` for a strict single-protocol lookup.
 
-## Architecture and extension points
+## Go API and future interfaces
 
-The reusable API is centered on:
+The protocol engine is independent of terminal rendering. That keeps the same lookup and normalized result model reusable from a future Wails desktop interface or another Go application.
+
+The public API is centered on:
 
 ```go
+import "github.com/Alex9001/whodis"
+
 client := whodis.NewClient(whodis.ClientOptions{})
 route, err := client.Route(ctx, "example.com", whodis.LookupOptions{})
 result, err := client.Lookup(ctx, "example.com", whodis.LookupOptions{})
 ```
 
-`LookupResult` is a versioned normalized model containing the query, routing decision, public registration data, notices, and the registry sources used. Native RDAP JSON and raw WHOIS text remain available through `--format raw`.
+`LookupResult` is a versioned model containing the query, routing decision, normalized registration data, notices, and registry sources. Native RDAP JSON and raw WHOIS text remain available through `--format raw`.
 
-Additional in-process protocols can implement `ProtocolAdapter`; this avoids Go's platform-specific dynamic plugin mechanism and remains portable to Windows, macOS, and Linux.
+Additional protocols can implement `ProtocolAdapter` without coupling them to the CLI or a particular operating system.
 
 ## Development
 
 ```bash
+git clone https://github.com/Alex9001/whodis.git
+cd whodis
 go test ./...
 go vet ./...
+go run ./cmd/whodis example.com
 ```
 
 Tests use local normalizer and renderer fixtures; public registries are not queried during the test suite. Live checks are intentionally manual because registry availability and query limits are external conditions.
 
-## Current scope
+## Current limitations
 
-V1 implements RDAP and standard port-43 WHOIS for domains, IPs/CIDRs, and ASNs. RWhois and other legacy or proprietary registration systems are intentionally deferred behind the protocol-adapter boundary. Desktop GUI, authenticated RDAP, web scraping, and mobile apps are also deferred.
+The current release implements RDAP and standard port-43 WHOIS. RWhois, proprietary registration APIs, authenticated RDAP, web scraping, desktop GUI, and mobile apps are not implemented yet.
 
 ## License
 

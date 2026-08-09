@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-aur:
+    name: Update AUR source package
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check for AUR credentials
+        id: aur
+        shell: bash
+        env:
+          AUR_KEY: ${{ secrets.AUR_KEY }}
+        run: |
+          if [[ -n "$AUR_KEY" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "AUR publishing skipped: no deploy key or this is a prerelease tag."
+          fi
+
+      - name: Checkout
+        if: steps.aur.outputs.enabled == 'true'
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download published source and checksums
+        if: steps.aur.outputs.enabled == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern checksums.txt \
+            --pattern 'whodis_*_source.tar.gz' \
+            --dir dist
+
+      - name: Publish AUR package
+        if: steps.aur.outputs.enabled == 'true'
+        shell: bash
+        env:
+          AUR_KEY: ${{ secrets.AUR_KEY }}
+        run: scripts/publish-aur.sh "$GITHUB_REF_NAME" dist/checksums.txt

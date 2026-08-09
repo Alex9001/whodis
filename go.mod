@@ -1,4 +1,4 @@
-module whodis
+module github.com/Alex9001/whodis
 
 go 1.24.0
 

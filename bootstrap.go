@@ -73,7 +73,7 @@ func (c *bootstrapCache) registry(ctx context.Context, kind bootstrapKind, refre
 	if err != nil {
 		return bootstrapRegistry{}, lookupError(ErrorUnavailable, "could not prepare IANA bootstrap request", err)
 	}
-	req.Header.Set("User-Agent", "whodis/0.1 (+https://github.com/whodis/whodis)")
+	req.Header.Set("User-Agent", "whodis/0.1 (+https://github.com/Alex9001/whodis)")
 	if haveEntry && entry.ETag != "" {
 		req.Header.Set("If-None-Match", entry.ETag)
 	}
