@@ -133,15 +133,12 @@ func renderPlain(result LookupResult) string {
 	if len(object.Status) > 0 {
 		line("Status", strings.Join(object.Status, ", "))
 	}
-	if len(object.Nameservers) > 0 {
-		line("Nameservers", strings.Join(object.Nameservers, ", "))
+	if nameservers := displayNameservers(result); len(nameservers) > 0 {
+		line("Nameservers", strings.Join(nameservers, ", "))
 	}
 	if result.DNS != nil {
 		line("DNS method", result.DNS.Method)
 		line("DNS complete", strconv.FormatBool(result.DNS.Complete))
-		if len(result.DNS.Nameservers) > 0 {
-			line("DNS nameservers", strings.Join(result.DNS.Nameservers, ", "))
-		}
 		for _, warning := range result.DNS.Warnings {
 			line("DNS warning", warning)
 		}
@@ -184,21 +181,15 @@ func renderMarkdown(result LookupResult) string {
 			fmt.Fprintf(&builder, "| %s | %s |\n", markdownCell(event.Action), markdownCell(event.Date))
 		}
 	}
-	if len(result.Object.Nameservers) > 0 {
+	if nameservers := displayNameservers(result); len(nameservers) > 0 {
 		builder.WriteString("\n## Nameservers\n\n")
-		for _, ns := range result.Object.Nameservers {
+		for _, ns := range nameservers {
 			fmt.Fprintf(&builder, "- `%s`\n", safeText(ns))
 		}
 	}
 	if result.DNS != nil {
 		builder.WriteString("\n## DNS records\n\n")
 		fmt.Fprintf(&builder, "Method: `%s`  \\nComplete zone transfer: `%t`\n", markdownCell(result.DNS.Method), result.DNS.Complete)
-		if len(result.DNS.Nameservers) > 0 {
-			builder.WriteString("\nAuthoritative nameservers:\n")
-			for _, nameserver := range result.DNS.Nameservers {
-				fmt.Fprintf(&builder, "- `%s`\n", safeText(nameserver))
-			}
-		}
 		if len(result.DNS.Warnings) > 0 {
 			builder.WriteString("\nWarnings:\n")
 			for _, warning := range result.DNS.Warnings {
@@ -213,6 +204,26 @@ func renderMarkdown(result LookupResult) string {
 		}
 	}
 	return builder.String()
+}
+
+func displayNameservers(result LookupResult) []string {
+	if result.DNS != nil && dnsRecordsIncludeType(result.DNS.Records, "NS") {
+		return nil
+	}
+	nameservers := append([]string(nil), result.Object.Nameservers...)
+	if result.DNS != nil {
+		nameservers = append(nameservers, result.DNS.Nameservers...)
+	}
+	return uniqueFold(nameservers)
+}
+
+func dnsRecordsIncludeType(records []DNSRecord, recordType string) bool {
+	for _, record := range records {
+		if strings.EqualFold(record.Type, recordType) {
+			return true
+		}
+	}
+	return false
 }
 
 func basicRows(result LookupResult) [][2]string {

@@ -178,10 +178,9 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 		})
 	}
 
-	nameservers := uniqueFold(object.Nameservers)
+	nameservers := displayNameservers(result)
 	dnsRows := dashboardRows("DNSSEC", object.DNSSEC)
 	if result.DNS != nil {
-		nameservers = uniqueFold(append(nameservers, result.DNS.Nameservers...))
 		method := "Pattern scan · incomplete"
 		if result.DNS.Method == "axfr" {
 			method = "AXFR · partial"

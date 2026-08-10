@@ -67,12 +67,15 @@ func TestRDAPAndWHOISNormalizers(t *testing.T) {
 func TestClientUsesInjectedAdapter(t *testing.T) {
 	adapter := staticAdapter{protocol: ProtocolRDAP, object: Object{Kind: KindDomain, Name: "example.test"}}
 	client := NewClient(ClientOptions{Timeout: time.Second, Adapters: []ProtocolAdapter{adapter}})
-	result, err := client.Lookup(context.Background(), "example.test", LookupOptions{Protocol: ProtocolRDAP, Server: "https://rdap.test/", Fallback: FallbackNone, DNSMode: DNSOff})
+	result, err := client.Lookup(context.Background(), "example.test", LookupOptions{Protocol: ProtocolRDAP, Server: "https://rdap.test/", Fallback: FallbackNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Object.Name != "example.test" || result.Route.Endpoint != "https://rdap.test/" {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+	if result.DNS != nil {
+		t.Fatalf("zero-value lookup options unexpectedly performed DNS discovery: %#v", result.DNS)
 	}
 }
 

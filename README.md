@@ -33,7 +33,7 @@ $ whodis example.com
 
 The dashboard adapts to the terminal: wide windows use a multi-panel mosaic, while narrow windows stack the same semantic panels into one column. Contacts stay visible but are consolidated instead of repeated. Lengthy registry notices are summarized by count; add `--details` when you want their full text and links. The flag also expands notices in the tree and GeekBoys views; plain and machine-readable formats remain unchanged.
 
-For domain lookups, Whodis also performs a fast public-DNS discovery pass by default and adds a full-width, terminal-friendly record grid. It finds the useful common records—addresses, mail routing, verification and policy TXT records, service records, HTTPS/SVCB records, and nameservers—without turning one lookup into an uncontrolled crawl.
+For domain lookups, add `--dns` when you want a fast public-DNS discovery pass and a full-width, terminal-friendly record grid. It finds the useful common records—addresses, mail routing, verification and policy TXT records, service records, HTTPS/SVCB records, and nameservers—without turning one lookup into an uncontrolled crawl.
 
 ## What you get
 
@@ -109,10 +109,11 @@ whodis example.com --format plain
 
 ## DNS discovery
 
-`whodis example.com` uses your system DNS resolver to discover common public
-records while the RDAP/WHOIS lookup is in progress. The dashboard puts the
-records in a Type / Name / Value / TTL grid; the other terminal views adapt the
-same data to their own layouts.
+`whodis example.com` is registration-only: it uses RDAP or WHOIS and shows the
+nameservers supplied by that registry once. Add `--dns` to use your system DNS
+resolver for common public records. The dashboard then puts those records in a
+Type / Name / Value / TTL grid; the other terminal views adapt the same data to
+their own layouts.
 
 The scan checks the apex plus practical names such as `www`, `api`, `mail`,
 `autodiscover`, DMARC/MTA-STS/TLS reporting names, common DKIM selectors, and
@@ -125,10 +126,10 @@ normal result is explicitly marked as a discovery scan rather than a complete
 zone. Use these controls when needed:
 
 ```bash
-# Keep a registration-only lookup
-whodis example.com --dns off
+# Discover live public records, including MX records
+whodis example.com --dns
 
-# Use a specific recursive resolver (the default is the system resolver)
+# A resolver also requests discovery (the default is the system resolver)
 whodis example.com --resolver 1.1.1.1
 
 # Ask the domain's authoritative nameservers for a full zone transfer.
@@ -273,7 +274,7 @@ whodis config path
     --server <endpoint>
     --timeout <duration>
     --refresh-bootstrap
-    --dns auto|off|scan|axfr
+    --dns[=auto|off|scan|axfr]
     --axfr
     --resolver <address>
     --color auto|always|never
@@ -289,11 +290,12 @@ whodis config path
 `--output`, Whodis infers JSON, YAML, Markdown, tree, GeekBoys, or plain text
 from the filename. Existing files are protected unless `--force` is supplied.
 
-`--dns auto` is the default for domains. `--dns scan` makes the same discovery
-pass explicit, `--dns off` disables DNS enrichment, and `--dns axfr` is the
-long form of `--axfr`. `--resolver` accepts a resolver host or IP with an
-optional port (bracket IPv6 addresses when including a port). DNS enrichment is
-skipped automatically for IP, CIDR, and ASN targets.
+DNS discovery is opt-in: use bare `--dns` for the normal scan, `--dns scan` or
+`--dns=scan` for the equivalent explicit form, and `--dns axfr` for a full zone
+transfer attempt. `--dns off` keeps a lookup registration-only. `--resolver`
+accepts a resolver host or IP with an optional port (bracket IPv6 addresses when
+including a port) and implies a DNS scan. DNS enrichment is skipped
+automatically for IP, CIDR, and ASN targets.
 
 ## How protocol selection works
 

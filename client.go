@@ -177,7 +177,7 @@ func normalizedOptions(options LookupOptions) LookupOptions {
 		options.Timeout = defaultTimeout
 	}
 	if options.DNSMode == "" {
-		options.DNSMode = DNSAuto
+		options.DNSMode = DNSOff
 	}
 	return options
 }

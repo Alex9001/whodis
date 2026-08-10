@@ -155,7 +155,7 @@ func isReleaseVersion(value string) bool {
 }
 
 func parseArgs(args []string) (cliOptions, error) {
-	options := cliOptions{protocol: whodis.ProtocolAuto, fallback: whodis.FallbackUnavailable, timeout: 15 * time.Second, dnsMode: whodis.DNSAuto, color: "auto"}
+	options := cliOptions{protocol: whodis.ProtocolAuto, fallback: whodis.FallbackUnavailable, timeout: 15 * time.Second, dnsMode: whodis.DNSOff, color: "auto"}
 	var targets []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -228,11 +228,17 @@ func parseArgs(args []string) (cliOptions, error) {
 		case "--refresh-bootstrap":
 			options.refreshBootstrap = true
 		case "--dns":
-			v, err := value()
-			if err != nil {
-				return options, err
+			options.dnsMode, options.dnsModeSet = whodis.DNSScan, true
+			if hasInline {
+				options.dnsMode = whodis.DNSMode(strings.ToLower(strings.TrimSpace(inline)))
+				break
 			}
-			options.dnsMode, options.dnsModeSet = whodis.DNSMode(strings.ToLower(strings.TrimSpace(v))), true
+			if index+1 < len(args) {
+				if mode, ok := dnsMode(args[index+1]); ok {
+					options.dnsMode = mode
+					index++
+				}
+			}
 		case "--resolver":
 			v, err := value()
 			if err != nil {
@@ -266,6 +272,9 @@ func parseArgs(args []string) (cliOptions, error) {
 	if options.fallback != whodis.FallbackUnavailable && options.fallback != whodis.FallbackNone && options.fallback != whodis.FallbackAnyError {
 		return options, fmt.Errorf("--fallback must be unavailable, none, or any-error")
 	}
+	if options.dnsResolver != "" && !options.dnsModeSet {
+		options.dnsMode = whodis.DNSScan
+	}
 	if options.axfr {
 		if options.dnsModeSet && options.dnsMode != whodis.DNSAXFR {
 			return options, fmt.Errorf("--axfr conflicts with --dns %s; use --dns axfr", options.dnsMode)
@@ -281,6 +290,16 @@ func parseArgs(args []string) (cliOptions, error) {
 		return options, fmt.Errorf("--resolver cannot be used with --dns off")
 	}
 	return options, nil
+}
+
+func dnsMode(value string) (whodis.DNSMode, bool) {
+	mode := whodis.DNSMode(strings.ToLower(strings.TrimSpace(value)))
+	switch mode {
+	case whodis.DNSAuto, whodis.DNSOff, whodis.DNSScan, whodis.DNSAXFR:
+		return mode, true
+	default:
+		return "", false
+	}
 }
 
 func chooseFormat(options cliOptions, stdout io.Writer, runtime cliRuntime) (whodis.Format, error) {
@@ -450,7 +469,7 @@ Options:
       --server <endpoint>   explicitly choose an RDAP URL or WHOIS server
       --timeout <duration>  request timeout (default: 15s)
       --refresh-bootstrap   refresh IANA RDAP service data
-      --dns <mode>          auto (default), off, scan, or axfr
+      --dns[=<mode>]        discover public DNS records (bare: scan; modes: auto, off, scan, axfr)
       --axfr                try an authoritative zone transfer; same as --dns axfr
       --resolver <address>  DNS resolver host or IP, with an optional port
       --color <mode>        auto (default), always, or never
@@ -470,7 +489,7 @@ Examples:
   whodis config
   whodis config set format geekboys
   whodis config set color never
-  whodis example.com --dns off
+  whodis example.com --dns
   whodis example.com --axfr
   whodis 8.8.8.8 --format json
   whodis AS15169 --output google-asn.yaml

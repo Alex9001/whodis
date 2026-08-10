@@ -46,12 +46,29 @@ func TestParseArgsNoDetailsAndColorTracking(t *testing.T) {
 }
 
 func TestParseArgsDNSOptions(t *testing.T) {
-	options, err := parseArgs([]string{"example.com", "--dns", "scan", "--resolver", "1.1.1.1:5353"})
+	options, err := parseArgs([]string{"example.com"})
 	if err != nil {
 		t.Fatalf("parseArgs() error = %v", err)
 	}
-	if options.dnsMode != whodis.DNSScan || options.dnsResolver != "1.1.1.1:5353" {
-		t.Fatalf("DNS options = (%q, %q), want scan and resolver", options.dnsMode, options.dnsResolver)
+	if options.dnsMode != whodis.DNSOff {
+		t.Fatalf("default DNS mode = %q, want off", options.dnsMode)
+	}
+
+	for _, args := range [][]string{
+		{"example.com", "--dns"},
+		{"--dns", "example.com"},
+		{"example.com", "--dns", "scan"},
+		{"example.com", "--dns=scan"},
+	} {
+		options, err = parseArgs(args)
+		if err != nil || options.target != "example.com" || options.dnsMode != whodis.DNSScan {
+			t.Fatalf("parseArgs(%q) = (%+v, %v), want target and scan mode", args, options, err)
+		}
+	}
+
+	options, err = parseArgs([]string{"example.com", "--resolver", "1.1.1.1:5353"})
+	if err != nil || options.dnsMode != whodis.DNSScan || options.dnsResolver != "1.1.1.1:5353" {
+		t.Fatalf("resolver DNS options = (%q, %q, %v), want scan and resolver", options.dnsMode, options.dnsResolver, err)
 	}
 
 	options, err = parseArgs([]string{"example.com", "--axfr"})
@@ -60,9 +77,9 @@ func TestParseArgsDNSOptions(t *testing.T) {
 	}
 
 	for _, args := range [][]string{
-		{"example.com", "--dns", "unknown"},
-		{"example.com", "--dns", "off", "--resolver", "1.1.1.1"},
-		{"example.com", "--dns", "off", "--axfr"},
+		{"example.com", "--dns=unknown"},
+		{"example.com", "--dns=off", "--resolver", "1.1.1.1"},
+		{"example.com", "--dns=off", "--axfr"},
 	} {
 		if _, err := parseArgs(args); err == nil {
 			t.Fatalf("parseArgs(%q) succeeded, want an error", args)

@@ -36,10 +36,9 @@ func TestDNSModesAndValidation(t *testing.T) {
 	client := NewClient(ClientOptions{Adapters: []ProtocolAdapter{staticAdapter{protocol: ProtocolRDAP, object: Object{Kind: KindDomain, Name: "example.test"}}}})
 	result, err := client.Lookup(context.Background(), "example.test", LookupOptions{
 		Protocol: ProtocolRDAP, Server: "https://rdap.test/", Fallback: FallbackNone,
-		DNSMode: DNSOff,
 	})
 	if err != nil || result.DNS != nil {
-		t.Fatalf("DNS off = (%#v, %v), want no DNS result", result.DNS, err)
+		t.Fatalf("default DNS mode = (%#v, %v), want no DNS result", result.DNS, err)
 	}
 	_, err = client.Lookup(context.Background(), "192.0.2.1", LookupOptions{DNSMode: DNSScan, DNSResolver: "127.0.0.1:5300"})
 	var lookup *LookupError

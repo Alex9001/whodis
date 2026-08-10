@@ -15,7 +15,7 @@ The application is MIT-licensed. The separate `packaging/aur/LICENSE` applies
 - AUR package: `whodis` (source-built, not `whodis-bin`)
 - Maintainer: `Aleksandr Oreshkin <alex@cyberbrand.net>`
 - Upstream: `https://github.com/Alex9001/whodis`
-- Initial version if published now: `0.5.0-1`
+- Initial version if published now: `0.5.1-1`
 - Released source SHA-256: derived and verified from the selected GitHub release below
 - Architecture: `x86_64`
 - Installed binary: `/usr/bin/whodis`
@@ -67,12 +67,12 @@ public.
 
 ## 2. Confirm the release and package name
 
-Set the release to publish, then confirm it exists and is stable. `v0.5.0` is
+Set the release to publish, then confirm it exists and is stable. `v0.5.1` is
 the intended initial AUR version; replace it with a newer stable release if
 publication happens later.
 
 ```bash
-release_tag=v0.5.0
+release_tag=v0.5.1
 release_version=${release_tag#v}
 gh release view "$release_tag" --repo Alex9001/whodis
 ```
@@ -92,7 +92,7 @@ GitHub repository. If `../whodis-aur` already exists, inspect it instead of
 deleting or overwriting it.
 
 ```bash
-release_tag=${release_tag:-v0.5.0}
+release_tag=${release_tag:-v0.5.1}
 release_version=${release_tag#v}
 git clone -c core.sshCommand='ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes' \
   ssh://aur@aur.archlinux.org/whodis.git ../whodis-aur

@@ -245,6 +245,30 @@ func TestDNSRecordsRenderInHumanAndStructuredFormats(t *testing.T) {
 	}
 }
 
+func TestHumanDNSOutputDoesNotRepeatNameservers(t *testing.T) {
+	result := sampleResult()
+	result.Object.Nameservers = []string{"ns1.example.com"}
+	result.DNS = &DNSResult{
+		Method:      "scan",
+		Nameservers: []string{"ns1.example.com"},
+		Records: []DNSRecord{
+			{Name: "example.com", Type: "NS", TTL: 300, Value: "ns1.example.com."},
+			{Name: "example.com", Type: "MX", TTL: 300, Value: "10 mail.example.com."},
+		},
+	}
+	for _, format := range []Format{FormatPretty, FormatTree, FormatGeekBoys, FormatPlain, FormatMarkdown} {
+		t.Run(string(format), func(t *testing.T) {
+			output := renderForTest(t, result, format, RenderOptions{Color: "never", Width: 80})
+			if got := countFold(output, "ns1.example.com"); got != 1 {
+				t.Errorf("%s output includes the nameserver %d times, want once:\n%s", format, got, output)
+			}
+			if !strings.Contains(output, "MX") || !strings.Contains(output, "mail.example.com") {
+				t.Errorf("%s output lost the MX record:\n%s", format, output)
+			}
+		})
+	}
+}
+
 func TestPrettyDashboardResponsiveWidths(t *testing.T) {
 	result := sampleResult()
 	panelTitles := []string{"Registration", "Timeline", "DNS", "Contacts", "Source"}

@@ -37,8 +37,9 @@ const (
 	FallbackAnyError    FallbackMode = "any-error"
 )
 
-// DNSMode controls optional DNS enrichment for a lookup. Automatic mode scans
-// common public records for domains and leaves IP and ASN lookups unchanged.
+// DNSMode controls optional DNS enrichment for a lookup. A zero-value
+// LookupOptions leaves DNS disabled; DNSAuto remains available for callers
+// that want domain-only discovery without special-casing non-domain targets.
 type DNSMode string
 
 const (
@@ -156,7 +157,8 @@ type LookupResult struct {
 }
 
 // LookupOptions controls one lookup. A zero-value options struct uses the
-// knowledge-based automatic protocol router and unavailable-only fallback.
+// knowledge-based automatic protocol router, unavailable-only fallback, and
+// no live DNS enrichment.
 type LookupOptions struct {
 	Protocol         Protocol
 	Fallback         FallbackMode
