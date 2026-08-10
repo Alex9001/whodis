@@ -38,6 +38,16 @@ jobs:
             "$aur_test_dir"
           ! grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"
           cmp packaging/aur-gui/LICENSE "$aur_test_dir/LICENSE"
+      - name: Exercise Qt SDK license collection
+        run: |
+          qt_license_fixture="$(mktemp -d)"
+          qt_license_output="$(mktemp -d)"
+          trap 'rm -rf -- "$qt_license_fixture" "$qt_license_output"' EXIT
+          cp /usr/share/common-licenses/LGPL-3 "$qt_license_fixture/LGPL-3.0-only.txt"
+          cp /usr/share/common-licenses/GPL-3 "$qt_license_fixture/GPL-3.0-only.txt"
+          QT_LICENSE_DIR="$qt_license_fixture" scripts/collect-qt-licenses.sh "$qt_license_output"
+          test -s "$qt_license_output/LGPL-3.0-only.txt"
+          test -s "$qt_license_output/GPL-3.0-only.txt"
       - name: Exercise Unix installer with a local release
         run: |
           installer_test_dir="$(mktemp -d)"

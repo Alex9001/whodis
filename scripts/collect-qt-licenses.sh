@@ -14,7 +14,7 @@ if [ -z "$license_dir" ] && [ -n "${QT_ROOT_DIR:-}" ] && [ -d "$QT_ROOT_DIR/LICE
     license_dir=$QT_ROOT_DIR/LICENSES
 fi
 if [ -z "$license_dir" ]; then
-    for candidate in /usr/share/licenses/qt6-base /usr/share/doc/qt6-base-dev/copyright; do
+    for candidate in /usr/share/licenses/qt6-base; do
         if [ -d "$candidate" ]; then
             license_dir=$candidate
             break
@@ -22,31 +22,46 @@ if [ -z "$license_dir" ]; then
     done
 fi
 
-[ -n "$license_dir" ] && [ -d "$license_dir" ] || {
-    echo "collect-qt-licenses: could not find the Qt license directory" >&2
-    exit 1
-}
-
 mkdir -p "$output_dir"
 found=false
-for license_file in "$license_dir"/*; do
-    [ -f "$license_file" ] || continue
-    cp -- "$license_file" "$output_dir/"
-    found=true
-done
+if [ -n "$license_dir" ] && [ -d "$license_dir" ]; then
+    for license_file in "$license_dir"/*; do
+        [ -f "$license_file" ] || continue
+        cp -- "$license_file" "$output_dir/"
+        found=true
+    done
+fi
+
+if [ "$found" = false ]; then
+    for copyright_file in \
+        /usr/share/doc/qt6-base-dev/copyright \
+        /usr/share/doc/libqt6core6/copyright; do
+        if [ -f "$copyright_file" ]; then
+            cp -- "$copyright_file" "$output_dir/Qt-COPYRIGHT"
+            found=true
+            break
+        fi
+    done
+    if [ -f /usr/share/common-licenses/LGPL-3 ]; then
+        cp -- /usr/share/common-licenses/LGPL-3 "$output_dir/LGPL-3.0-only.txt"
+    fi
+    if [ -f /usr/share/common-licenses/GPL-3 ]; then
+        cp -- /usr/share/common-licenses/GPL-3 "$output_dir/GPL-3.0-only.txt"
+    fi
+fi
 
 [ "$found" = true ] || {
-    echo "collect-qt-licenses: no license files found in $license_dir" >&2
+    echo "collect-qt-licenses: could not find Qt license material" >&2
     exit 1
 }
 
 test -f "$output_dir/LGPL-3.0-only.txt" || {
-    echo "collect-qt-licenses: LGPL-3.0-only.txt is missing from $license_dir" >&2
+    echo "collect-qt-licenses: LGPL-3.0-only.txt is missing" >&2
     exit 1
 }
 test -f "$output_dir/GPL-3.0-only.txt" || {
-    echo "collect-qt-licenses: GPL-3.0-only.txt is missing from $license_dir" >&2
+    echo "collect-qt-licenses: GPL-3.0-only.txt is missing" >&2
     exit 1
 }
 
-echo "Collected Qt licenses from $license_dir"
+echo "Collected Qt license material in $output_dir"
