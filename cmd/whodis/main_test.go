@@ -30,11 +30,26 @@ func TestParseArgsDetails(t *testing.T) {
 	}
 }
 
+func TestParseArgsNoDetailsAndColorTracking(t *testing.T) {
+	options, err := parseArgs([]string{"example.com", "--details", "--no-details", "--color", "never"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if !options.detailsSet || options.details {
+		t.Fatalf("details options = (set=%v, value=%v), want explicit summary", options.detailsSet, options.details)
+	}
+	if !options.colorSet || options.color != "never" {
+		t.Fatalf("color options = (set=%v, value=%q), want explicit never", options.colorSet, options.color)
+	}
+}
+
 func TestUsageIncludesDetails(t *testing.T) {
 	var output bytes.Buffer
 	printUsage(&output)
-	if !strings.Contains(output.String(), "--details") {
-		t.Fatalf("printUsage() output does not document --details:\n%s", output.String())
+	for _, value := range []string{"--details", "--no-details", "whodis config"} {
+		if !strings.Contains(output.String(), value) {
+			t.Fatalf("printUsage() output does not document %q:\n%s", value, output.String())
+		}
 	}
 }
 

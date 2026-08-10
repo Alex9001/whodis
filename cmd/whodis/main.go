@@ -31,7 +31,9 @@ type cliOptions struct {
 	timeout          time.Duration
 	refreshBootstrap bool
 	color            string
+	colorSet         bool
 	details          bool
+	detailsSet       bool
 	force            bool
 	help             bool
 	showVersion      bool
@@ -66,6 +68,14 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		printUsage(stderr)
 		return 2
 	}
+	if options.colorSet {
+		color, err := parsePersistentColor(options.color)
+		if err != nil {
+			fmt.Fprintln(stderr, "whodis: --color must be auto, always, or never")
+			return 2
+		}
+		options.color = color
+	}
 	format, err := chooseFormat(options, stdout, runtime)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
@@ -75,8 +85,13 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		}
 		return 2
 	}
-	if options.color != "auto" && options.color != "always" && options.color != "never" {
-		fmt.Fprintln(stderr, "whodis: --color must be auto, always, or never")
+	color, details, err := choosePresentation(options, format, runtime)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		var configError *savedConfigError
+		if errors.As(err, &configError) {
+			return 1
+		}
 		return 2
 	}
 
@@ -98,7 +113,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		return 1
 	}
 	defer closeWriter()
-	if err := whodis.Render(writer, result, format, whodis.RenderOptions{Color: options.color, Details: options.details}); err != nil {
+	if err := whodis.Render(writer, result, format, whodis.RenderOptions{Color: color, Details: details}); err != nil {
 		fmt.Fprintln(stderr, "whodis: could not render output:", err)
 		return 1
 	}
@@ -204,11 +219,13 @@ func parseArgs(args []string) (cliOptions, error) {
 			if err != nil {
 				return options, err
 			}
-			options.color = v
+			options.color, options.colorSet = v, true
 		case "--refresh-bootstrap":
 			options.refreshBootstrap = true
 		case "--details":
-			options.details = true
+			options.details, options.detailsSet = true, true
+		case "--no-details":
+			options.details, options.detailsSet = false, true
 		case "--force":
 			options.force = true
 		default:
@@ -253,15 +270,12 @@ func chooseFormat(options cliOptions, stdout io.Writer, runtime cliRuntime) (who
 		}
 		return format, nil
 	}
-	config, exists, err := loadUserConfig(runtime)
+	config, exists, err := loadOptionalUserConfig(runtime)
 	if err != nil {
-		if !errors.Is(err, errConfigDirectoryUnavailable) {
-			return "", &savedConfigError{err: err}
-		}
-		exists = false
+		return "", &savedConfigError{err: err}
 	}
 	if exists && strings.TrimSpace(config.Format) != "" {
-		format, _, err := parsePersistentFormat(config.Format)
+		format, canonical, err := parsePersistentFormat(config.Format)
 		if err != nil {
 			path, pathErr := configFilePath(runtime)
 			if pathErr != nil {
@@ -269,12 +283,56 @@ func chooseFormat(options cliOptions, stdout io.Writer, runtime cliRuntime) (who
 			}
 			return "", &savedConfigError{err: fmt.Errorf("invalid format in config %s: %w", path, err)}
 		}
-		return format, nil
+		if canonical != "auto" {
+			return format, nil
+		}
 	}
 	if runtime.isTerminal(stdout) {
 		return whodis.FormatPretty, nil
 	}
 	return whodis.FormatPlain, nil
+}
+
+func choosePresentation(options cliOptions, format whodis.Format, runtime cliRuntime) (string, bool, error) {
+	color := "auto"
+	if options.colorSet {
+		color = options.color
+	}
+	details := false
+	if options.detailsSet {
+		details = options.details
+	}
+
+	usesColor := format == whodis.FormatPretty || format == whodis.FormatTree
+	usesDetails := format == whodis.FormatPretty || format == whodis.FormatTree || format == whodis.FormatGeekBoys
+	if (!usesColor || options.colorSet) && (!usesDetails || options.detailsSet) {
+		return color, details, nil
+	}
+	config, exists, err := loadOptionalUserConfig(runtime)
+	if err != nil {
+		return "", false, &savedConfigError{err: err}
+	}
+	if !exists {
+		return color, details, nil
+	}
+	if usesColor && !options.colorSet && strings.TrimSpace(config.Color) != "" {
+		color, err = parsePersistentColor(config.Color)
+		if err != nil {
+			return "", false, savedPreferenceError(runtime, "color", err)
+		}
+	}
+	if usesDetails && !options.detailsSet && config.Details != nil {
+		details = *config.Details
+	}
+	return color, details, nil
+}
+
+func savedPreferenceError(runtime cliRuntime, preference string, err error) error {
+	path, pathErr := configFilePath(runtime)
+	if pathErr != nil {
+		return &savedConfigError{err: pathErr}
+	}
+	return &savedConfigError{err: fmt.Errorf("invalid %s in config %s: %w", preference, path, err)}
 }
 
 func writerIsTerminal(writer io.Writer) bool {
@@ -284,6 +342,8 @@ func writerIsTerminal(writer io.Writer) bool {
 	output, ok := writer.(fileDescriptor)
 	return ok && term.IsTerminal(int(output.Fd()))
 }
+
+func standardInputIsTerminal() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 func openOutput(path string, force bool, stdout io.Writer) (io.Writer, func(), error) {
 	if path == "" || path == "-" {
@@ -340,9 +400,11 @@ func exitCode(err error) int {
 func printUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage:
   whodis <target> [options]
-  whodis config set format dashboard|tree|geekboys|plain
-  whodis config get format
-  whodis config unset format
+  whodis config
+  whodis config set format|color|details <value>
+  whodis config get format|color|details
+  whodis config unset format|color|details
+  whodis config reset
   whodis config path
 
 Targets: domain names, IPv4/IPv6 addresses or CIDRs, and ASNs (AS15169).
@@ -357,6 +419,7 @@ Options:
       --refresh-bootstrap   refresh IANA RDAP service data
       --color <mode>        auto (default), always, or never
       --details             expand notices in dashboard, tree, and geekboys output
+      --no-details          summarize notices for this lookup
       --force               overwrite an existing output file
   -h, --help                show this help
       --version             show version
@@ -368,7 +431,9 @@ Examples:
   whodis example.com
   whodis -- config
   whodis example.com --format tree
+  whodis config
   whodis config set format geekboys
+  whodis config set color never
   whodis 8.8.8.8 --format json
   whodis AS15169 --output google-asn.yaml
   whodis example.cc --protocol whois --fallback none

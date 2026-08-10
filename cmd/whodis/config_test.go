@@ -15,6 +15,7 @@ import (
 
 func testRuntime(directory string, environment map[string]string, terminal bool) cliRuntime {
 	return cliRuntime{
+		stdin: strings.NewReader(""),
 		getenv: func(name string) string {
 			return environment[name]
 		},
@@ -24,7 +25,14 @@ func testRuntime(directory string, environment map[string]string, terminal bool)
 		isTerminal: func(io.Writer) bool {
 			return terminal
 		},
+		stdinIsTerminal: func() bool { return terminal },
 	}
+}
+
+func wizardRuntime(directory, input string) cliRuntime {
+	runtime := testRuntime(directory, nil, true)
+	runtime.stdin = strings.NewReader(input)
+	return runtime
 }
 
 func runCLIForTest(t *testing.T, runtime cliRuntime, args ...string) (int, string, string) {
@@ -46,6 +54,8 @@ func writeConfigForTest(t *testing.T, directory, contents string) string {
 	}
 	return path
 }
+
+func boolPointer(value bool) *bool { return &value }
 
 func TestConfigCommands(t *testing.T) {
 	directory := t.TempDir()
@@ -91,6 +101,202 @@ func TestConfigCommands(t *testing.T) {
 	}
 }
 
+func TestConfigPreferencesPreserveEachOtherAndReset(t *testing.T) {
+	directory := t.TempDir()
+	runtime := testRuntime(directory, nil, false)
+	for _, args := range [][]string{
+		{"config", "set", "format", "tree"},
+		{"config", "set", "color", "never"},
+		{"config", "set", "details", "expanded"},
+	} {
+		code, stdout, stderr := runCLIForTest(t, runtime, args...)
+		if code != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("run(%v) = (%d, %q, %q), want success", args, code, stdout, stderr)
+		}
+	}
+	for key, want := range map[string]string{"format": "tree\n", "color": "never\n", "details": "expanded\n"} {
+		code, stdout, stderr := runCLIForTest(t, runtime, "config", "get", key)
+		if code != 0 || stdout != want || stderr != "" {
+			t.Fatalf("get %s = (%d, %q, %q), want %q", key, code, stdout, stderr, want)
+		}
+	}
+
+	code, _, stderr := runCLIForTest(t, runtime, "config", "unset", "color")
+	if code != 0 || stderr != "" {
+		t.Fatalf("unset color = (%d, %q), want success", code, stderr)
+	}
+	config, exists, err := loadUserConfig(runtime)
+	if err != nil || !exists || config.Format != "tree" || config.Color != "" || config.Details == nil || !*config.Details {
+		t.Fatalf("config after unset color = (%+v, %v, %v), want tree/expanded only", config, exists, err)
+	}
+
+	for _, args := range [][]string{
+		{"config", "set", "format", "auto"},
+		{"config", "set", "details", "auto"},
+	} {
+		code, _, stderr = runCLIForTest(t, runtime, args...)
+		if code != 0 || stderr != "" {
+			t.Fatalf("run(%v) = (%d, %q), want success", args, code, stderr)
+		}
+	}
+	if _, exists, err := loadUserConfig(runtime); err != nil || exists {
+		t.Fatalf("config after clearing every preference = (exists=%v, err=%v), want absent", exists, err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		code, _, stderr = runCLIForTest(t, runtime, "config", "reset")
+		if code != 0 || stderr != "" {
+			t.Fatalf("reset attempt %d = (%d, %q), want success", attempt, code, stderr)
+		}
+	}
+}
+
+func TestConfigAcceptsLegacyFormatAndDetailsAliases(t *testing.T) {
+	directory := t.TempDir()
+	runtime := testRuntime(directory, nil, false)
+	writeConfigForTest(t, directory, `{"format":"tree"}`)
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{value: "expanded", want: "expanded"},
+		{value: "off", want: "summary"},
+		{value: "on", want: "expanded"},
+		{value: "auto", want: "auto"},
+	} {
+		code, _, stderr := runCLIForTest(t, runtime, "config", "set", "details", test.value)
+		if code != 0 || stderr != "" {
+			t.Fatalf("set details %q = (%d, %q), want success", test.value, code, stderr)
+		}
+		code, stdout, stderr := runCLIForTest(t, runtime, "config", "get", "details")
+		if code != 0 || stdout != test.want+"\n" || stderr != "" {
+			t.Fatalf("get details after %q = (%d, %q, %q), want %q", test.value, code, stdout, stderr, test.want)
+		}
+	}
+	code, _, stderr := runCLIForTest(t, runtime, "config", "set", "color", "always")
+	if code != 0 || stderr != "" {
+		t.Fatalf("set color = (%d, %q), want success", code, stderr)
+	}
+	config, exists, err := loadUserConfig(runtime)
+	if err != nil || !exists || config.Format != "tree" || config.Color != "always" {
+		t.Fatalf("legacy config was not preserved: (%+v, %v, %v)", config, exists, err)
+	}
+}
+
+func TestConfigWizardSavesAllPreferences(t *testing.T) {
+	directory := t.TempDir()
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "3\n2\n3\ny\n"), "config")
+	if code != 0 || stderr != "" {
+		t.Fatalf("wizard = (%d, %q, %q), want success", code, stdout, stderr)
+	}
+	for _, text := range []string{"Whodis preferences", "1/3  Output format", "2/3  Color", "3/3  Registry notices", "Review", "Saved preferences to"} {
+		if !strings.Contains(stdout, text) {
+			t.Errorf("wizard output missing %q:\n%s", text, stdout)
+		}
+	}
+	config, exists, err := loadUserConfig(testRuntime(directory, nil, false))
+	if err != nil || !exists || config.Format != "tree" || config.Color != "always" || config.Details == nil || !*config.Details {
+		t.Fatalf("wizard config = (%+v, %v, %v), want tree/always/expanded", config, exists, err)
+	}
+}
+
+func TestConfigWizardRetriesInvalidSelection(t *testing.T) {
+	directory := t.TempDir()
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "9\n2\n1\n2\ny\n"), "config")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "Please enter 1-5") {
+		t.Fatalf("wizard retry = (%d, %q, %q), want successful retry", code, stdout, stderr)
+	}
+	config, exists, err := loadUserConfig(testRuntime(directory, nil, false))
+	if err != nil || !exists || config.Format != "dashboard" || config.Color != "" || config.Details == nil || *config.Details {
+		t.Fatalf("wizard retry config = (%+v, %v, %v), want dashboard/auto/summary", config, exists, err)
+	}
+}
+
+func TestConfigWizardCancellationAndNoChangeAreSafe(t *testing.T) {
+	directory := t.TempDir()
+	runtime := testRuntime(directory, nil, false)
+	if err := saveUserConfig(runtime, userConfig{Format: "tree", Color: "never", Details: boolPointer(false)}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "whodis", "config.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, input := range map[string]string{
+		"declined confirmation": "\n\n\nn\n",
+		"quit at prompt":        "q\n",
+		"EOF":                   "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, input), "config", "wizard")
+			if code != 0 || stderr != "" || !strings.Contains(stdout, "Cancelled; no changes were saved.") {
+				t.Fatalf("wizard %s = (%d, %q, %q), want safe cancellation", name, code, stdout, stderr)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("wizard %s changed config: before=%q after=%q err=%v", name, before, after, err)
+			}
+		})
+	}
+
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "\n\n\ny\n"), "config")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "No changes needed") {
+		t.Fatalf("unchanged wizard = (%d, %q, %q), want no-op", code, stdout, stderr)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("no-op wizard changed config: before=%q after=%q err=%v", before, after, err)
+	}
+}
+
+func TestConfigWizardRejectsNonTerminalAndMalformedConfig(t *testing.T) {
+	directory := t.TempDir()
+	code, stdout, stderr := runCLIForTest(t, testRuntime(directory, nil, false), "config")
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "interactive config requires a terminal") {
+		t.Fatalf("non-terminal wizard = (%d, %q, %q), want terminal error", code, stdout, stderr)
+	}
+	path := writeConfigForTest(t, directory, "{")
+	code, stdout, stderr = runCLIForTest(t, wizardRuntime(directory, ""), "config")
+	if code != 1 || stdout != "" || !strings.Contains(stderr, path) {
+		t.Fatalf("malformed wizard = (%d, %q, %q), want actionable error", code, stdout, stderr)
+	}
+	code, stdout, stderr = runCLIForTest(t, testRuntime(directory, nil, false), "config", "reset")
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("reset malformed config = (%d, %q, %q), want success", code, stdout, stderr)
+	}
+}
+
+func TestChoosePresentationPrecedenceAndLazyConfig(t *testing.T) {
+	directory := t.TempDir()
+	runtime := testRuntime(directory, nil, false)
+	if err := saveUserConfig(runtime, userConfig{Color: "always", Details: boolPointer(true)}); err != nil {
+		t.Fatal(err)
+	}
+	color, details, err := choosePresentation(cliOptions{}, whodis.FormatTree, runtime)
+	if err != nil || color != "always" || !details {
+		t.Fatalf("saved presentation = (%q, %v, %v), want always/expanded", color, details, err)
+	}
+	color, details, err = choosePresentation(cliOptions{color: "never", colorSet: true, details: false, detailsSet: true}, whodis.FormatTree, runtime)
+	if err != nil || color != "never" || details {
+		t.Fatalf("explicit presentation = (%q, %v, %v), want never/summary", color, details, err)
+	}
+
+	writeConfigForTest(t, directory, `{"color":"invalid","details":true}`)
+	color, details, err = choosePresentation(cliOptions{}, whodis.FormatGeekBoys, runtime)
+	if err != nil || color != "auto" || !details {
+		t.Fatalf("GeekBoys should ignore saved color = (%q, %v, %v)", color, details, err)
+	}
+	if _, _, err := choosePresentation(cliOptions{}, whodis.FormatTree, runtime); err == nil || !strings.Contains(err.Error(), "color") {
+		t.Fatalf("tree should report invalid saved color, got %v", err)
+	}
+	writeConfigForTest(t, directory, "{")
+	color, details, err = choosePresentation(cliOptions{}, whodis.FormatJSON, runtime)
+	if err != nil || color != "auto" || details {
+		t.Fatalf("machine output should bypass malformed display config = (%q, %v, %v)", color, details, err)
+	}
+}
+
 func TestConfigSetCanonicalizesHumanAliases(t *testing.T) {
 	tests := map[string]string{
 		"dashboard": "dashboard",
@@ -126,7 +332,11 @@ func TestConfigSetRejectsMachineFormats(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			runtime := testRuntime(t.TempDir(), nil, false)
 			code, stdout, stderr := runCLIForTest(t, runtime, "config", "set", "format", format)
-			if code != 2 || stdout != "" || !strings.Contains(stderr, "dashboard, tree, geekboys, or plain") {
+			message := "dashboard, tree, geekboys, or plain"
+			if format == "" {
+				message = "format requires a value"
+			}
+			if code != 2 || stdout != "" || !strings.Contains(stderr, message) {
 				t.Fatalf("set = (%d, %q, %q), want usage error naming persistent formats", code, stdout, stderr)
 			}
 		})
@@ -348,11 +558,11 @@ func TestConfigCommandValidationAndLookupEscape(t *testing.T) {
 		args    []string
 		message string
 	}{
-		{args: []string{"config"}, message: "requires set, get, unset, or path"},
+		{args: []string{"config"}, message: "interactive config requires a terminal"},
 		{args: []string{"config", "unknown"}, message: "unknown config command"},
-		{args: []string{"config", "get", "other"}, message: "config get format"},
+		{args: []string{"config", "get", "other"}, message: "unknown preference"},
 		{args: []string{"config", "set", "format"}, message: "config set format"},
-		{args: []string{"config", "unset", "other"}, message: "config unset format"},
+		{args: []string{"config", "unset", "other"}, message: "unknown preference"},
 		{args: []string{"config", "path", "extra"}, message: "accepts no arguments"},
 	} {
 		code, stdout, stderr := runCLIForTest(t, runtime, test.args...)

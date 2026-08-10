@@ -136,23 +136,46 @@ the [2002 GeekBoys community layout](https://web.archive.org/web/20020328041200/
 +--------------------------------------'
 ```
 
-Save a default view when you want the same choice in future terminals and
-stdout pipelines:
+### Make Whodis yours
+
+Run the built-in setup wizard once to choose the view that feels right. It uses
+simple numbered prompts, keeps the current answer when you press Enter, and
+shows a review before it saves anything:
+
+```bash
+whodis config
+```
+
+The wizard can save three display preferences:
+
+- Output format: automatic, dashboard, tree, GeekBoys, or plain text
+- Color: automatic, always, or never
+- Registry notices: automatic, compact summary, or expanded details
+
+Automatic format keeps the best default for the situation: the dashboard in a
+terminal and plain text in a pipeline. Command-line options still win for a
+single lookup, so `--no-details` temporarily returns notices to their compact
+summary without changing the saved preference.
+
+For scripts, configuration management stays direct and quiet:
 
 ```bash
 whodis config set format tree
-whodis config get format      # tree
-whodis config unset format    # restore automatic dashboard/plain selection
-whodis config path            # show the platform-specific config file
+whodis config set color never
+whodis config set details expanded
+whodis config get format       # tree
+whodis config unset details    # return that preference to automatic behavior
+whodis config reset            # remove every saved display preference
+whodis config path             # show the platform-specific config file
 ```
 
 Because `config` is a command name, query that exact target with
 `whodis -- config`.
 
-Saved defaults may be `dashboard`, `tree`, `geekboys`, or `plain`. An explicit
-`--format` always wins. `WHODIS_FORMAT` provides a temporary environment
+An explicit `--format` always wins. `WHODIS_FORMAT` provides a temporary format
 override and can also select JSON, YAML, Markdown, or raw output. Named output
-files continue to take their format from the extension.
+files continue to take their format from the extension. Explicit `--color`,
+`--details`, and `--no-details` likewise override the saved display choices.
 
 Whodis stores this preference in `whodis/config.json` below the operating
 system's user configuration directory: normally `~/.config` on Linux,
@@ -178,8 +201,14 @@ whodis example.com --format tree
 # Make the ASCII view your default in terminals and pipelines
 whodis config set format geekboys
 
-# Expand registry notices in the structured terminal views
+# Choose all display defaults with numbered prompts
+whodis config
+
+# Expand registry notices for one structured terminal lookup
 whodis example.com --details
+
+# Keep the saved expanded preference, but summarize notices just this time
+whodis example.com --no-details
 
 # Export to a file; .yaml selects YAML automatically
 whodis AS15169 --output google-asn.yaml
@@ -192,9 +221,14 @@ whodis example.com --format plain
 
 ```text
 whodis <target> [options]
-whodis config set format dashboard|tree|geekboys|plain
-whodis config get format
-whodis config unset format
+whodis config
+whodis config wizard
+whodis config set format auto|dashboard|tree|geekboys|plain
+whodis config set color auto|always|never
+whodis config set details auto|summary|expanded
+whodis config get format|color|details
+whodis config unset format|color|details
+whodis config reset
 whodis config path
 
 -f, --format dashboard|tree|geekboys|plain|json|yaml|markdown|raw
@@ -206,6 +240,7 @@ whodis config path
     --refresh-bootstrap
     --color auto|always|never
     --details
+    --no-details
     --force
 -h, --help
     --version
