@@ -9,31 +9,205 @@ permissions:
   contents: read
 
 jobs:
+  gui-linux:
+    name: Build Linux GUI (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: amd64
+            tool_arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+            tool_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libfuse2 file
+      - name: Install linuxdeploy
+        env:
+          TOOL_ARCH: ${{ matrix.tool_arch }}
+        run: |
+          curl -fLso linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${TOOL_ARCH}.AppImage"
+          curl -fLso linuxdeploy-plugin-qt "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${TOOL_ARCH}.AppImage"
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+      - name: Build AppImage
+        env:
+          LINUXDEPLOY: ${{ github.workspace }}/linuxdeploy
+          QMAKE: qmake6
+        run: |
+          mkdir -p release-assets
+          scripts/package-gui-linux.sh "$GITHUB_REF_NAME" build-gui release-assets
+      - uses: actions/upload-artifact@v6
+        with:
+          name: whodis-gui-linux-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  gui-windows:
+    name: Build Windows GUI (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: amd64
+            qt_arch: win64_msvc2022_64
+            msvc_arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+            qt_arch: win64_msvc2022_arm64
+            msvc_arch: amd64_arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.11.1'
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+      - name: Build and deploy
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          cmake -S desktop -B build-gui -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$PWD/stage" `
+            -DWHODIS_VERSION="$version" `
+            -DBUILD_TESTING=OFF
+          cmake --build build-gui --parallel
+          cmake --install build-gui
+          windeployqt --release --no-translations "$PWD/stage/bin/whodis-gui.exe"
+          Copy-Item README.md, LICENSE, desktop/packaging/THIRD_PARTY_NOTICES.md -Destination "$PWD/stage/bin"
+          Copy-Item "$env:QT_ROOT_DIR/LICENSES" -Destination "$PWD/stage/bin/Qt-Licenses" -Recurse
+          if (-not (Test-Path "$PWD/stage/bin/Qt-Licenses/LGPL-3.0-only.txt") -or
+              -not (Test-Path "$PWD/stage/bin/Qt-Licenses/GPL-3.0-only.txt")) {
+            throw "The deployed Windows package is missing Qt license texts."
+          }
+          New-Item -ItemType Directory -Path release-assets | Out-Null
+          Compress-Archive -Path "$PWD/stage/bin/*" `
+            -DestinationPath "release-assets/whodis-gui_windows_${{ matrix.arch }}_portable.zip"
+          choco install nsis -y --no-progress
+          makensis `
+            "/DAPP_SOURCE=$PWD\stage\bin" `
+            "/DAPP_ICON=$PWD\desktop\resources\whodis.ico" `
+            "/DVERSION=$version" `
+            "/DOUTPUT_FILE=$PWD\release-assets\whodis-gui_windows_${{ matrix.arch }}_setup.exe" `
+            desktop/packaging/windows/installer.nsi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: whodis-gui-windows-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  gui-macos:
+    name: Build universal macOS GUI
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.11.1'
+          arch: clang_64
+          cache: true
+      - name: Build universal app and DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          iconset="$RUNNER_TEMP/Whodis.iconset"
+          mkdir -p "$iconset"
+          sips -z 16 16 docs/whodis_logo_no_bg.png --out "$iconset/icon_16x16.png" >/dev/null
+          sips -z 32 32 docs/whodis_logo_no_bg.png --out "$iconset/icon_16x16@2x.png" >/dev/null
+          sips -z 32 32 docs/whodis_logo_no_bg.png --out "$iconset/icon_32x32.png" >/dev/null
+          sips -z 64 64 docs/whodis_logo_no_bg.png --out "$iconset/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 docs/whodis_logo_no_bg.png --out "$iconset/icon_128x128.png" >/dev/null
+          sips -z 256 256 docs/whodis_logo_no_bg.png --out "$iconset/icon_128x128@2x.png" >/dev/null
+          sips -z 256 256 docs/whodis_logo_no_bg.png --out "$iconset/icon_256x256.png" >/dev/null
+          sips -z 512 512 docs/whodis_logo_no_bg.png --out "$iconset/icon_256x256@2x.png" >/dev/null
+          sips -z 512 512 docs/whodis_logo_no_bg.png --out "$iconset/icon_512x512.png" >/dev/null
+          sips -z 1024 1024 docs/whodis_logo_no_bg.png --out "$iconset/icon_512x512@2x.png" >/dev/null
+          iconutil -c icns "$iconset" -o "$RUNNER_TEMP/Whodis.icns"
+          cmake -S desktop -B build-gui -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES='x86_64;arm64' \
+            -DWHODIS_MACOS_ICON="$RUNNER_TEMP/Whodis.icns" \
+            -DWHODIS_VERSION="$version" \
+            -DBUILD_TESTING=OFF
+          cmake --build build-gui --parallel
+          app=$(find build-gui/bin -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$app"
+          mv "$app" build-gui/bin/Whodis.app
+          app=build-gui/bin/Whodis.app
+          mkdir -p "$app/Contents/Helpers" "$app/Contents/Resources"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -X main.version=$version" -o /tmp/whodis-engine-amd64 ./cmd/whodis-gui-engine
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
+            -ldflags="-s -w -X main.version=$version" -o /tmp/whodis-engine-arm64 ./cmd/whodis-gui-engine
+          lipo -create /tmp/whodis-engine-amd64 /tmp/whodis-engine-arm64 \
+            -output "$app/Contents/Helpers/whodis-gui-engine"
+          cp LICENSE README.md desktop/packaging/THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
+          cp -R "$QT_ROOT_DIR/LICENSES" "$app/Contents/Resources/Qt-Licenses"
+          test -f "$app/Contents/Resources/Qt-Licenses/LGPL-3.0-only.txt"
+          test -f "$app/Contents/Resources/Qt-Licenses/GPL-3.0-only.txt"
+          macdeployqt "$app" -always-overwrite
+          mkdir -p release-assets
+          hdiutil create -volname Whodis -srcfolder "$app" -ov -format UDZO \
+            "release-assets/whodis-gui_macos_universal.dmg"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: whodis-gui-macos-universal
+          path: release-assets/*
+          if-no-files-found: error
+
   release:
-    name: Publish release
+    name: Publish CLI and GUI release
+    needs:
+      - gui-linux
+      - gui-windows
+      - gui-macos
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: true
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -race ./...
-
-      - name: Run GoReleaser
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: whodis-gui-*
+          path: .release-assets/gui
+          merge-multiple: true
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test -race ./...
+      - name: List unsigned GUI assets
+        run: |
+          echo 'The first desktop release is intentionally unsigned.'
+          find .release-assets/gui -maxdepth 1 -type f -print
+      - name: Publish with GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -43,7 +217,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-aur:
-    name: Update AUR source package
+    name: Update AUR packages
     needs: release
     runs-on: ubuntu-latest
     permissions:
@@ -61,16 +235,12 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "AUR publishing skipped: no deploy key or this is a prerelease tag."
           fi
-
-      - name: Checkout
+      - uses: actions/checkout@v6
         if: steps.aur.outputs.enabled == 'true'
-        uses: actions/checkout@v6
         with:
           persist-credentials: false
-
       - name: Download published source and checksums
         if: steps.aur.outputs.enabled == 'true'
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -79,10 +249,10 @@ jobs:
             --pattern checksums.txt \
             --pattern 'whodis_*_source.tar.gz' \
             --dir dist
-
-      - name: Publish AUR package
+      - name: Publish CLI and GUI AUR packages
         if: steps.aur.outputs.enabled == 'true'
-        shell: bash
         env:
           AUR_KEY: ${{ secrets.AUR_KEY }}
-        run: scripts/publish-aur.sh "$GITHUB_REF_NAME" dist/checksums.txt
+        run: |
+          scripts/publish-aur.sh "$GITHUB_REF_NAME" dist/checksums.txt
+          scripts/publish-aur-gui.sh "$GITHUB_REF_NAME" dist/checksums.txt

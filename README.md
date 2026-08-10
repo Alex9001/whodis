@@ -10,6 +10,8 @@ The registry world is split between old-school WHOIS, modern RDAP, and delegated
 
 Instead of dumping a wall of registry text, it can turn the answer into a compact terminal dashboard, a hierarchical tree, a 2002-style ASCII layout, or clean plain text. Registration facts, dates, discovered DNS records, contacts, and routing details each get the space they need.
 
+Prefer windows and buttons? `whodis-gui` puts the same lookup engine in a focused native desktop interface for Linux, Windows, and macOS. Paste a domain, IP, ASN, or full URL, then choose **Lookup** or **Scan DNS**. Results are organized into Overview, DNS, Contacts, and Raw tabs, with a separate batch workspace for larger lists.
+
 ```text
 $ whodis example.com
 ╭─ Registration ──────────────────────╮ ╭─ Contacts · 1 ───────────────────────╮
@@ -46,10 +48,18 @@ For domain lookups, use `scan` when you want a fast public-DNS discovery pass an
 - **Direct file export** — use `--output result.json` and Whodis infers the format from the extension.
 - **More than domains** — look up IPv4, IPv6, CIDR networks, and autonomous system numbers such as `AS15169`.
 - **Cross-platform builds** — the same CLI is designed for Linux, macOS, and Windows.
+- **A native desktop companion** — a clean Qt Widgets interface follows the host system theme and bundles its own private lookup engine; the CLI is not required.
 
 ## Install
 
-### Linux and macOS
+Whodis is released as two independent applications from the same repository:
+
+- `whodis` is the small command-line program for shells, scripts, and servers.
+- `whodis-gui` is the desktop program for Linux, Windows, and macOS. It includes a private engine and does not require `whodis` on `PATH`.
+
+### Command line
+
+#### Linux and macOS
 
 ```bash
 curl -fsSL https://github.com/Alex9001/whodis/releases/latest/download/install.sh | sh
@@ -59,7 +69,7 @@ The installer detects your operating system and CPU, verifies the release
 checksum, and places `whodis` in `/usr/local/bin`. It asks for `sudo` only if
 that directory is not writable.
 
-### Windows
+#### Windows
 
 Run in PowerShell—no administrator window is required:
 
@@ -70,7 +80,7 @@ irm https://github.com/Alex9001/whodis/releases/latest/download/install.ps1 | ie
 The installer puts Whodis under your local application-data directory and adds
 it to your user `PATH` without creating duplicate entries.
 
-### With Go
+#### With Go
 
 If you already have Go installed:
 
@@ -84,10 +94,45 @@ directory is on `PATH`.
 Prebuilt archives for every supported platform and `checksums.txt` are also
 available on the [latest GitHub Release](https://github.com/Alex9001/whodis/releases/latest).
 
-The source-built AUR package is prepared but cannot be submitted until the
+### Desktop app
+
+Download the `whodis-gui` package for your system from the
+[latest GitHub Release](https://github.com/Alex9001/whodis/releases/latest):
+
+- **Linux:** download the AppImage for `amd64` or `arm64`, make it executable,
+  and run it. It is self-contained and does not install the CLI.
+- **Windows:** use the matching `setup.exe` for a normal per-user installation,
+  or the portable ZIP when you do not want an installer.
+- **macOS:** download the universal DMG, drag Whodis to Applications, then
+  Control-click **Whodis** and choose **Open** on the first launch.
+
+The first desktop packages are intentionally unsigned, so Windows SmartScreen
+or macOS Gatekeeper may ask you to confirm the first launch. Signing and store
+distribution can be added later without changing the application architecture.
+
+The source-built AUR packages are prepared but cannot be submitted until the
 maintainer's AUR account is registered. The exact one-time publication steps
-are preserved in [AUR_HANDOFF.md](AUR_HANDOFF.md); after publication Arch users
-will be able to install it with `yay -S whodis` or `paru -S whodis`.
+for both packages are preserved in [AUR_HANDOFF.md](AUR_HANDOFF.md); after
+publication Arch users will be able to choose `whodis`, `whodis-gui`, or both.
+
+## Desktop interface
+
+The main window stays deliberately small: one target field, **Lookup**,
+**Scan DNS**, and **Batch**. It accepts domains, IP addresses, ASNs, and full
+HTTP or HTTPS URLs; URLs are reduced to their hostname before lookup.
+
+- **Overview** groups registration, timeline, nameservers, source, and notices.
+- **DNS** shows discovered records in a sortable table.
+- **Contacts** keeps registrant, administrative, and technical records readable.
+- **Raw** preserves the original RDAP, WHOIS, or RWhois response.
+- **Batch** imports or pastes target lists, reports progress, retries failures,
+  and exports CSV, TSV, or JSON.
+
+Advanced options expose protocol selection, fallback behavior, custom WHOIS or
+RWhois authorities, resolvers, timeouts, cache refresh, and an explicitly
+confirmed AXFR action. The GUI talks to a bundled private Go engine over a
+versioned local protocol, so desktop code never reimplements lookup behavior
+and the server-focused CLI remains free of Qt dependencies.
 
 ## Quick start
 
@@ -342,9 +387,11 @@ When IANA does not list an RDAP service for a target, Whodis asks `whois.iana.or
 
 Automatic routing falls back only when the selected service is unavailable or unusable. Authoritative not-found and rate-limit responses remain visible. Use `--try-both` for wider diagnostic coverage or `--strict` for a strict single-protocol lookup. To force a protocol, place `rdap`, `whois`, or `rwhois` before the command; direct RWhois requires `--server`.
 
-## Go API and future interfaces
+## Go API and interfaces
 
-The protocol engine is independent of terminal rendering. That keeps the same lookup and normalized result model reusable from a future Wails desktop interface or another Go application.
+The protocol engine is independent of terminal and desktop rendering. The CLI,
+native Qt desktop app, and other Go applications reuse the same lookup and
+normalized result model.
 
 The public API is centered on:
 
@@ -380,6 +427,10 @@ go vet ./...
 go run ./cmd/whodis example.com
 ```
 
+The desktop app additionally needs CMake, Ninja, Qt 6 Core/Gui/Widgets, and a
+C++17 compiler. See [desktop/README.md](desktop/README.md) for local build,
+test, engine-protocol, and packaging details.
+
 Tests use local fixtures and in-memory protocol sessions; public registries are
 not queried during the test suite. Live checks are intentionally manual because
 registry availability and query limits are external conditions.
@@ -396,9 +447,11 @@ registry availability and query limits are external conditions.
   does not yet select arbitrary JSON paths or individual DNS record types.
 - Raw protocol output is available only for one unprojected target. Multi-target
   and field-selected output must use a structured or human-readable format.
-- Authenticated RDAP, proprietary registry APIs, web scraping, and desktop or
-  mobile GUIs are not included. The Go API is intentionally separated from the
-  terminal renderer so those interfaces can be added later.
+- Authenticated RDAP, proprietary registry APIs, and web scraping are not
+  included.
+- Desktop packages are currently unsigned and are distributed directly through
+  GitHub Releases; Microsoft Store, Mac App Store, and mobile builds are not
+  part of the first desktop release.
 
 ## License
 

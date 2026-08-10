@@ -1,52 +1,57 @@
 # AUR publication handoff
 
-The source-package templates and publication automation are ready. An AUR
-account and its registered SSH key are the only missing pieces for the first
-push. Generate `PKGBUILD` and `.SRCINFO` from the latest stable GitHub source
-archive as described below; do not publish the `.in` templates or copy an old
-versioned package snapshot from `packaging/aur/`.
+The source-package templates and automation are ready for two independent AUR
+packages:
 
-The application is MIT-licensed. The separate `packaging/aur/LICENSE` applies
-0BSD only to the AUR packaging files, as recommended by the
-[AUR submission guidelines](https://wiki.archlinux.org/title/AUR_submission_guidelines).
+- `whodis` installs the small CLI for workstations and servers.
+- `whodis-gui` installs the Qt desktop app and its private engine. It does not
+  depend on the CLI package.
+
+An AUR account with its SSH key registered is the only missing requirement for
+the first pushes. Both packages build from the same stable GitHub source
+archive, but live in separate AUR Git repositories. The application is MIT
+licensed; `packaging/aur/LICENSE` and `packaging/aur-gui/LICENSE` apply 0BSD
+only to the AUR packaging files.
 
 ## Package contract
 
-- AUR package: `whodis` (source-built, not `whodis-bin`)
 - Maintainer: `Aleksandr Oreshkin <alex@cyberbrand.net>`
 - Upstream: `https://github.com/Alex9001/whodis`
-- Initial version if published now: `0.5.1-1`
-- Released source SHA-256: derived and verified from the selected GitHub release below
-- Architecture: `x86_64`
-- Installed binary: `/usr/bin/whodis`
-- Installed application license: `/usr/share/licenses/whodis/LICENSE`
+- AUR repositories: `whodis.git` and `whodis-gui.git`
 - AUR branch: `master`
+- Architecture: `x86_64`
+- CLI install: `/usr/bin/whodis`
+- GUI install: `/usr/bin/whodis-gui`, private engine under
+  `/usr/libexec/whodis/`, desktop entry, and icon
+- GUI dependency: `qt6-base`
+- First GUI version: the first stable release that contains `desktop/`
+  (expected `0.6.0-1`; never publish `whodis-gui` from `v0.5.1`)
 
-The original workstation already has a dedicated key:
+The workstation previously had a dedicated key:
 
 - Private key: `~/.ssh/aur_whodis` (mode `0600`; never share it)
 - Public key: `~/.ssh/aur_whodis.pub`
 - Fingerprint: `SHA256:rKZhT6CBWNn+12MULrVWmGMMyR34di3FEsNIWzHQaXc`
 
-## 1. Create the account and register the key
+## 1. Register the account and key
 
-1. Open <https://aur.archlinux.org/register>, register, and verify the email.
-2. Sign in and open **My Account**.
-3. Display the existing public key:
+1. Register and verify the account at <https://aur.archlinux.org/register>.
+2. Sign in, open **My Account**, and add the complete output of:
 
    ```bash
    cat ~/.ssh/aur_whodis.pub
    ```
 
-4. Copy the complete `ssh-ed25519 ...` line into the account's SSH public-key
-   field and save it.
-5. Confirm that the displayed fingerprint still matches this handoff:
+3. Confirm the fingerprint and test authentication:
 
    ```bash
    ssh-keygen -lf ~/.ssh/aur_whodis.pub
+   ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes aur@aur.archlinux.org
    ```
 
-If the key files are missing, create a replacement dedicated key first:
+A successful SSH test prints an AUR greeting and disconnects. If the key files
+are missing, make a replacement, register its public half, and update the
+fingerprint recorded above:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C 'whodis AUR publishing' \
@@ -54,48 +59,41 @@ ssh-keygen -t ed25519 -N '' -C 'whodis AUR publishing' \
 chmod 600 ~/.ssh/aur_whodis
 ```
 
-Register the replacement public key and update the fingerprint recorded in
-this file. Test authentication:
+Never commit, paste, or upload the private key. Only the `.pub` half is public.
+
+## 2. Select a release
+
+Use the newest stable release containing the GUI source. `v0.6.0` is the
+expected first eligible release; replace it if a newer stable release exists
+when the account is ready.
 
 ```bash
-ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes aur@aur.archlinux.org
-```
-
-A successful test prints an AUR greeting and disconnects; it does not provide
-a shell. Never commit, paste, or upload the private key. Only the `.pub` half is
-public.
-
-## 2. Confirm the release and package name
-
-Set the release to publish, then confirm it exists and is stable. `v0.5.1` is
-the intended initial AUR version; replace it with a newer stable release if
-publication happens later.
-
-```bash
-release_tag=v0.5.1
+release_tag=v0.6.0
 release_version=${release_tag#v}
 gh release view "$release_tag" --repo Alex9001/whodis
 ```
 
-Also open
-<https://aur.archlinux.org/packages/whodis>. If another person has created that
-package, stop and follow the AUR ownership/adoption process instead of pushing
-over their work.
+Confirm that both package names are available:
 
-Run all remaining commands from a clean, up-to-date upstream `whodis` checkout
-on Arch Linux with `base-devel`, `git`, `go`, and `namcap` installed.
+- <https://aur.archlinux.org/packages/whodis>
+- <https://aur.archlinux.org/packages/whodis-gui>
 
-## 3. Create and validate the first package
+If another person has created either package, stop and use the AUR ownership or
+adoption process instead of pushing over their work.
 
-Use a sibling directory so the AUR Git repository cannot be confused with the
-GitHub repository. If `../whodis-aur` already exists, inspect it instead of
-deleting or overwriting it.
+Run the remaining steps from a clean upstream checkout on Arch Linux with
+`base-devel`, `git`, `go`, `cmake`, `ninja`, `qt6-base`, and `namcap` installed.
+
+## 3. Clone and render both packages
+
+Use sibling directories so the AUR repositories cannot be confused with the
+GitHub checkout. Inspect rather than overwrite either directory if it exists.
 
 ```bash
-release_tag=${release_tag:-v0.5.1}
-release_version=${release_tag#v}
 git clone -c core.sshCommand='ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes' \
   ssh://aur@aur.archlinux.org/whodis.git ../whodis-aur
+git clone -c core.sshCommand='ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes' \
+  ssh://aur@aur.archlinux.org/whodis-gui.git ../whodis-gui-aur
 
 aur_release_dir="$(mktemp -d)"
 gh release download "$release_tag" --repo Alex9001/whodis \
@@ -107,41 +105,55 @@ gh release download "$release_tag" --repo Alex9001/whodis \
   grep "whodis_${release_version}_source.tar.gz$" checksums.txt | sha256sum -c -
 )
 source_sha256="$(sha256sum "$aur_release_dir/whodis_${release_version}_source.tar.gz" | cut -d ' ' -f 1)"
-scripts/render-aur.sh "$release_version" "$source_sha256" ../whodis-aur
 
-(
-  cd ../whodis-aur
-  makepkg --verifysource
-  makepkg --printsrcinfo | diff -u .SRCINFO -
-  makepkg --cleanbuild --syncdeps
-  namcap PKGBUILD
-  namcap "whodis-${release_version}-1-"*.pkg.tar.zst
-)
+scripts/render-aur.sh "$release_version" "$source_sha256" ../whodis-aur
+scripts/render-aur-gui.sh "$release_version" "$source_sha256" ../whodis-gui-aur
 ```
 
-Stop if downloading, checksum verification, compilation, tests, or `namcap`
-reports a material error. Review `PKGBUILD`, `.SRCINFO`, and `LICENSE`; confirm
-that no private key or unrelated file is present. `.SRCINFO` must always be
-regenerated after package metadata changes.
+Do not publish the `.in` templates. Each rendered AUR checkout must contain only
+`PKGBUILD`, `.SRCINFO`, and `LICENSE` as tracked package files.
 
-## 4. Publish the initial AUR repository
+## 4. Build and inspect
+
+```bash
+for aur_checkout in ../whodis-aur ../whodis-gui-aur; do
+  (
+    cd "$aur_checkout"
+    makepkg --verifysource
+    makepkg --printsrcinfo | diff -u .SRCINFO -
+    makepkg --cleanbuild --syncdeps
+    namcap PKGBUILD
+    namcap ./*.pkg.tar.zst
+  )
+done
+```
+
+Stop on any download, checksum, compilation, test, or material `namcap` error.
+Review both sets of files and confirm no private key or unrelated file is
+present. Regenerate `.SRCINFO` after every metadata change.
+
+## 5. Publish the initial repositories
 
 ```bash
 git -C ../whodis-aur config user.name 'Aleksandr Oreshkin'
 git -C ../whodis-aur config user.email 'alex@cyberbrand.net'
-git -C ../whodis-aur status --short
 git -C ../whodis-aur add PKGBUILD .SRCINFO LICENSE
 git -C ../whodis-aur commit -m "Initial release: whodis ${release_version}"
 git -C ../whodis-aur push origin master
+
+git -C ../whodis-gui-aur config user.name 'Aleksandr Oreshkin'
+git -C ../whodis-gui-aur config user.email 'alex@cyberbrand.net'
+git -C ../whodis-gui-aur add PKGBUILD .SRCINFO LICENSE
+git -C ../whodis-gui-aur commit -m "Initial release: whodis-gui ${release_version}"
+git -C ../whodis-gui-aur push origin master
 ```
 
-The staged files should be exactly `PKGBUILD`, `.SRCINFO`, and `LICENSE`. Never
-force-push AUR history.
+Before each commit, `git status --short` must show exactly `PKGBUILD`,
+`.SRCINFO`, and `LICENSE`. Never force-push AUR history.
 
-## 5. Verify the published package
+## 6. Verify clean installs
 
-Open <https://aur.archlinux.org/packages/whodis>, inspect the rendered metadata,
-then test from a clean Arch environment:
+Inspect both AUR web pages, then install from fresh clones:
 
 ```bash
 whodis_aur_check="$(mktemp -d)"
@@ -149,58 +161,61 @@ git clone https://aur.archlinux.org/whodis.git "$whodis_aur_check"
 (
   cd "$whodis_aur_check"
   makepkg --syncdeps --cleanbuild --install
-  command -v whodis
+  test "$(command -v whodis)" = /usr/bin/whodis
   whodis --version
-  whodis google.com
+  whodis example.com
+)
+
+whodis_gui_aur_check="$(mktemp -d)"
+git clone https://aur.archlinux.org/whodis-gui.git "$whodis_gui_aur_check"
+(
+  cd "$whodis_gui_aur_check"
+  makepkg --syncdeps --cleanbuild --install
+  test "$(command -v whodis-gui)" = /usr/bin/whodis-gui
+  test -x /usr/libexec/whodis/whodis-gui-engine
+  QT_QPA_PLATFORM=offscreen timeout 5 whodis-gui || test "$?" -eq 124
 )
 ```
 
-`command -v whodis` must print `/usr/bin/whodis`, and the version must be
-the value of `$release_version` selected above.
+The CLI version must equal `$release_version`. The offscreen GUI must remain
+running until `timeout` stops it rather than fail during startup.
 
-## 6. Enable future automatic updates
+## 7. Enable automatic updates
 
-Only after the public key works and the initial AUR repository has been
-published, save the private key as an encrypted GitHub Actions secret:
+Only after both initial pushes are live, store the private key as an encrypted
+GitHub Actions secret:
 
 ```bash
 gh secret set AUR_KEY --repo Alex9001/whodis < ~/.ssh/aur_whodis
 gh secret list --repo Alex9001/whodis
 ```
 
-Confirm that only the secret name, not its value, is displayed. Future stable
-`vX.Y.Z` releases update AUR with the same audited templates through
-`scripts/publish-aur.sh`; prereleases and runs without `AUR_KEY` skip AUR
-publication. Never place the private key in workflow files, logs, release
-assets, or Git history.
+Future stable tags update both repositories through `scripts/publish-aur.sh`
+and `scripts/publish-aur-gui.sh`. Prereleases and workflow runs without
+`AUR_KEY` skip publication. Never put the private key in workflows, logs,
+release assets, or Git history.
 
-## 7. Mark AUR as live in the README
+## 8. Advertise the live packages
 
-After the package page and clean installation are verified, replace the
-README's "publication pending" paragraph with the live commands:
-
-````markdown
-### Arch Linux (AUR)
+Only after the clean installs succeed, replace the README's pending AUR text
+with live commands:
 
 ```bash
 yay -S whodis
-# or: paru -S whodis
+yay -S whodis-gui
 ```
-````
 
-Link the heading to <https://aur.archlinux.org/packages/whodis>, commit the
-README update to `main`, and let CI finish before considering the handoff
-complete. Do not advertise the command before the AUR page is live.
+Link each command to its package page, commit the README update to `main`, and
+let CI finish. Do not advertise a package before its page is live.
 
 ## Recovery and key rotation
 
-- **Permission denied:** verify that the registered public key matches
-  `ssh-keygen -lf ~/.ssh/aur_whodis.pub`, then retry with
-  `-o IdentitiesOnly=yes`.
-- **Metadata rejected:** regenerate `.SRCINFO` with
-  `makepkg --printsrcinfo > .SRCINFO`, commit both files, and push normally.
-- **Compromised key:** delete its public half from the AUR account, run
-  `gh secret delete AUR_KEY --repo Alex9001/whodis`, generate and register a new
-  dedicated key, then replace the secret.
+- **Permission denied:** compare the registered public key with
+  `ssh-keygen -lf ~/.ssh/aur_whodis.pub`, then use `IdentitiesOnly=yes`.
+- **Metadata rejected:** regenerate `.SRCINFO`, commit both metadata files, and
+  push normally.
+- **Compromised key:** remove it from the AUR account, run
+  `gh secret delete AUR_KEY --repo Alex9001/whodis`, create and register a new
+  dedicated key, and replace the secret.
 - **Failed update:** do not move an existing release tag or force-push AUR.
-  Correct the package configuration and publish a new patch release.
+  Correct the package and publish a new patch release.

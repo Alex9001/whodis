@@ -20,6 +20,10 @@ jobs:
           sh -n scripts/install.sh
           sh -n scripts/render-aur.sh
           sh -n scripts/publish-aur.sh
+          sh -n scripts/render-aur-gui.sh
+          sh -n scripts/publish-aur-gui.sh
+          sh -n scripts/package-gui-linux.sh
+          sh -n scripts/collect-qt-licenses.sh
       - name: Validate AUR template rendering
         run: |
           aur_test_dir="$(mktemp -d)"
@@ -29,6 +33,11 @@ jobs:
             "$aur_test_dir"
           ! grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"
           cmp packaging/aur/LICENSE "$aur_test_dir/LICENSE"
+          scripts/render-aur-gui.sh 0.1.0 \
+            0000000000000000000000000000000000000000000000000000000000000000 \
+            "$aur_test_dir"
+          ! grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"
+          cmp packaging/aur-gui/LICENSE "$aur_test_dir/LICENSE"
       - name: Exercise Unix installer with a local release
         run: |
           installer_test_dir="$(mktemp -d)"
@@ -105,10 +114,43 @@ jobs:
             throw "PowerShell installer did not place whodis.exe in the requested directory."
           }
 
+  desktop-linux:
+    name: Test Qt desktop application
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install Qt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake desktop-file-utils ninja-build qt6-base-dev qt6-tools-dev-tools
+      - name: Configure and build
+        run: cmake -S desktop -B build-gui -G Ninja -DWHODIS_VERSION=ci -DBUILD_TESTING=ON
+      - run: cmake --build build-gui --parallel
+      - name: Test desktop widgets
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build-gui --output-on-failure
+      - name: Smoke-test private engine
+        run: |
+          printf '%s\n' '{"jsonrpc":"2.0","id":"ci","method":"hello"}' |
+            build-gui/bin/whodis-gui-engine |
+            grep '"protocol_version":1'
+      - name: Verify install layout and Qt notices
+        run: |
+          cmake --install build-gui --prefix "$RUNNER_TEMP/whodis-gui-install"
+          scripts/collect-qt-licenses.sh "$RUNNER_TEMP/whodis-gui-install/share/licenses/whodis-gui/Qt-Licenses"
+          test -x "$RUNNER_TEMP/whodis-gui-install/bin/whodis-gui"
+          test -x "$RUNNER_TEMP/whodis-gui-install/libexec/whodis/whodis-gui-engine"
+          desktop-file-validate "$RUNNER_TEMP/whodis-gui-install/share/applications/net.cyberbrand.whodis.desktop"
+
   release-snapshot:
     needs:
       - test
       - powershell-installer
+      - desktop-linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

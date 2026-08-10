@@ -1,7 +1,7 @@
 // Package whodis provides protocol-aware registration-data lookups.
 //
 // Its public API intentionally has no terminal or GUI dependency, so the same
-// Client can power the command-line tool and a future desktop application.
+// Client can power the command-line tool, native desktop app, and other clients.
 package whodis
 
 import (
@@ -176,6 +176,19 @@ type LookupOptions struct {
 type BatchLookupOptions struct {
 	LookupOptions LookupOptions
 	Workers       int
+	// OnProgress is called once for each completed item. Calls are serialized
+	// in completion order and never overlap. The callback may be nil.
+	OnProgress func(BatchProgress)
+}
+
+// BatchProgress describes one completed item in an active batch lookup.
+// Index is the item's original input position, while Completed counts all
+// items completed so far regardless of input order.
+type BatchProgress struct {
+	Index     int
+	Completed int
+	Total     int
+	Item      BatchItem
 }
 
 // BatchError is the safe-to-serialize form of a lookup failure.

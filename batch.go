@@ -43,14 +43,19 @@ func (c *Client) LookupBatch(ctx context.Context, inputs []string, options Batch
 		result.Items[index].Input = input
 	}
 
+	type completion struct {
+		index int
+		item  BatchItem
+	}
 	jobs := make(chan int)
+	completedItems := make(chan completion, len(inputs))
 	var group sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {
 		group.Add(1)
 		go func() {
 			defer group.Done()
 			for index := range jobs {
-				result.Items[index] = c.lookupBatchItem(ctx, inputs[index], lookupOptions)
+				completedItems <- completion{index: index, item: c.lookupBatchItem(ctx, inputs[index], lookupOptions)}
 			}
 		}()
 	}
@@ -58,7 +63,18 @@ func (c *Client) LookupBatch(ctx context.Context, inputs []string, options Batch
 		jobs <- index
 	}
 	close(jobs)
-	group.Wait()
+	go func() {
+		group.Wait()
+		close(completedItems)
+	}()
+	completed := 0
+	for completion := range completedItems {
+		result.Items[completion.index] = completion.item
+		completed++
+		if options.OnProgress != nil {
+			options.OnProgress(BatchProgress{Index: completion.index, Completed: completed, Total: len(inputs), Item: completion.item})
+		}
+	}
 	return result, nil
 }
 

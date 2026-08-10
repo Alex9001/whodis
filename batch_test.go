@@ -4,9 +4,41 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestLookupBatchReportsSerializedProgress(t *testing.T) {
+	client := NewClient(ClientOptions{Adapters: []ProtocolAdapter{batchTestAdapter{}}})
+	var mutex sync.Mutex
+	var progress []BatchProgress
+	batch, err := client.LookupBatch(context.Background(), []string{"one.example", "two.example", "three.example"}, BatchLookupOptions{
+		LookupOptions: LookupOptions{Protocol: ProtocolRWHOIS, Server: "fixture.example"},
+		Workers:       3,
+		OnProgress: func(update BatchProgress) {
+			mutex.Lock()
+			defer mutex.Unlock()
+			progress = append(progress, update)
+		},
+	})
+	if err != nil {
+		t.Fatalf("LookupBatch() error = %v", err)
+	}
+	if len(batch.Items) != 3 || len(progress) != 3 {
+		t.Fatalf("items/progress = %d/%d, want 3/3", len(batch.Items), len(progress))
+	}
+	seen := map[int]bool{}
+	for index, update := range progress {
+		if update.Completed != index+1 || update.Total != 3 || update.Index < 0 || update.Index >= 3 {
+			t.Fatalf("progress[%d] = %+v", index, update)
+		}
+		if seen[update.Index] {
+			t.Fatalf("duplicate progress index %d", update.Index)
+		}
+		seen[update.Index] = true
+	}
+}
 
 func TestLookupBatchPreservesOrderAndContinues(t *testing.T) {
 	client := NewClient(ClientOptions{Timeout: time.Second, CacheDirectory: t.TempDir(), Adapters: []ProtocolAdapter{batchTestAdapter{}}})

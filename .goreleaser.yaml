@@ -41,6 +41,7 @@ checksum:
   extra_files:
     - glob: ./scripts/install.sh
     - glob: ./scripts/install.ps1
+    - glob: ./.release-assets/gui/*
 
 source:
   enabled: true
@@ -62,3 +63,4 @@ release:
   extra_files:
     - glob: ./scripts/install.sh
     - glob: ./scripts/install.ps1
+    - glob: ./.release-assets/gui/*

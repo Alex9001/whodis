@@ -1,0 +1,18 @@
+pkgbase = whodis-gui
+	pkgdesc = Native Qt interface for the Whodis RDAP, WHOIS, RWhois, and DNS client
+	pkgver = @PKGVER@
+	pkgrel = 1
+	url = https://github.com/Alex9001/whodis
+	arch = x86_64
+	license = MIT
+	makedepends = cmake
+	makedepends = git
+	makedepends = go
+	makedepends = ninja
+	depends = gcc-libs
+	depends = glibc
+	depends = qt6-base
+	source = whodis_@PKGVER@_source.tar.gz::https://github.com/Alex9001/whodis/releases/download/v@PKGVER@/whodis_@PKGVER@_source.tar.gz
+	sha256sums = @SHA256@
+
+pkgname = whodis-gui

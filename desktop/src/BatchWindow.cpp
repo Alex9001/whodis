@@ -1,0 +1,353 @@
+#include "BatchWindow.h"
+
+#include "EngineClient.h"
+#include "ResultWidget.h"
+
+#include <QCloseEvent>
+#include <QComboBox>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QHeaderView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QLabel>
+#include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QSaveFile>
+#include <QSettings>
+#include <QSpinBox>
+#include <QSplitter>
+#include <QStatusBar>
+#include <QTableWidget>
+#include <QToolBar>
+#include <QVBoxLayout>
+
+namespace {
+QString eventDate(const QJsonObject &result, const QStringList &actions)
+{
+    const QJsonArray events = result.value(QStringLiteral("object")).toObject().value(QStringLiteral("events")).toArray();
+    for (const QJsonValue &value : events) {
+        const QJsonObject event = value.toObject();
+        if (actions.contains(event.value(QStringLiteral("action")).toString(), Qt::CaseInsensitive))
+            return event.value(QStringLiteral("date")).toString();
+    }
+    return {};
+}
+}
+
+BatchWindow::BatchWindow(QWidget *parent)
+    : QMainWindow(parent)
+    , m_engine(new EngineClient(this))
+    , m_targets(new QPlainTextEdit(this))
+    , m_mode(new QComboBox(this))
+    , m_workers(new QSpinBox(this))
+    , m_start(new QPushButton(tr("Start"), this))
+    , m_cancel(new QPushButton(tr("Cancel"), this))
+    , m_retry(new QPushButton(tr("Retry Failed"), this))
+    , m_export(new QPushButton(tr("Export…"), this))
+    , m_progress(new QProgressBar(this))
+    , m_table(new QTableWidget(this))
+    , m_result(new ResultWidget(this))
+{
+    setWindowTitle(tr("Whodis Batch Lookup"));
+    setWindowIcon(QIcon(QStringLiteral(":/icons/whodis.png")));
+    resize(1050, 720);
+    m_targets->setPlaceholderText(tr("One domain, IP, ASN, or URL per line\nBlank lines and lines beginning with # are ignored."));
+    m_targets->setMaximumHeight(140);
+    m_mode->addItem(tr("Registration"), QStringLiteral("registration"));
+    m_mode->addItem(tr("DNS Scan"), QStringLiteral("scan"));
+    m_workers->setRange(1, 32);
+    m_workers->setValue(4);
+    m_workers->setToolTip(tr("Concurrent lookups"));
+
+    auto *toolbar = addToolBar(tr("Batch actions"));
+    toolbar->setMovable(false);
+    auto *importAction = toolbar->addAction(tr("Import…"));
+    toolbar->addWidget(new QLabel(tr(" Mode: "), this));
+    toolbar->addWidget(m_mode);
+    toolbar->addWidget(new QLabel(tr("  Jobs: "), this));
+    toolbar->addWidget(m_workers);
+    toolbar->addSeparator();
+    toolbar->addWidget(m_start);
+    toolbar->addWidget(m_cancel);
+    toolbar->addWidget(m_retry);
+    toolbar->addWidget(m_export);
+
+    m_table->setColumnCount(6);
+    m_table->setHorizontalHeaderLabels({tr("Target"), tr("State"), tr("Expiration"), tr("Registrar"), tr("Protocol"), tr("Error")});
+    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_table->setSortingEnabled(true);
+    m_table->setAlternatingRowColors(true);
+    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
+
+    auto *splitter = new QSplitter(Qt::Vertical, this);
+    auto *top = new QWidget(splitter);
+    auto *topLayout = new QVBoxLayout(top);
+    topLayout->setContentsMargins(0, 0, 0, 0);
+    topLayout->addWidget(m_targets);
+    topLayout->addWidget(m_progress);
+    topLayout->addWidget(m_table);
+    splitter->addWidget(top);
+    splitter->addWidget(m_result);
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 2);
+    setCentralWidget(splitter);
+
+    m_progress->setVisible(false);
+    m_cancel->setVisible(false);
+    m_retry->setEnabled(false);
+    m_export->setEnabled(false);
+    m_start->setEnabled(false);
+
+    connect(importAction, &QAction::triggered, this, &BatchWindow::importTargets);
+    connect(m_start, &QPushButton::clicked, this, &BatchWindow::startLookup);
+    connect(m_cancel, &QPushButton::clicked, this, &BatchWindow::cancelLookup);
+    connect(m_retry, &QPushButton::clicked, this, &BatchWindow::retryFailed);
+    connect(m_export, &QPushButton::clicked, this, &BatchWindow::exportResults);
+    connect(m_table, &QTableWidget::itemSelectionChanged, this, &BatchWindow::showSelectedResult);
+    connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int) {
+        statusBar()->showMessage(tr("Engine %1 ready").arg(version), 3000);
+        m_start->setEnabled(true);
+    });
+    connect(m_engine, &EngineClient::engineUnavailable, this, [this](const QString &message) {
+        statusBar()->showMessage(message);
+        m_start->setEnabled(false);
+    });
+    connect(m_engine, &EngineClient::responseReceived, this, &BatchWindow::handleResponse);
+    connect(m_engine, &EngineClient::requestFailed, this, &BatchWindow::handleFailure);
+    connect(m_engine, &EngineClient::progressReceived, this, &BatchWindow::handleProgress);
+
+    QSettings settings;
+    restoreGeometry(settings.value(QStringLiteral("batch/geometry")).toByteArray());
+    m_engine->start();
+}
+
+void BatchWindow::closeEvent(QCloseEvent *event)
+{
+    if (!m_activeRequest.isEmpty())
+        m_engine->cancel(m_activeRequest);
+    QSettings settings;
+    settings.setValue(QStringLiteral("batch/geometry"), saveGeometry());
+    QMainWindow::closeEvent(event);
+}
+
+void BatchWindow::importTargets()
+{
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import targets"), {}, tr("Text files (*.txt);;All files (*)"));
+    if (path.isEmpty())
+        return;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Could not import"), file.errorString());
+        return;
+    }
+    m_targets->setPlainText(QString::fromUtf8(file.readAll()));
+}
+
+QStringList BatchWindow::targetsFromEditor() const
+{
+    QStringList targets;
+    const QStringList lines = m_targets->toPlainText().split('\n');
+    for (const QString &line : lines) {
+        const QString target = line.trimmed();
+        if (!target.isEmpty() && !target.startsWith('#'))
+            targets.append(target);
+    }
+    return targets;
+}
+
+void BatchWindow::startLookup()
+{
+    const QStringList targets = targetsFromEditor();
+    if (targets.isEmpty()) {
+        statusBar()->showMessage(tr("Add at least one target."), 5000);
+        return;
+    }
+    beginLookup(targets);
+}
+
+void BatchWindow::beginLookup(const QStringList &targets)
+{
+    m_cancelRequested = false;
+    m_items = QVector<QJsonObject>(targets.size());
+    m_table->setSortingEnabled(false);
+    m_table->setRowCount(targets.size());
+    for (int row = 0; row < targets.size(); ++row) {
+        auto *targetItem = new QTableWidgetItem(targets.at(row));
+        targetItem->setData(Qt::UserRole, row);
+        m_table->setItem(row, 0, targetItem);
+        m_table->setItem(row, 1, new QTableWidgetItem(tr("Queued")));
+        for (int column = 2; column < m_table->columnCount(); ++column)
+            m_table->setItem(row, column, new QTableWidgetItem);
+    }
+    m_table->setSortingEnabled(true);
+    m_token.clear();
+    m_result->clearResult();
+    m_progress->setRange(0, targets.size());
+    m_progress->setValue(0);
+    QJsonArray targetArray;
+    for (const QString &target : targets)
+        targetArray.append(target);
+    const QJsonObject params{{QStringLiteral("targets"), targetArray},
+                             {QStringLiteral("mode"), m_mode->currentData().toString()},
+                             {QStringLiteral("workers"), m_workers->value()}};
+    m_activeRequest = m_engine->request(QStringLiteral("lookup"), params);
+    setBusy(true);
+    statusBar()->showMessage(tr("Looking up %1 targets…").arg(targets.size()));
+}
+
+void BatchWindow::cancelLookup()
+{
+    if (!m_activeRequest.isEmpty()) {
+        m_cancelRequested = true;
+        m_engine->cancel(m_activeRequest);
+        statusBar()->showMessage(tr("Canceling batch…"));
+    }
+}
+
+void BatchWindow::retryFailed()
+{
+    QStringList failed;
+    for (const QJsonObject &item : std::as_const(m_items)) {
+        if (!item.value(QStringLiteral("error")).isUndefined())
+            failed.append(item.value(QStringLiteral("input")).toString());
+    }
+    if (!failed.isEmpty())
+        beginLookup(failed);
+}
+
+void BatchWindow::exportResults()
+{
+    if (m_token.isEmpty())
+        return;
+    const QString filters = tr("CSV table (*.csv);;Tab-separated text (*.tsv);;JSON (*.json)");
+    QString selectedFilter;
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export batch results"), QStringLiteral("whodis-results.csv"), filters, &selectedFilter);
+    if (path.isEmpty())
+        return;
+    QString format = QStringLiteral("csv");
+    if (selectedFilter.contains(QStringLiteral("tsv"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".tsv"), Qt::CaseInsensitive))
+        format = QStringLiteral("tsv");
+    else if (selectedFilter.contains(QStringLiteral("JSON"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive))
+        format = QStringLiteral("json");
+    m_exportPath = path;
+    m_exportRequest = m_engine->request(QStringLiteral("export"), {{QStringLiteral("token"), m_token}, {QStringLiteral("format"), format}});
+}
+
+void BatchWindow::handleResponse(const QString &id, const QString &method, const QJsonValue &result)
+{
+    if (method == QStringLiteral("lookup") && id == m_activeRequest) {
+        const QJsonObject response = result.toObject();
+        m_token = response.value(QStringLiteral("token")).toString();
+        const QJsonArray items = response.value(QStringLiteral("items")).toArray();
+        m_items.resize(items.size());
+        for (int index = 0; index < items.size(); ++index) {
+            m_items[index] = items.at(index).toObject();
+            updateRow(index, m_items[index]);
+        }
+        finishLookup(response.value(QStringLiteral("canceled")).toBool() || m_cancelRequested);
+        return;
+    }
+    if (method == QStringLiteral("export") && id == m_exportRequest) {
+        QSaveFile file(m_exportPath);
+        if (!file.open(QIODevice::WriteOnly) || file.write(result.toObject().value(QStringLiteral("content")).toString().toUtf8()) < 0 || !file.commit())
+            QMessageBox::warning(this, tr("Could not export"), file.errorString());
+        else
+            statusBar()->showMessage(tr("Exported %1").arg(QFileInfo(m_exportPath).fileName()), 5000);
+        m_exportRequest.clear();
+        m_exportPath.clear();
+    }
+}
+
+void BatchWindow::handleFailure(const QString &id, const QString &, const QString &message)
+{
+    if (id == m_activeRequest) {
+        statusBar()->showMessage(message);
+        finishLookup(m_cancelRequested);
+    } else if (id == m_exportRequest) {
+        QMessageBox::warning(this, tr("Could not export"), message);
+        m_exportRequest.clear();
+    }
+}
+
+void BatchWindow::handleProgress(const QJsonObject &progress)
+{
+    if (progress.value(QStringLiteral("request_id")).toString() != m_activeRequest)
+        return;
+    const int index = progress.value(QStringLiteral("index")).toInt();
+    if (index >= 0 && index < m_items.size()) {
+        m_items[index] = progress.value(QStringLiteral("item")).toObject();
+        updateRow(index, m_items[index]);
+    }
+    m_progress->setValue(progress.value(QStringLiteral("completed")).toInt());
+}
+
+void BatchWindow::updateRow(int index, const QJsonObject &item)
+{
+    const int row = rowForIndex(index);
+    if (row < 0)
+        return;
+    const QJsonObject error = item.value(QStringLiteral("error")).toObject();
+    const QJsonObject result = item.value(QStringLiteral("result")).toObject();
+    const QJsonObject object = result.value(QStringLiteral("object")).toObject();
+    const QJsonObject route = result.value(QStringLiteral("route")).toObject();
+    const bool failed = !error.isEmpty();
+    m_table->item(row, 0)->setText(item.value(QStringLiteral("input")).toString());
+    m_table->item(row, 1)->setText(failed ? tr("Failed") : tr("Complete"));
+    m_table->item(row, 2)->setText(eventDate(result, {QStringLiteral("expiration"), QStringLiteral("expiry"), QStringLiteral("expires")}));
+    m_table->item(row, 3)->setText(object.value(QStringLiteral("registrar")).toString());
+    m_table->item(row, 4)->setText(route.value(QStringLiteral("protocol")).toString().toUpper());
+    m_table->item(row, 5)->setText(error.value(QStringLiteral("message")).toString());
+}
+
+int BatchWindow::rowForIndex(int index) const
+{
+    for (int row = 0; row < m_table->rowCount(); ++row) {
+        const QTableWidgetItem *target = m_table->item(row, 0);
+        if (target && target->data(Qt::UserRole).toInt() == index)
+            return row;
+    }
+    return -1;
+}
+
+void BatchWindow::finishLookup(bool canceled)
+{
+    m_activeRequest.clear();
+    setBusy(false);
+    int failures = 0;
+    for (const QJsonObject &item : std::as_const(m_items)) {
+        if (!item.value(QStringLiteral("error")).toObject().isEmpty())
+            ++failures;
+    }
+    m_retry->setEnabled(failures > 0);
+    m_export->setEnabled(!m_token.isEmpty());
+    statusBar()->showMessage(canceled ? tr("Batch canceled.") : tr("Batch complete: %1 failures.").arg(failures), 7000);
+}
+
+void BatchWindow::setBusy(bool busy)
+{
+    m_start->setVisible(!busy);
+    m_cancel->setVisible(busy);
+    m_progress->setVisible(busy);
+    m_mode->setEnabled(!busy);
+    m_workers->setEnabled(!busy);
+    m_targets->setReadOnly(busy);
+}
+
+void BatchWindow::showSelectedResult()
+{
+    const int row = m_table->currentRow();
+    const QTableWidgetItem *target = row >= 0 ? m_table->item(row, 0) : nullptr;
+    const int index = target ? target->data(Qt::UserRole).toInt() : -1;
+    if (index >= 0 && index < m_items.size() && !m_items[index].value(QStringLiteral("result")).toObject().isEmpty())
+        m_result->setItem(m_items[index]);
+}

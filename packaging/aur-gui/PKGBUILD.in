@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: 0BSD
+# Maintainer: Aleksandr Oreshkin <alex@cyberbrand.net>
+pkgname=whodis-gui
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc='Native Qt interface for the Whodis RDAP, WHOIS, RWhois, and DNS client'
+arch=('x86_64')
+url='https://github.com/Alex9001/whodis'
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'qt6-base')
+makedepends=('cmake' 'git' 'go' 'ninja')
+options=('!lto')
+source=("whodis_${pkgver}_source.tar.gz::${url}/releases/download/v${pkgver}/whodis_${pkgver}_source.tar.gz")
+sha256sums=('@SHA256@')
+
+prepare() {
+  cd "whodis_${pkgver}"
+  go mod download
+}
+
+build() {
+  cd "whodis_${pkgver}"
+  cmake -S desktop -B build-gui -G Ninja \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DWHODIS_VERSION="${pkgver}" \
+    -DBUILD_TESTING=ON
+  cmake --build build-gui
+}
+
+check() {
+  cd "whodis_${pkgver}"
+  go test ./...
+  QT_QPA_PLATFORM=offscreen ctest --test-dir build-gui --output-on-failure
+}
+
+package() {
+  cd "whodis_${pkgver}"
+  DESTDIR="${pkgdir}" cmake --install build-gui
+}
