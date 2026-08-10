@@ -30,6 +30,7 @@ type cliOptions struct {
 	timeout          time.Duration
 	refreshBootstrap bool
 	color            string
+	details          bool
 	force            bool
 	help             bool
 	showVersion      bool
@@ -85,7 +86,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer closeWriter()
-	if err := whodis.Render(writer, result, format, whodis.RenderOptions{Color: options.color}); err != nil {
+	if err := whodis.Render(writer, result, format, whodis.RenderOptions{Color: options.color, Details: options.details}); err != nil {
 		fmt.Fprintln(stderr, "whodis: could not render output:", err)
 		return 1
 	}
@@ -194,6 +195,8 @@ func parseArgs(args []string) (cliOptions, error) {
 			options.color = v
 		case "--refresh-bootstrap":
 			options.refreshBootstrap = true
+		case "--details":
+			options.details = true
 		case "--force":
 			options.force = true
 		default:
@@ -305,6 +308,7 @@ Options:
       --timeout <duration>  request timeout (default: 15s)
       --refresh-bootstrap   refresh IANA RDAP service data
       --color <mode>        auto (default), always, or never
+      --details             include full notices in pretty output
       --force               overwrite an existing output file
   -h, --help                show this help
       --version             show version

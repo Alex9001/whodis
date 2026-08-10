@@ -8,30 +8,35 @@
 
 The registry world is split between old-school WHOIS and modern RDAP. `whodis` hides that split: give it a domain, IP address, network, or ASN and it finds the right service automatically. No protocol trivia required.
 
-Instead of dumping a wall of registry text, it organizes the answer into a spreadsheet-like terminal grid.
+Instead of dumping a wall of registry text, it turns the answer into a compact terminal dashboard. Registration facts, dates, DNS, contacts, and routing details each get the space they need.
 
 ```text
-$ whodis google.com
-WHODIS · DOMAIN LOOKUP
-┌──────────────────┬──────────────────────┬────────────────────────────────────┐
-│ SECTION          │ FIELD                │ VALUE                              │
-├──────────────────┼──────────────────────┼────────────────────────────────────┤
-│ Lookup           │ Query                │ google.com                         │
-├──────────────────┼──────────────────────┼────────────────────────────────────┤
-│                  │ Protocol             │ rdap                               │
-├──────────────────┼──────────────────────┼────────────────────────────────────┤
-│ Registration     │ Name                 │ GOOGLE.COM                         │
-├──────────────────┼──────────────────────┼────────────────────────────────────┤
-│                  │ Registrar            │ MarkMonitor Inc.                   │
-├──────────────────┼──────────────────────┼────────────────────────────────────┤
-│ Nameservers      │ Nameserver           │ NS1.GOOGLE.COM                     │
-└──────────────────┴──────────────────────┴────────────────────────────────────┘
+$ whodis example.com
+╭─ WHODIS · DOMAIN ────────────────────────────────────────────────────────────╮
+│ example.com                                                                  │
+│ [RDAP] [ACTIVE] [CLIENT TRANSFER PROHIBITED]                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Registration ────────────────────────────╮  ╭─ Timeline ────────────────────╮
+│ Registrar  Example Registrar Inc.         │  │ Registered  1995-08-14        │
+│ Handle     2336799_DOMAIN_COM-VRSN        │  │ Expires     2026-08-13        │
+│ Registry   Example Registry               │  │ Updated     2025-08-14        │
+╰───────────────────────────────────────────╯  ╰───────────────────────────────╯
+╭─ DNS ─────────────────────────────────────╮  ╭─ Contacts ────────────────────╮
+│ DNSSEC  signed delegation                 │  │ REGISTRANT · TECHNICAL        │
+│ A.IANA-SERVERS.NET                        │  │ Example Registry · id-1234    │
+│ B.IANA-SERVERS.NET                        │  │                               │
+╰───────────────────────────────────────────╯  ╰───────────────────────────────╯
+╭─ Source ─────────────────────────────────────────────────────────────────────╮
+│ rdap.example.net · IANA bootstrap · 2 notices hidden · use --details         │
+╰──────────────────────────────────────────────────────────────────────────────╯
 ```
+
+The dashboard adapts to the terminal: wide windows use a multi-panel mosaic, while narrow windows stack the same semantic panels into one column. Contacts stay visible but are consolidated instead of repeated. Lengthy registry notices are summarized by count; add `--details` when you want their full text and links. The flag affects only the pretty dashboard; other output formats remain unchanged.
 
 ## What you get
 
 - **Automatic protocol selection** — RDAP for registries that support it, WHOIS where it is still needed.
-- **Readable terminal output** — the default grid groups registration details, dates, nameservers, contacts, notices, and source information.
+- **Responsive terminal dashboard** — semantic panels reorganize themselves to use the available width without repeating the same contacts or notices.
 - **Script-friendly formats** — output plain text, JSON, YAML, Markdown, or the raw registry response.
 - **Direct file export** — use `--output result.json` and Whodis infers the format from the extension.
 - **More than domains** — look up IPv4, IPv6, CIDR networks, and autonomous system numbers such as `AS15169`.
@@ -100,6 +105,9 @@ whodis AS15169
 # Print machine-readable data
 whodis example.com --format json
 
+# Expand registry notices in the terminal dashboard
+whodis example.com --details
+
 # Export to a file; .yaml selects YAML automatically
 whodis AS15169 --output google-asn.yaml
 
@@ -120,6 +128,7 @@ whodis <target> [options]
     --timeout <duration>
     --refresh-bootstrap
     --color auto|always|never
+    --details
     --force
 -h, --help
     --version

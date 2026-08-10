@@ -3,8 +3,34 @@ package main
 import (
 	"bytes"
 	"runtime/debug"
+	"strings"
 	"testing"
 )
+
+func TestParseArgsDetails(t *testing.T) {
+	for _, format := range []string{"pretty", "plain", "json", "yaml", "markdown", "raw"} {
+		t.Run(format, func(t *testing.T) {
+			options, err := parseArgs([]string{"example.com", "--format", format, "--details"})
+			if err != nil {
+				t.Fatalf("parseArgs() error = %v", err)
+			}
+			if !options.details {
+				t.Fatal("parseArgs() details = false, want true")
+			}
+			if _, err := chooseFormat(options); err != nil {
+				t.Fatalf("chooseFormat() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestUsageIncludesDetails(t *testing.T) {
+	var output bytes.Buffer
+	printUsage(&output)
+	if !strings.Contains(output.String(), "--details") {
+		t.Fatalf("printUsage() output does not document --details:\n%s", output.String())
+	}
+}
 
 func TestResolveVersion(t *testing.T) {
 	tests := []struct {
