@@ -58,5 +58,6 @@ private:
     QString m_token;
     QString m_exportRequest;
     QString m_exportPath;
+    QString m_resultMode;
     bool m_cancelRequested = false;
 };

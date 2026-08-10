@@ -137,16 +137,16 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           iconset="$RUNNER_TEMP/Whodis.iconset"
           mkdir -p "$iconset"
-          sips -z 16 16 docs/whodis_logo_no_bg.png --out "$iconset/icon_16x16.png" >/dev/null
-          sips -z 32 32 docs/whodis_logo_no_bg.png --out "$iconset/icon_16x16@2x.png" >/dev/null
-          sips -z 32 32 docs/whodis_logo_no_bg.png --out "$iconset/icon_32x32.png" >/dev/null
-          sips -z 64 64 docs/whodis_logo_no_bg.png --out "$iconset/icon_32x32@2x.png" >/dev/null
-          sips -z 128 128 docs/whodis_logo_no_bg.png --out "$iconset/icon_128x128.png" >/dev/null
-          sips -z 256 256 docs/whodis_logo_no_bg.png --out "$iconset/icon_128x128@2x.png" >/dev/null
-          sips -z 256 256 docs/whodis_logo_no_bg.png --out "$iconset/icon_256x256.png" >/dev/null
-          sips -z 512 512 docs/whodis_logo_no_bg.png --out "$iconset/icon_256x256@2x.png" >/dev/null
-          sips -z 512 512 docs/whodis_logo_no_bg.png --out "$iconset/icon_512x512.png" >/dev/null
-          sips -z 1024 1024 docs/whodis_logo_no_bg.png --out "$iconset/icon_512x512@2x.png" >/dev/null
+          sips -z 16 16 docs/whodis_logo.png --out "$iconset/icon_16x16.png" >/dev/null
+          sips -z 32 32 docs/whodis_logo.png --out "$iconset/icon_16x16@2x.png" >/dev/null
+          sips -z 32 32 docs/whodis_logo.png --out "$iconset/icon_32x32.png" >/dev/null
+          sips -z 64 64 docs/whodis_logo.png --out "$iconset/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 docs/whodis_logo.png --out "$iconset/icon_128x128.png" >/dev/null
+          sips -z 256 256 docs/whodis_logo.png --out "$iconset/icon_128x128@2x.png" >/dev/null
+          sips -z 256 256 docs/whodis_logo.png --out "$iconset/icon_256x256.png" >/dev/null
+          sips -z 512 512 docs/whodis_logo.png --out "$iconset/icon_256x256@2x.png" >/dev/null
+          sips -z 512 512 docs/whodis_logo.png --out "$iconset/icon_512x512.png" >/dev/null
+          sips -z 1024 1024 docs/whodis_logo.png --out "$iconset/icon_512x512@2x.png" >/dev/null
           iconutil -c icns "$iconset" -o "$RUNNER_TEMP/Whodis.icns"
           cmake -S desktop -B build-gui -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \

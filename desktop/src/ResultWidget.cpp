@@ -132,6 +132,11 @@ void ResultWidget::setItem(const QJsonObject &item)
         stack->setCurrentWidget(m_tabs);
 }
 
+void ResultWidget::showDNSTab()
+{
+    m_tabs->setCurrentWidget(m_dns);
+}
+
 QString ResultWidget::copyText() const
 {
     if (m_tabs->currentIndex() == 3 && !m_rawText->toPlainText().isEmpty())

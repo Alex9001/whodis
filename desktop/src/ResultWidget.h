@@ -19,6 +19,7 @@ public:
 
     void clearResult();
     void setItem(const QJsonObject &item);
+    void showDNSTab();
     QString copyText() const;
     QString currentTarget() const;
     int dnsRowCount() const;
@@ -38,4 +39,3 @@ private:
     QLabel *m_emptyLabel;
     QJsonObject m_item;
 };
-

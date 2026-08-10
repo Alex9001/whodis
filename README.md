@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/whodis_logo_no_bg.png" width="150" alt="Whodis logo">
+  <img src="docs/whodis_logo.png" width="150" alt="Whodis logo">
 </p>
 
 <h1 align="center">whodis</h1>

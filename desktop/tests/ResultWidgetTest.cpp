@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTabWidget>
 #include <QtTest>
 
 class ResultWidgetTest final : public QObject
@@ -28,6 +29,10 @@ void ResultWidgetTest::displaysTargetAndDNS()
     widget.setItem(item);
     QCOMPARE(widget.currentTarget(), QStringLiteral("example.com"));
     QCOMPARE(widget.dnsRowCount(), 1);
+    widget.showDNSTab();
+    const QTabWidget *tabs = widget.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("DNS"));
     QVERIFY(widget.copyText().contains(QStringLiteral("example.com")));
 }
 

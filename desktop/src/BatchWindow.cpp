@@ -36,6 +36,18 @@ QString eventDate(const QJsonObject &result, const QStringList &actions)
     }
     return {};
 }
+
+QString dnsRecordTypes(const QJsonArray &records)
+{
+    QStringList types;
+    for (const QJsonValue &value : records) {
+        const QString type = value.toObject().value(QStringLiteral("type")).toString().toUpper();
+        if (!type.isEmpty() && !types.contains(type))
+            types.append(type);
+    }
+    types.sort(Qt::CaseInsensitive);
+    return types.join(QStringLiteral(", "));
+}
 }
 
 BatchWindow::BatchWindow(QWidget *parent)
@@ -59,6 +71,7 @@ BatchWindow::BatchWindow(QWidget *parent)
     m_targets->setMaximumHeight(140);
     m_mode->addItem(tr("Registration"), QStringLiteral("registration"));
     m_mode->addItem(tr("DNS Scan"), QStringLiteral("scan"));
+    m_mode->setToolTip(tr("DNS Scan adds public DNS discovery to every domain lookup."));
     m_workers->setRange(1, 32);
     m_workers->setValue(4);
     m_workers->setToolTip(tr("Concurrent lookups"));
@@ -76,8 +89,8 @@ BatchWindow::BatchWindow(QWidget *parent)
     toolbar->addWidget(m_retry);
     toolbar->addWidget(m_export);
 
-    m_table->setColumnCount(6);
-    m_table->setHorizontalHeaderLabels({tr("Target"), tr("State"), tr("Expiration"), tr("Registrar"), tr("Protocol"), tr("Error")});
+    m_table->setColumnCount(7);
+    m_table->setHorizontalHeaderLabels({tr("Target"), tr("State"), tr("Expiration"), tr("Registrar"), tr("DNS Records"), tr("Protocol"), tr("Error")});
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setSortingEnabled(true);
@@ -87,7 +100,8 @@ BatchWindow::BatchWindow(QWidget *parent)
     m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch);
 
     auto *splitter = new QSplitter(Qt::Vertical, this);
     auto *top = new QWidget(splitter);
@@ -178,6 +192,7 @@ void BatchWindow::startLookup()
 void BatchWindow::beginLookup(const QStringList &targets)
 {
     m_cancelRequested = false;
+    m_resultMode = m_mode->currentData().toString();
     m_items = QVector<QJsonObject>(targets.size());
     m_table->setSortingEnabled(false);
     m_table->setRowCount(targets.size());
@@ -198,11 +213,13 @@ void BatchWindow::beginLookup(const QStringList &targets)
     for (const QString &target : targets)
         targetArray.append(target);
     const QJsonObject params{{QStringLiteral("targets"), targetArray},
-                             {QStringLiteral("mode"), m_mode->currentData().toString()},
+                             {QStringLiteral("mode"), m_resultMode},
                              {QStringLiteral("workers"), m_workers->value()}};
     m_activeRequest = m_engine->request(QStringLiteral("lookup"), params);
     setBusy(true);
-    statusBar()->showMessage(tr("Looking up %1 targets…").arg(targets.size()));
+    statusBar()->showMessage(m_resultMode == QStringLiteral("scan")
+                                 ? tr("Scanning registration and DNS for %1 targets…").arg(targets.size())
+                                 : tr("Looking up %1 targets…").arg(targets.size()));
 }
 
 void BatchWindow::cancelLookup()
@@ -254,6 +271,14 @@ void BatchWindow::handleResponse(const QString &id, const QString &method, const
             m_items[index] = items.at(index).toObject();
             updateRow(index, m_items[index]);
         }
+        if (m_table->currentRow() < 0) {
+            for (int index = 0; index < m_items.size(); ++index) {
+                if (!m_items[index].value(QStringLiteral("result")).toObject().isEmpty()) {
+                    m_table->selectRow(rowForIndex(index));
+                    break;
+                }
+            }
+        }
         finishLookup(response.value(QStringLiteral("canceled")).toBool() || m_cancelRequested);
         return;
     }
@@ -287,6 +312,8 @@ void BatchWindow::handleProgress(const QJsonObject &progress)
     if (index >= 0 && index < m_items.size()) {
         m_items[index] = progress.value(QStringLiteral("item")).toObject();
         updateRow(index, m_items[index]);
+        if (m_table->currentRow() < 0 && !m_items[index].value(QStringLiteral("result")).toObject().isEmpty())
+            m_table->selectRow(rowForIndex(index));
     }
     m_progress->setValue(progress.value(QStringLiteral("completed")).toInt());
 }
@@ -300,13 +327,21 @@ void BatchWindow::updateRow(int index, const QJsonObject &item)
     const QJsonObject result = item.value(QStringLiteral("result")).toObject();
     const QJsonObject object = result.value(QStringLiteral("object")).toObject();
     const QJsonObject route = result.value(QStringLiteral("route")).toObject();
+    const QJsonArray dnsRecords = result.value(QStringLiteral("dns")).toObject().value(QStringLiteral("records")).toArray();
     const bool failed = !error.isEmpty();
     m_table->item(row, 0)->setText(item.value(QStringLiteral("input")).toString());
     m_table->item(row, 1)->setText(failed ? tr("Failed") : tr("Complete"));
     m_table->item(row, 2)->setText(eventDate(result, {QStringLiteral("expiration"), QStringLiteral("expiry"), QStringLiteral("expires")}));
     m_table->item(row, 3)->setText(object.value(QStringLiteral("registrar")).toString());
-    m_table->item(row, 4)->setText(route.value(QStringLiteral("protocol")).toString().toUpper());
-    m_table->item(row, 5)->setText(error.value(QStringLiteral("message")).toString());
+    if (result.contains(QStringLiteral("dns"))) {
+        m_table->item(row, 4)->setData(Qt::DisplayRole, dnsRecords.size());
+        m_table->item(row, 4)->setToolTip(tr("Record types: %1").arg(dnsRecordTypes(dnsRecords)));
+    } else {
+        m_table->item(row, 4)->setText({});
+        m_table->item(row, 4)->setToolTip({});
+    }
+    m_table->item(row, 5)->setText(route.value(QStringLiteral("protocol")).toString().toUpper());
+    m_table->item(row, 6)->setText(error.value(QStringLiteral("message")).toString());
 }
 
 int BatchWindow::rowForIndex(int index) const
@@ -348,6 +383,9 @@ void BatchWindow::showSelectedResult()
     const int row = m_table->currentRow();
     const QTableWidgetItem *target = row >= 0 ? m_table->item(row, 0) : nullptr;
     const int index = target ? target->data(Qt::UserRole).toInt() : -1;
-    if (index >= 0 && index < m_items.size() && !m_items[index].value(QStringLiteral("result")).toObject().isEmpty())
+    if (index >= 0 && index < m_items.size() && !m_items[index].value(QStringLiteral("result")).toObject().isEmpty()) {
         m_result->setItem(m_items[index]);
+        if (m_resultMode == QStringLiteral("scan"))
+            m_result->showDNSTab();
+    }
 }
