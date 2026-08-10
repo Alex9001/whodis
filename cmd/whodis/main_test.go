@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+
+	"github.com/Alex9001/whodis"
 )
 
 func TestParseArgsDetails(t *testing.T) {
@@ -43,10 +45,35 @@ func TestParseArgsNoDetailsAndColorTracking(t *testing.T) {
 	}
 }
 
-func TestUsageIncludesDetails(t *testing.T) {
+func TestParseArgsDNSOptions(t *testing.T) {
+	options, err := parseArgs([]string{"example.com", "--dns", "scan", "--resolver", "1.1.1.1:5353"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if options.dnsMode != whodis.DNSScan || options.dnsResolver != "1.1.1.1:5353" {
+		t.Fatalf("DNS options = (%q, %q), want scan and resolver", options.dnsMode, options.dnsResolver)
+	}
+
+	options, err = parseArgs([]string{"example.com", "--axfr"})
+	if err != nil || options.dnsMode != whodis.DNSAXFR {
+		t.Fatalf("--axfr = (%q, %v), want axfr and no error", options.dnsMode, err)
+	}
+
+	for _, args := range [][]string{
+		{"example.com", "--dns", "unknown"},
+		{"example.com", "--dns", "off", "--resolver", "1.1.1.1"},
+		{"example.com", "--dns", "off", "--axfr"},
+	} {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("parseArgs(%q) succeeded, want an error", args)
+		}
+	}
+}
+
+func TestUsageIncludesDetailsAndDNS(t *testing.T) {
 	var output bytes.Buffer
 	printUsage(&output)
-	for _, value := range []string{"--details", "--no-details", "whodis config"} {
+	for _, value := range []string{"--details", "--no-details", "--dns", "--axfr", "--resolver", "whodis config"} {
 		if !strings.Contains(output.String(), value) {
 			t.Fatalf("printUsage() output does not document %q:\n%s", value, output.String())
 		}

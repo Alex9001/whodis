@@ -1,8 +1,10 @@
 package whodis
 
 import (
+	"fmt"
 	"io"
 	"net/netip"
+	"sort"
 	"strings"
 )
 
@@ -41,8 +43,11 @@ func renderTree(writer io.Writer, result LookupResult, options RenderOptions) st
 		lines = append(lines, dashboardTitle(chunk, color))
 	}
 
-	nodes := make([]treeNode, 0, len(view.panels)+1)
+	nodes := make([]treeNode, 0, len(view.panels)+len(view.fullWidth)+1)
 	for _, panel := range view.panels {
+		nodes = append(nodes, treePanelNode(panel, root, kind))
+	}
+	for _, panel := range view.fullWidth {
 		nodes = append(nodes, treePanelNode(panel, root, kind))
 	}
 	if view.details != nil {
@@ -68,6 +73,9 @@ func treeRoot(result LookupResult) string {
 
 func treePanelNode(panel dashboardPanel, root string, kind Kind) treeNode {
 	node := treeNode{label: safeText(panel.title), style: treeTextTitle}
+	if panel.kind == panelDNSRecords {
+		return treeDNSRecordsNode(node, panel.records)
+	}
 
 	if len(panel.badges) > 0 {
 		statuses := treeNode{label: "Status", style: treeTextLabel, children: make([]treeNode, 0, len(panel.badges))}
@@ -125,6 +133,32 @@ func treePanelNode(panel dashboardPanel, root string, kind Kind) treeNode {
 		}
 	}
 
+	return node
+}
+
+func treeDNSRecordsNode(node treeNode, records []DNSRecord) treeNode {
+	byType := make(map[string][]DNSRecord)
+	for _, record := range records {
+		byType[record.Type] = append(byType[record.Type], record)
+	}
+	types := make([]string, 0, len(byType))
+	for recordType := range byType {
+		types = append(types, recordType)
+	}
+	sort.Slice(types, func(left, right int) bool {
+		return dnsTypeOrder(types[left]) < dnsTypeOrder(types[right])
+	})
+	for _, recordType := range types {
+		group := treeNode{label: recordType, style: treeTextLabel}
+		for _, record := range byType[recordType] {
+			value := record.Value
+			if record.TTL > 0 {
+				value += fmt.Sprintf(" (TTL %ds)", record.TTL)
+			}
+			group.children = append(group.children, treeNode{label: record.Name, value: value, style: treeTextLabel})
+		}
+		node.children = append(node.children, group)
+	}
 	return node
 }
 

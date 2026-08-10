@@ -1,6 +1,7 @@
 package whodis
 
 import (
+	"fmt"
 	"io"
 	"strings"
 
@@ -28,6 +29,7 @@ func renderGeekBoys(writer io.Writer, result LookupResult, options RenderOptions
 
 	view := buildDashboard(result, options.Details)
 	panels := append([]dashboardPanel(nil), view.panels...)
+	panels = append(panels, view.fullWidth...)
 	if view.details != nil {
 		panels = append(panels, *view.details)
 	}
@@ -170,6 +172,8 @@ func renderGeekBoysBody(panel dashboardPanel, width int) []string {
 			lines = append(lines, renderGeekBoysItems(panel.items, width)...)
 		}
 		return lines
+	case panelDNSRecords:
+		return renderGeekBoysDNSRecords(panel.records, width)
 	case panelNotices:
 		return renderGeekBoysNotices(panel.notices, width)
 	default:
@@ -179,6 +183,53 @@ func renderGeekBoysBody(panel dashboardPanel, width int) []string {
 		}
 		return append(lines, renderGeekBoysRows(panel.rows, width)...)
 	}
+}
+
+func renderGeekBoysDNSRecords(records []DNSRecord, width int) []string {
+	if len(records) == 0 {
+		return nil
+	}
+	if width < 54 {
+		lines := make([]string, 0, len(records)*3)
+		for index, record := range records {
+			if index > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, geekBoysWrap(fmt.Sprintf("%s  %s  %ds", record.Type, record.Name, record.TTL), width)...)
+			for _, chunk := range geekBoysWrap(record.Value, max(1, width-2)) {
+				lines = append(lines, "  "+chunk)
+			}
+		}
+		return lines
+	}
+
+	typeWidth, ttlWidth := 8, 7
+	nameWidth := min(26, max(14, width/4))
+	valueWidth := max(10, width-typeWidth-nameWidth-ttlWidth-9)
+	separator := " | "
+	lines := []string{
+		padDashboardText("TYPE", typeWidth) + separator + padDashboardText("NAME", nameWidth) + separator + padDashboardText("VALUE", valueWidth) + separator + padDashboardText("TTL", ttlWidth),
+		strings.Repeat("-", typeWidth) + "-+-" + strings.Repeat("-", nameWidth) + "-+-" + strings.Repeat("-", valueWidth) + "-+-" + strings.Repeat("-", ttlWidth),
+	}
+	for _, record := range records {
+		nameChunks := geekBoysWrap(record.Name, nameWidth)
+		valueChunks := geekBoysWrap(record.Value, valueWidth)
+		count := max(len(nameChunks), len(valueChunks))
+		for index := 0; index < count; index++ {
+			kind, name, value, ttl := "", "", "", ""
+			if index == 0 {
+				kind, ttl = record.Type, fmt.Sprintf("%ds", record.TTL)
+			}
+			if index < len(nameChunks) {
+				name = nameChunks[index]
+			}
+			if index < len(valueChunks) {
+				value = valueChunks[index]
+			}
+			lines = append(lines, padDashboardText(kind, typeWidth)+separator+padDashboardText(name, nameWidth)+separator+padDashboardText(value, valueWidth)+separator+padDashboardText(ttl, ttlWidth))
+		}
+	}
+	return lines
 }
 
 func renderGeekBoysBadges(badges []dashboardBadge, width int) []string {

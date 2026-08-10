@@ -37,6 +37,17 @@ const (
 	FallbackAnyError    FallbackMode = "any-error"
 )
 
+// DNSMode controls optional DNS enrichment for a lookup. Automatic mode scans
+// common public records for domains and leaves IP and ASN lookups unchanged.
+type DNSMode string
+
+const (
+	DNSAuto DNSMode = "auto"
+	DNSOff  DNSMode = "off"
+	DNSScan DNSMode = "scan"
+	DNSAXFR DNSMode = "axfr"
+)
+
 // Target is a validated, canonical lookup input.
 type Target struct {
 	Original  string `json:"original" yaml:"original"`
@@ -111,6 +122,27 @@ type Source struct {
 	Raw       string   `json:"-" yaml:"-"`
 }
 
+// DNSRecord is one public DNS resource record. Value is canonical DNS RDATA
+// text, suitable for display and zone-file-oriented export.
+type DNSRecord struct {
+	Name  string `json:"name" yaml:"name"`
+	Type  string `json:"type" yaml:"type"`
+	TTL   uint32 `json:"ttl" yaml:"ttl"`
+	Value string `json:"value" yaml:"value"`
+}
+
+// DNSResult records records discovered alongside registration data. Complete
+// is true only when an untruncated authoritative AXFR completed successfully.
+// Pattern scans intentionally remain incomplete: DNS has no reliable general
+// mechanism to enumerate arbitrary owner names in a zone.
+type DNSResult struct {
+	Method      string      `json:"method" yaml:"method"`
+	Complete    bool        `json:"complete" yaml:"complete"`
+	Nameservers []string    `json:"nameservers,omitempty" yaml:"nameservers,omitempty"`
+	Records     []DNSRecord `json:"records,omitempty" yaml:"records,omitempty"`
+	Warnings    []string    `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+}
+
 // LookupResult is the serializable response returned by Client.Lookup.
 type LookupResult struct {
 	SchemaVersion int            `json:"schema_version" yaml:"schema_version"`
@@ -120,6 +152,7 @@ type LookupResult struct {
 	RetrievedAt   time.Time      `json:"retrieved_at" yaml:"retrieved_at"`
 	Object        Object         `json:"object" yaml:"object"`
 	Sources       []Source       `json:"sources" yaml:"sources"`
+	DNS           *DNSResult     `json:"dns,omitempty" yaml:"dns,omitempty"`
 }
 
 // LookupOptions controls one lookup. A zero-value options struct uses the
@@ -130,6 +163,8 @@ type LookupOptions struct {
 	Server           string
 	Timeout          time.Duration
 	RefreshBootstrap bool
+	DNSMode          DNSMode
+	DNSResolver      string
 }
 
 // ClientOptions configures a reusable lookup client.

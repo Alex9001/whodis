@@ -4,11 +4,11 @@
 [![Latest release](https://img.shields.io/github/v/release/Alex9001/whodis?display_name=tag)](https://github.com/Alex9001/whodis/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**A modern WHOIS alternative that automatically uses RDAP where traditional WHOIS falls short.**
+**A modern WHOIS alternative that automatically uses RDAP where traditional WHOIS falls short — and maps the public DNS that registration data alone cannot show.**
 
 The registry world is split between old-school WHOIS and modern RDAP. `whodis` hides that split: give it a domain, IP address, network, or ASN and it finds the right service automatically. No protocol trivia required.
 
-Instead of dumping a wall of registry text, it can turn the answer into a compact terminal dashboard, a hierarchical tree, a 2002-style ASCII layout, or clean plain text. Registration facts, dates, DNS, contacts, and routing details each get the space they need.
+Instead of dumping a wall of registry text, it can turn the answer into a compact terminal dashboard, a hierarchical tree, a 2002-style ASCII layout, or clean plain text. Registration facts, dates, discovered DNS records, contacts, and routing details each get the space they need.
 
 ```text
 $ whodis example.com
@@ -33,9 +33,12 @@ $ whodis example.com
 
 The dashboard adapts to the terminal: wide windows use a multi-panel mosaic, while narrow windows stack the same semantic panels into one column. Contacts stay visible but are consolidated instead of repeated. Lengthy registry notices are summarized by count; add `--details` when you want their full text and links. The flag also expands notices in the tree and GeekBoys views; plain and machine-readable formats remain unchanged.
 
+For domain lookups, Whodis also performs a fast public-DNS discovery pass by default and adds a full-width, terminal-friendly record grid. It finds the useful common records—addresses, mail routing, verification and policy TXT records, service records, HTTPS/SVCB records, and nameservers—without turning one lookup into an uncontrolled crawl.
+
 ## What you get
 
 - **Automatic protocol selection** — RDAP for registries that support it, WHOIS where it is still needed.
+- **DNS discovery built in** — common public DNS records appear in an adaptive grid beside registration data; JSON, YAML, Markdown, and plain text include the same structured records.
 - **Four terminal views** — switch between the responsive dashboard, a semantic tree, a retro ASCII layout, and plain text.
 - **Persistent preferences** — save your favorite view once and use it automatically in terminals and pipelines.
 - **Script-friendly formats** — output plain text, JSON, YAML, Markdown, or the raw registry response.
@@ -103,6 +106,38 @@ whodis example.com --format tree
 whodis example.com --format geekboys
 whodis example.com --format plain
 ```
+
+## DNS discovery
+
+`whodis example.com` uses your system DNS resolver to discover common public
+records while the RDAP/WHOIS lookup is in progress. The dashboard puts the
+records in a Type / Name / Value / TTL grid; the other terminal views adapt the
+same data to their own layouts.
+
+The scan checks the apex plus practical names such as `www`, `api`, `mail`,
+`autodiscover`, DMARC/MTA-STS/TLS reporting names, common DKIM selectors, and
+well-known service records. It detects wildcard responses and avoids presenting
+matching guesses as confirmed hostnames. CNAME, MX, NS, SRV, HTTPS, and SVCB
+targets inside the queried domain get address follow-up where applicable.
+
+DNS does not provide a general way to list every owner name in a zone, so the
+normal result is explicitly marked as a discovery scan rather than a complete
+zone. Use these controls when needed:
+
+```bash
+# Keep a registration-only lookup
+whodis example.com --dns off
+
+# Use a specific recursive resolver (the default is the system resolver)
+whodis example.com --resolver 1.1.1.1
+
+# Ask the domain's authoritative nameservers for a full zone transfer.
+# This is never attempted automatically and most public zones correctly refuse it.
+whodis example.com --axfr
+```
+
+If an explicit AXFR is refused or unavailable, Whodis returns the normal
+discovery result with a warning instead of failing the registration lookup.
 
 The tree uses the queried target as its root without repeating it inside the
 Registration panel:
@@ -238,6 +273,9 @@ whodis config path
     --server <endpoint>
     --timeout <duration>
     --refresh-bootstrap
+    --dns auto|off|scan|axfr
+    --axfr
+    --resolver <address>
     --color auto|always|never
     --details
     --no-details
@@ -250,6 +288,12 @@ whodis config path
 `geek-boys` are aliases for `geekboys`. When `--format` is omitted with
 `--output`, Whodis infers JSON, YAML, Markdown, tree, GeekBoys, or plain text
 from the filename. Existing files are protected unless `--force` is supplied.
+
+`--dns auto` is the default for domains. `--dns scan` makes the same discovery
+pass explicit, `--dns off` disables DNS enrichment, and `--dns axfr` is the
+long form of `--axfr`. `--resolver` accepts a resolver host or IP with an
+optional port (bracket IPv6 addresses when including a port). DNS enrichment is
+skipped automatically for IP, CIDR, and ASN targets.
 
 ## How protocol selection works
 
@@ -278,7 +322,7 @@ result, err := client.Lookup(ctx, "example.com", whodis.LookupOptions{})
 err = whodis.Render(os.Stdout, result, whodis.FormatTree, whodis.RenderOptions{})
 ```
 
-`LookupResult` is a versioned model containing the query, routing decision, normalized registration data, notices, and registry sources. Native RDAP JSON and raw WHOIS text remain available through `--format raw`.
+`LookupResult` schema version 2 contains the query, routing decision, normalized registration data, DNS discovery result, notices, and registry sources. `DNSResult.Complete` is true only after a successful authoritative AXFR; ordinary scans are intentionally incomplete. Native RDAP JSON and raw WHOIS text remain available through `--format raw`.
 
 Additional protocols can implement `ProtocolAdapter` without coupling them to the CLI or a particular operating system.
 
@@ -296,7 +340,7 @@ Tests use local normalizer and renderer fixtures; public registries are not quer
 
 ## Current limitations
 
-The current release implements RDAP and standard port-43 WHOIS. RWhois, proprietary registration APIs, authenticated RDAP, web scraping, desktop GUI, and mobile apps are not implemented yet.
+The current release implements RDAP, standard port-43 WHOIS, and bounded public DNS discovery. RWhois, proprietary registration APIs, authenticated RDAP, web scraping, desktop GUI, and mobile apps are not implemented yet. A normal DNS scan cannot discover arbitrary custom hostnames or prove it has every record; only an authoritative zone transfer can be complete, and public servers commonly refuse those transfers.
 
 ## License
 

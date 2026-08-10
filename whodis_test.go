@@ -67,7 +67,7 @@ func TestRDAPAndWHOISNormalizers(t *testing.T) {
 func TestClientUsesInjectedAdapter(t *testing.T) {
 	adapter := staticAdapter{protocol: ProtocolRDAP, object: Object{Kind: KindDomain, Name: "example.test"}}
 	client := NewClient(ClientOptions{Timeout: time.Second, Adapters: []ProtocolAdapter{adapter}})
-	result, err := client.Lookup(context.Background(), "example.test", LookupOptions{Protocol: ProtocolRDAP, Server: "https://rdap.test/", Fallback: FallbackNone})
+	result, err := client.Lookup(context.Background(), "example.test", LookupOptions{Protocol: ProtocolRDAP, Server: "https://rdap.test/", Fallback: FallbackNone, DNSMode: DNSOff})
 	if err != nil {
 		t.Fatal(err)
 	}

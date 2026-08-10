@@ -102,6 +102,26 @@ func (c *Client) Lookup(ctx context.Context, input string, options LookupOptions
 		return LookupResult{}, err
 	}
 	opts := normalizedOptions(options)
+	if err := validateDNSOptions(target, opts); err != nil {
+		return LookupResult{}, err
+	}
+
+	var dnsResults chan *DNSResult
+	var cancelDNS context.CancelFunc
+	if shouldScanDNS(target, opts) {
+		dnsContext := ctx
+		if opts.DNSMode != DNSAXFR {
+			dnsContext, cancelDNS = context.WithTimeout(ctx, dnsScanTimeout(opts.Timeout))
+		} else {
+			dnsContext, cancelDNS = context.WithCancel(ctx)
+		}
+		defer cancelDNS()
+		dnsResults = make(chan *DNSResult, 1)
+		go func() {
+			dnsResults <- c.lookupDNS(dnsContext, target, opts)
+		}()
+	}
+
 	primary, err := c.route(ctx, target, opts)
 	if err != nil {
 		return LookupResult{}, err
@@ -109,7 +129,11 @@ func (c *Client) Lookup(ctx context.Context, input string, options LookupOptions
 
 	object, sources, err := c.lookupWithRoute(ctx, target, primary)
 	if err == nil {
-		return newResult(target, primary, nil, object, sources), nil
+		result := newResult(target, primary, nil, object, sources)
+		if dnsResults != nil {
+			result.DNS = <-dnsResults
+		}
+		return result, nil
 	}
 	if !shouldFallback(err, opts.Fallback) || opts.Server != "" {
 		return LookupResult{}, err
@@ -123,12 +147,16 @@ func (c *Client) Lookup(ctx context.Context, input string, options LookupOptions
 	if fallbackErr != nil {
 		return LookupResult{}, fallbackErr
 	}
-	return newResult(target, fallback, &primary, object, sources), nil
+	result := newResult(target, fallback, &primary, object, sources)
+	if dnsResults != nil {
+		result.DNS = <-dnsResults
+	}
+	return result, nil
 }
 
 func newResult(target Target, route RouteDecision, fallback *RouteDecision, object Object, sources []Source) LookupResult {
 	return LookupResult{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Query:         target,
 		Route:         route,
 		FallbackFrom:  fallback,
@@ -148,7 +176,37 @@ func normalizedOptions(options LookupOptions) LookupOptions {
 	if options.Timeout <= 0 {
 		options.Timeout = defaultTimeout
 	}
+	if options.DNSMode == "" {
+		options.DNSMode = DNSAuto
+	}
 	return options
+}
+
+func validateDNSOptions(target Target, options LookupOptions) error {
+	switch options.DNSMode {
+	case DNSAuto, DNSOff, DNSScan, DNSAXFR:
+	default:
+		return lookupError(ErrorInvalidInput, "dns mode must be auto, off, scan, or axfr", nil)
+	}
+	if options.DNSResolver != "" {
+		if options.DNSMode == DNSOff {
+			return lookupError(ErrorInvalidInput, "dns resolver cannot be used with dns mode off", nil)
+		}
+		if _, err := normalizeDNSResolver(options.DNSResolver); err != nil {
+			return lookupError(ErrorInvalidInput, err.Error(), err)
+		}
+	}
+	if target.Kind != KindDomain && options.DNSMode != DNSAuto && options.DNSMode != DNSOff {
+		return lookupError(ErrorInvalidInput, "dns scans and AXFR require a domain target", nil)
+	}
+	if target.Kind != KindDomain && options.DNSResolver != "" {
+		return lookupError(ErrorInvalidInput, "dns resolver requires a domain target", nil)
+	}
+	return nil
+}
+
+func shouldScanDNS(target Target, options LookupOptions) bool {
+	return target.Kind == KindDomain && options.DNSMode != DNSOff
 }
 
 func (c *Client) route(ctx context.Context, target Target, options LookupOptions) (RouteDecision, error) {

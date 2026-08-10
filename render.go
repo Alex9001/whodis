@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -135,6 +136,19 @@ func renderPlain(result LookupResult) string {
 	if len(object.Nameservers) > 0 {
 		line("Nameservers", strings.Join(object.Nameservers, ", "))
 	}
+	if result.DNS != nil {
+		line("DNS method", result.DNS.Method)
+		line("DNS complete", strconv.FormatBool(result.DNS.Complete))
+		if len(result.DNS.Nameservers) > 0 {
+			line("DNS nameservers", strings.Join(result.DNS.Nameservers, ", "))
+		}
+		for _, warning := range result.DNS.Warnings {
+			line("DNS warning", warning)
+		}
+		for _, record := range result.DNS.Records {
+			line(fmt.Sprintf("DNS %s %s (%ds)", record.Type, record.Name, record.TTL), record.Value)
+		}
+	}
 	for _, event := range object.Events {
 		line("Event "+event.Action, event.Date)
 	}
@@ -174,6 +188,28 @@ func renderMarkdown(result LookupResult) string {
 		builder.WriteString("\n## Nameservers\n\n")
 		for _, ns := range result.Object.Nameservers {
 			fmt.Fprintf(&builder, "- `%s`\n", safeText(ns))
+		}
+	}
+	if result.DNS != nil {
+		builder.WriteString("\n## DNS records\n\n")
+		fmt.Fprintf(&builder, "Method: `%s`  \\nComplete zone transfer: `%t`\n", markdownCell(result.DNS.Method), result.DNS.Complete)
+		if len(result.DNS.Nameservers) > 0 {
+			builder.WriteString("\nAuthoritative nameservers:\n")
+			for _, nameserver := range result.DNS.Nameservers {
+				fmt.Fprintf(&builder, "- `%s`\n", safeText(nameserver))
+			}
+		}
+		if len(result.DNS.Warnings) > 0 {
+			builder.WriteString("\nWarnings:\n")
+			for _, warning := range result.DNS.Warnings {
+				fmt.Fprintf(&builder, "- %s\n", markdownCell(warning))
+			}
+		}
+		if len(result.DNS.Records) > 0 {
+			builder.WriteString("\n| Type | Name | TTL | Value |\n| --- | --- | ---: | --- |\n")
+			for _, record := range result.DNS.Records {
+				fmt.Fprintf(&builder, "| %s | %s | %d | %s |\n", markdownCell(record.Type), markdownCell(record.Name), record.TTL, markdownCell(record.Value))
+			}
 		}
 	}
 	return builder.String()

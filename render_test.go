@@ -221,6 +221,30 @@ func TestRenderFormats(t *testing.T) {
 	}
 }
 
+func TestDNSRecordsRenderInHumanAndStructuredFormats(t *testing.T) {
+	result := sampleResult()
+	result.SchemaVersion = 2
+	result.DNS = &DNSResult{
+		Method:      "scan",
+		Nameservers: []string{"ns1.example.test"},
+		Records: []DNSRecord{
+			{Name: "example.com", Type: "MX", TTL: 300, Value: "10 mail.example.com."},
+			{Name: "_dmarc.example.com", Type: "TXT", TTL: 60, Value: `"v=DMARC1; p=none"`},
+		},
+		Warnings: []string{"pattern scans cannot enumerate every owner name"},
+	}
+	for _, format := range []Format{FormatPretty, FormatTree, FormatGeekBoys, FormatPlain, FormatJSON, FormatYAML, FormatMarkdown} {
+		t.Run(string(format), func(t *testing.T) {
+			output := renderForTest(t, result, format, RenderOptions{Color: "never", Width: 80})
+			for _, value := range []string{"MX", "mail.example.com", "_dmarc.example.com"} {
+				if !strings.Contains(output, value) {
+					t.Errorf("%s output does not include %q:\n%s", format, value, output)
+				}
+			}
+		})
+	}
+}
+
 func TestPrettyDashboardResponsiveWidths(t *testing.T) {
 	result := sampleResult()
 	panelTitles := []string{"Registration", "Timeline", "DNS", "Contacts", "Source"}

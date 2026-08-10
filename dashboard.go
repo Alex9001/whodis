@@ -20,6 +20,7 @@ type dashboardPanelKind uint8
 const (
 	panelRows dashboardPanelKind = iota
 	panelDNS
+	panelDNSRecords
 	panelNotices
 )
 
@@ -61,12 +62,14 @@ type dashboardPanel struct {
 	badges  []dashboardBadge
 	rows    []dashboardRow
 	items   []string
+	records []DNSRecord
 	notices []dashboardNotice
 }
 
 type dashboardView struct {
-	panels  []dashboardPanel
-	details *dashboardPanel
+	panels    []dashboardPanel
+	fullWidth []dashboardPanel
+	details   *dashboardPanel
 }
 
 type dashboardContact struct {
@@ -177,12 +180,40 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 
 	nameservers := uniqueFold(object.Nameservers)
 	dnsRows := dashboardRows("DNSSEC", object.DNSSEC)
+	if result.DNS != nil {
+		nameservers = uniqueFold(append(nameservers, result.DNS.Nameservers...))
+		method := "Pattern scan · incomplete"
+		if result.DNS.Method == "axfr" {
+			method = "AXFR · partial"
+			if result.DNS.Complete {
+				method = "AXFR · complete"
+			}
+		}
+		dnsRows = append(dnsRows,
+			dashboardRow{label: "Discovery", value: method},
+			dashboardRow{label: "Records", value: strconv.Itoa(len(result.DNS.Records))},
+		)
+		if len(result.DNS.Warnings) > 0 {
+			dnsRows = append(dnsRows, dashboardRow{label: "Warnings", value: strconv.Itoa(len(result.DNS.Warnings))})
+		}
+	}
 	if len(dnsRows) > 0 || len(nameservers) > 0 {
 		title := "DNS"
 		if len(nameservers) > 0 {
 			title = fmt.Sprintf("DNS · %d", len(nameservers))
 		}
 		panels = append(panels, dashboardPanel{title: title, kind: panelDNS, rows: dnsRows, items: nameservers})
+	}
+
+	fullWidth := make([]dashboardPanel, 0, 1)
+	if result.DNS != nil && len(result.DNS.Records) > 0 {
+		title := fmt.Sprintf("DNS Records · %d", len(result.DNS.Records))
+		if result.DNS.Method == "axfr" && result.DNS.Complete {
+			title += " · complete zone transfer"
+		} else {
+			title += " · discovered"
+		}
+		fullWidth = append(fullWidth, dashboardPanel{title: title, kind: panelDNSRecords, records: result.DNS.Records})
 	}
 
 	contacts := consolidateContacts(object.Entities)
@@ -228,7 +259,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 		panels = append(panels, dashboardPanel{title: "Source", kind: panelRows, rows: sourceRows})
 	}
 
-	view := dashboardView{panels: panels}
+	view := dashboardView{panels: panels, fullWidth: fullWidth}
 	if details && len(notices) > 0 {
 		panel := dashboardPanel{
 			title:   fmt.Sprintf("Notices · %d", len(notices)),
@@ -246,6 +277,7 @@ func renderDashboard(view dashboardView, width int, color bool) []string {
 	}
 	if width < 32 {
 		panels := append([]dashboardPanel(nil), view.panels...)
+		panels = append(panels, view.fullWidth...)
 		if view.details != nil {
 			panels = append(panels, *view.details)
 		}
@@ -253,6 +285,12 @@ func renderDashboard(view dashboardView, width int, color bool) []string {
 	}
 
 	lines := renderDashboardColumns(view.panels, width, color)
+	for _, panel := range view.fullWidth {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, renderDashboardPanel(panel, width, color)...)
+	}
 	if view.details != nil {
 		if len(lines) > 0 {
 			lines = append(lines, "")
@@ -473,6 +511,8 @@ func renderDashboardBody(panel dashboardPanel, width int, color bool) []string {
 			lines = append(lines, renderDashboardItems(panel.items, width, color)...)
 		}
 		return lines
+	case panelDNSRecords:
+		return renderDashboardDNSRecords(panel.records, width, color)
 	case panelNotices:
 		return renderDashboardNotices(panel.notices, width, color)
 	default:
@@ -482,6 +522,64 @@ func renderDashboardBody(panel dashboardPanel, width int, color bool) []string {
 		}
 		return append(lines, renderDashboardRows(panel.rows, width, color)...)
 	}
+}
+
+func renderDashboardDNSRecords(records []DNSRecord, width int, color bool) []string {
+	if len(records) == 0 {
+		return nil
+	}
+	if width < 54 {
+		lines := make([]string, 0, len(records)*3)
+		for index, record := range records {
+			if index > 0 {
+				lines = append(lines, "")
+			}
+			heading := fmt.Sprintf("%s  %s  %ds", record.Type, record.Name, record.TTL)
+			lines = append(lines, dashboardLabel(truncateDashboardText(heading, width), color))
+			for _, chunk := range wrapDashboardText(record.Value, max(1, width-2)) {
+				lines = append(lines, "  "+chunk)
+			}
+		}
+		return lines
+	}
+
+	typeWidth, ttlWidth := 8, 7
+	nameWidth := min(30, max(16, width/4))
+	valueWidth := max(12, width-typeWidth-nameWidth-ttlWidth-9)
+	separator := " │ "
+	header := padDashboardText("TYPE", typeWidth) + separator + padDashboardText("NAME", nameWidth) + separator + padDashboardText("VALUE", valueWidth) + separator + padDashboardText("TTL", ttlWidth)
+	if color {
+		header = dashboardTitle(header, true)
+	}
+	lines := []string{header, dashboardBorder(strings.Repeat("─", typeWidth)+"─┼─"+strings.Repeat("─", nameWidth)+"─┼─"+strings.Repeat("─", valueWidth)+"─┼─"+strings.Repeat("─", ttlWidth), color)}
+	for _, record := range records {
+		nameChunks := wrapDashboardText(record.Name, nameWidth)
+		valueChunks := wrapDashboardText(record.Value, valueWidth)
+		count := max(len(nameChunks), len(valueChunks))
+		for index := 0; index < count; index++ {
+			kind, name, value, ttl := "", "", "", ""
+			if index == 0 {
+				kind = record.Type
+				ttl = fmt.Sprintf("%ds", record.TTL)
+			}
+			if index < len(nameChunks) {
+				name = nameChunks[index]
+			}
+			if index < len(valueChunks) {
+				value = valueChunks[index]
+			}
+			if color && kind != "" {
+				kind = dashboardLabel(kind, true)
+			}
+			lines = append(lines,
+				padDashboardText(kind, typeWidth)+separator+
+					padDashboardText(name, nameWidth)+separator+
+					padDashboardText(value, valueWidth)+separator+
+					padDashboardText(ttl, ttlWidth),
+			)
+		}
+	}
+	return lines
 }
 
 func renderDashboardBadges(badges []dashboardBadge, width int, color bool) []string {
