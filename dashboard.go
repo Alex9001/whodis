@@ -18,8 +18,7 @@ const maximumDashboardWidth = 1000
 type dashboardPanelKind uint8
 
 const (
-	panelSummary dashboardPanelKind = iota
-	panelRows
+	panelRows dashboardPanelKind = iota
 	panelDNS
 	panelNotices
 )
@@ -35,9 +34,8 @@ const (
 type dashboardBadgeTone uint8
 
 const (
-	badgeProtocol dashboardBadgeTone = iota
-	badgeStatus
-	badgeFallback
+	badgeStatus dashboardBadgeTone = iota
+	badgeConstraint
 )
 
 type dashboardBadge struct {
@@ -57,18 +55,16 @@ type dashboardNotice struct {
 }
 
 type dashboardPanel struct {
-	title    string
-	kind     dashboardPanelKind
-	role     dashboardPanelRole
-	headline string
-	badges   []dashboardBadge
-	rows     []dashboardRow
-	items    []string
-	notices  []dashboardNotice
+	title   string
+	kind    dashboardPanelKind
+	role    dashboardPanelRole
+	badges  []dashboardBadge
+	rows    []dashboardRow
+	items   []string
+	notices []dashboardNotice
 }
 
 type dashboardView struct {
-	summary dashboardPanel
 	panels  []dashboardPanel
 	details *dashboardPanel
 }
@@ -97,27 +93,11 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 		kind = object.Kind
 	}
 
-	summary := dashboardPanel{
-		title:    "WHODIS · " + strings.ToUpper(string(kind)),
-		kind:     panelSummary,
-		headline: firstNonEmpty(result.Query.Canonical, object.Name, object.ASNName, object.Handle),
-	}
-	if result.Route.Protocol != "" {
-		summary.badges = append(summary.badges, dashboardBadge{
-			text: strings.ToUpper(string(result.Route.Protocol)),
-			tone: badgeProtocol,
-		})
-	}
-	if result.FallbackFrom != nil {
-		summary.badges = append(summary.badges, dashboardBadge{
-			text: strings.ToUpper(string(result.FallbackFrom.Protocol)) + " FALLBACK",
-			tone: badgeFallback,
-		})
-	}
+	statusBadges := make([]dashboardBadge, 0, len(object.Status))
 	for _, status := range uniqueFold(object.Status) {
-		summary.badges = append(summary.badges, dashboardBadge{
+		statusBadges = append(statusBadges, dashboardBadge{
 			text: strings.ToUpper(status),
-			tone: badgeStatus,
+			tone: statusBadgeTone(status),
 		})
 	}
 
@@ -125,6 +105,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 	switch kind {
 	case KindIP:
 		rows := dashboardRows(
+			"Query", firstNonEmpty(result.Query.Canonical, object.Name, object.Handle),
 			"Name", object.Name,
 			"Unicode", distinctDashboardValue(object.UnicodeName, object.Name),
 			"Handle", object.Handle,
@@ -138,13 +119,13 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 			"ASN name", distinctDashboardValue(object.ASNName, object.Name),
 			"ASN type", object.ASNType,
 		)
-		if len(rows) > 0 {
-			panels = append(panels, dashboardPanel{title: "Network", kind: panelRows, role: panelPrimary, rows: rows})
+		if len(rows) > 0 || len(statusBadges) > 0 {
+			panels = append(panels, dashboardPanel{title: "Network", kind: panelRows, role: panelPrimary, badges: statusBadges, rows: rows})
 		}
 	case KindASN:
 		name := firstNonEmpty(object.ASNName, object.Name)
 		rows := dashboardRows(
-			"ASN", object.ASN,
+			"ASN", firstNonEmpty(object.ASN, result.Query.Canonical),
 			"Name", name,
 			"Object name", distinctDashboardValue(object.Name, name),
 			"Unicode", distinctDashboardValue(object.UnicodeName, name, object.Name),
@@ -157,8 +138,8 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 			"CIDR", strings.Join(uniqueFold(object.CIDR), ", "),
 			"Country", object.Country,
 		)
-		if len(rows) > 0 {
-			panels = append(panels, dashboardPanel{title: "ASN", kind: panelRows, role: panelPrimary, rows: rows})
+		if len(rows) > 0 || len(statusBadges) > 0 {
+			panels = append(panels, dashboardPanel{title: "ASN", kind: panelRows, role: panelPrimary, badges: statusBadges, rows: rows})
 		}
 	default:
 		unicodeName := object.UnicodeName
@@ -166,7 +147,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 			unicodeName = ""
 		}
 		rows := dashboardRows(
-			"Name", object.Name,
+			"Name", firstNonEmpty(object.Name, result.Query.Canonical),
 			"Unicode", unicodeName,
 			"Handle", object.Handle,
 			"Registrar", object.Registrar,
@@ -179,8 +160,8 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 			"ASN name", distinctDashboardValue(object.ASNName, object.Name),
 			"ASN type", object.ASNType,
 		)
-		if len(rows) > 0 {
-			panels = append(panels, dashboardPanel{title: "Registration", kind: panelRows, role: panelPrimary, rows: rows})
+		if len(rows) > 0 || len(statusBadges) > 0 {
+			panels = append(panels, dashboardPanel{title: "Registration", kind: panelRows, role: panelPrimary, badges: statusBadges, rows: rows})
 		}
 	}
 
@@ -222,6 +203,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 
 	notices := consolidateNotices(object.Notices)
 	sourceRows := dashboardRows(
+		"Protocol", strings.ToUpper(string(result.Route.Protocol)),
 		"Authority", result.Route.Endpoint,
 		"Discovery", result.Route.DiscoverySource,
 	)
@@ -231,7 +213,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 	if result.FallbackFrom != nil {
 		sourceRows = append(sourceRows, dashboardRow{
 			label: "Fallback",
-			value: string(result.FallbackFrom.Protocol) + " → " + string(result.Route.Protocol),
+			value: strings.ToUpper(string(result.FallbackFrom.Protocol)) + " → " + strings.ToUpper(string(result.Route.Protocol)),
 		})
 	}
 	if len(notices) > 0 {
@@ -245,7 +227,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 		panels = append(panels, dashboardPanel{title: "Source", kind: panelRows, rows: sourceRows})
 	}
 
-	view := dashboardView{summary: summary, panels: panels}
+	view := dashboardView{panels: panels}
 	if details && len(notices) > 0 {
 		panel := dashboardPanel{
 			title:   fmt.Sprintf("Notices · %d", len(notices)),
@@ -262,22 +244,18 @@ func renderDashboard(view dashboardView, width int, color bool) []string {
 		width = 1
 	}
 	if width < 32 {
-		panels := make([]dashboardPanel, 0, len(view.panels)+2)
-		panels = append(panels, view.summary)
-		panels = append(panels, view.panels...)
+		panels := append([]dashboardPanel(nil), view.panels...)
 		if view.details != nil {
 			panels = append(panels, *view.details)
 		}
 		return renderBorderlessDashboard(panels, width, color)
 	}
 
-	lines := renderDashboardPanel(view.summary, width, color)
-	if len(view.panels) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, renderDashboardColumns(view.panels, width, color)...)
-	}
+	lines := renderDashboardColumns(view.panels, width, color)
 	if view.details != nil {
-		lines = append(lines, "")
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
 		lines = append(lines, renderDashboardPanel(*view.details, width, color)...)
 	}
 	return lines
@@ -412,10 +390,26 @@ func assignDashboardPanels(panels []dashboardPanel, widths []int, color bool) []
 			}
 		}
 	}
-	for panelIndex := range panels {
-		if placed[panelIndex] {
-			continue
+	for {
+		panelIndex := -1
+		panelHeight := -1
+		for candidateIndex, panel := range panels {
+			if placed[candidateIndex] {
+				continue
+			}
+			height := 0
+			for _, width := range widths {
+				height = max(height, len(renderDashboardPanel(panel, width, color)))
+			}
+			if height > panelHeight {
+				panelIndex = candidateIndex
+				panelHeight = height
+			}
 		}
+		if panelIndex < 0 {
+			break
+		}
+
 		target := -1
 		for columnIndex := range columns {
 			if len(columns[columnIndex]) == 0 {
@@ -469,8 +463,6 @@ func renderDashboardBody(panel dashboardPanel, width int, color bool) []string {
 		width = 1
 	}
 	switch panel.kind {
-	case panelSummary:
-		return renderDashboardSummary(panel, width, color)
 	case panelDNS:
 		lines := renderDashboardRows(panel.rows, width, color)
 		if len(panel.items) > 0 {
@@ -483,25 +475,12 @@ func renderDashboardBody(panel dashboardPanel, width int, color bool) []string {
 	case panelNotices:
 		return renderDashboardNotices(panel.notices, width, color)
 	default:
-		return renderDashboardRows(panel.rows, width, color)
-	}
-}
-
-func renderDashboardSummary(panel dashboardPanel, width int, color bool) []string {
-	lines := make([]string, 0, 3)
-	for _, line := range wrapDashboardText(panel.headline, width) {
-		if color {
-			line = paint(line, "38;5;87", "", "1")
+		lines := renderDashboardBadges(panel.badges, width, color)
+		if len(lines) > 0 && len(panel.rows) > 0 {
+			lines = append(lines, "")
 		}
-		lines = append(lines, line)
+		return append(lines, renderDashboardRows(panel.rows, width, color)...)
 	}
-	if len(panel.badges) > 0 {
-		lines = append(lines, renderDashboardBadges(panel.badges, width, color)...)
-	}
-	if len(lines) == 0 {
-		return []string{"Lookup completed"}
-	}
-	return lines
 }
 
 func renderDashboardBadges(badges []dashboardBadge, width int, color bool) []string {
@@ -1001,6 +980,21 @@ func dashboardKey(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(safeText(value)), " "))
 }
 
+func statusBadgeTone(status string) dashboardBadgeTone {
+	normalized := strings.Map(func(character rune) rune {
+		if unicode.IsLetter(character) || unicode.IsDigit(character) {
+			return unicode.ToLower(character)
+		}
+		return -1
+	}, safeText(status))
+	for _, marker := range []string{"prohibited", "hold", "inactive", "pending", "redemption", "locked"} {
+		if strings.Contains(normalized, marker) {
+			return badgeConstraint
+		}
+	}
+	return badgeStatus
+}
+
 func prettyDashboardLabel(value string) string {
 	value = strings.NewReplacer("_", " ", "-", " ").Replace(safeText(value))
 	if value == "" {
@@ -1163,11 +1157,9 @@ func styleDashboardBadge(value string, tone dashboardBadgeTone, color bool) stri
 		return value
 	}
 	switch tone {
-	case badgeStatus:
-		return paint(value, "38;5;42", "", "1")
-	case badgeFallback:
+	case badgeConstraint:
 		return paint(value, "38;5;220", "", "1")
 	default:
-		return paint(value, "38;5;230", "48;5;24", "1")
+		return paint(value, "38;5;42", "", "1")
 	}
 }

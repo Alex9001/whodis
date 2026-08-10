@@ -177,6 +177,39 @@ func maxPanelTitlesOnLine(output string, titles ...string) int {
 	return maximum
 }
 
+func findDashboardPanel(t *testing.T, view dashboardView, title string) dashboardPanel {
+	t.Helper()
+	for _, panel := range view.panels {
+		if panel.title == title {
+			return panel
+		}
+	}
+	t.Fatalf("dashboard does not contain an exact %q panel title", title)
+	return dashboardPanel{}
+}
+
+func findDashboardRow(t *testing.T, panel dashboardPanel, label string) dashboardRow {
+	t.Helper()
+	for _, row := range panel.rows {
+		if row.label == label {
+			return row
+		}
+	}
+	t.Fatalf("%q panel does not contain a %q row", panel.title, label)
+	return dashboardRow{}
+}
+
+func findDashboardBadge(t *testing.T, panel dashboardPanel, text string) dashboardBadge {
+	t.Helper()
+	for _, badge := range panel.badges {
+		if strings.EqualFold(badge.text, text) {
+			return badge
+		}
+	}
+	t.Fatalf("%q panel does not contain a %q badge", panel.title, text)
+	return dashboardBadge{}
+}
+
 func TestRenderFormats(t *testing.T) {
 	for _, format := range []Format{FormatPretty, FormatPlain, FormatJSON, FormatYAML, FormatMarkdown, FormatRaw} {
 		t.Run(string(format), func(t *testing.T) {
@@ -219,6 +252,179 @@ func TestPrettyDashboardResponsiveWidths(t *testing.T) {
 		if got := maxPanelTitlesOnLine(outputs[width], panelTitles...); got < 3 {
 			t.Errorf("%d-column layout placed at most %d panels on one row, want a three-column mosaic", width, got)
 		}
+	}
+}
+
+func TestPrettyDashboardBalancesEqualWidthColumns(t *testing.T) {
+	const width = 120
+	view := buildDashboard(sampleResult(), false)
+	widths := dashboardColumnWidths(width, 3)
+	columns := assignDashboardPanels(view.panels, widths, false)
+	heights := make([]int, len(columns))
+	minimumHeight, maximumHeight := 0, 0
+	for columnIndex, panels := range columns {
+		for panelIndex, panel := range panels {
+			if panelIndex > 0 {
+				heights[columnIndex]++
+			}
+			heights[columnIndex] += len(renderDashboardPanel(panel, widths[columnIndex], false))
+		}
+		if columnIndex == 0 || heights[columnIndex] < minimumHeight {
+			minimumHeight = heights[columnIndex]
+		}
+		if heights[columnIndex] > maximumHeight {
+			maximumHeight = heights[columnIndex]
+		}
+	}
+
+	if maximumHeight-minimumHeight > 6 {
+		t.Errorf("120-column dashboard leaves columns visibly unbalanced: heights %v", heights)
+	}
+}
+
+func TestPrettyDashboardStartsWithPrimaryPanelsInsteadOfSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   LookupResult
+		panel    string
+		identity string
+		rowLabel string
+		rowValue string
+	}{
+		{
+			name:     "domain",
+			result:   sampleResult(),
+			panel:    "Registration",
+			identity: "example.com",
+			rowLabel: "Name",
+			rowValue: "example.com",
+		},
+		{
+			name:     "ip",
+			result:   sampleIPResult(),
+			panel:    "Network",
+			identity: "192.0.2.1",
+			rowLabel: "Query",
+			rowValue: "192.0.2.1",
+		},
+		{
+			name:     "asn",
+			result:   sampleASNResult(),
+			panel:    "ASN",
+			identity: "64496",
+			rowLabel: "ASN",
+			rowValue: "64496",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			view := buildDashboard(test.result, false)
+			primary := findDashboardPanel(t, view, test.panel)
+			if primary.title != test.panel {
+				t.Fatalf("primary panel title = %q, want exactly %q", primary.title, test.panel)
+			}
+			if row := findDashboardRow(t, primary, test.rowLabel); row.value != test.rowValue {
+				t.Errorf("%s %s row = %q, want %q", test.panel, test.rowLabel, row.value, test.rowValue)
+			}
+
+			output := renderForTest(t, test.result, FormatPretty, RenderOptions{Color: "never", Width: 120})
+			firstLine := strings.Split(strings.TrimLeft(output, "\n"), "\n")[0]
+			if strings.Contains(strings.ToUpper(firstLine), "WHODIS ·") {
+				t.Fatalf("dashboard retained the redundant WHODIS summary header:\n%s", output)
+			}
+			if !strings.Contains(firstLine, test.panel) {
+				t.Errorf("dashboard does not start with its %q primary panel:\n%s", test.panel, output)
+			}
+			if !strings.Contains(output, test.identity) {
+				t.Errorf("dashboard lost primary identity %q:\n%s", test.identity, output)
+			}
+		})
+	}
+}
+
+func TestPrettyDashboardSparsePrimaryKeepsLookupIdentity(t *testing.T) {
+	tests := []struct {
+		name  string
+		kind  Kind
+		query string
+		panel string
+	}{
+		{name: "domain", kind: KindDomain, query: "example.com", panel: "Registration"},
+		{name: "ip", kind: KindIP, query: "192.0.2.1", panel: "Network"},
+		{name: "asn", kind: KindASN, query: "64496", panel: "ASN"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := LookupResult{
+				Query:  Target{Canonical: test.query, Kind: test.kind},
+				Object: Object{Kind: test.kind},
+			}
+			view := buildDashboard(result, false)
+			primary := findDashboardPanel(t, view, test.panel)
+			rendered := strings.Join(renderDashboardPanel(primary, 80, false), "\n")
+			if !strings.Contains(rendered, test.query) {
+				t.Errorf("sparse %s panel lost lookup target %q:\n%s", test.panel, test.query, rendered)
+			}
+		})
+	}
+}
+
+func TestPrettyDashboardPlacesProtocolAndStatusesInRelevantPanels(t *testing.T) {
+	tests := []struct {
+		name   string
+		result LookupResult
+		panel  string
+	}{
+		{name: "domain", result: sampleResult(), panel: "Registration"},
+		{name: "ip", result: sampleIPResult(), panel: "Network"},
+		{name: "asn", result: sampleASNResult(), panel: "ASN"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			view := buildDashboard(test.result, false)
+			primary := findDashboardPanel(t, view, test.panel)
+			for _, status := range uniqueFold(test.result.Object.Status) {
+				badge := findDashboardBadge(t, primary, strings.ToUpper(status))
+				if badge.tone != statusBadgeTone(status) {
+					t.Errorf("status %q tone = %v, want %v", status, badge.tone, statusBadgeTone(status))
+				}
+			}
+
+			source := findDashboardPanel(t, view, "Source")
+			if row := findDashboardRow(t, source, "Protocol"); !strings.EqualFold(row.value, string(test.result.Route.Protocol)) {
+				t.Errorf("Source Protocol row = %q, want %q", row.value, test.result.Route.Protocol)
+			}
+		})
+	}
+}
+
+func TestStatusBadgeToneDistinguishesRegistryConstraints(t *testing.T) {
+	for _, status := range []string{
+		"client transfer prohibited",
+		"clientTransferProhibited",
+		"server update prohibited",
+		"serverHold",
+		"client hold",
+		"pendingDelete",
+		"pending_delete",
+		"pending-delete",
+		"pending validation",
+	} {
+		if got := statusBadgeTone(status); got != badgeConstraint {
+			t.Errorf("statusBadgeTone(%q) = %v, want constraint tone", status, got)
+		}
+	}
+	if got := statusBadgeTone("active"); got != badgeStatus {
+		t.Errorf("statusBadgeTone(active) = %v, want normal status tone", got)
+	}
+
+	constraintStyle := styleDashboardBadge("[CLIENT TRANSFER PROHIBITED]", badgeConstraint, true)
+	normalStyle := styleDashboardBadge("[CLIENT TRANSFER PROHIBITED]", badgeStatus, true)
+	if constraintStyle == normalStyle {
+		t.Fatal("constraint and ordinary status badges use the same ANSI styling")
 	}
 }
 

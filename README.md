@@ -12,23 +12,23 @@ Instead of dumping a wall of registry text, it turns the answer into a compact t
 
 ```text
 $ whodis example.com
-╭─ WHODIS · DOMAIN ────────────────────────────────────────────────────────────╮
-│ example.com                                                                  │
-│ [RDAP] [ACTIVE] [CLIENT TRANSFER PROHIBITED]                                 │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ Registration ────────────────────────────╮  ╭─ Timeline ────────────────────╮
-│ Registrar  Example Registrar Inc.         │  │ Registered  1995-08-14        │
-│ Handle     2336799_DOMAIN_COM-VRSN        │  │ Expires     2026-08-13        │
-│ Registry   Example Registry               │  │ Updated     2025-08-14        │
-╰───────────────────────────────────────────╯  ╰───────────────────────────────╯
-╭─ DNS ─────────────────────────────────────╮  ╭─ Contacts ────────────────────╮
-│ DNSSEC  signed delegation                 │  │ REGISTRANT · TECHNICAL        │
-│ A.IANA-SERVERS.NET                        │  │ Example Registry · id-1234    │
-│ B.IANA-SERVERS.NET                        │  │                               │
-╰───────────────────────────────────────────╯  ╰───────────────────────────────╯
-╭─ Source ─────────────────────────────────────────────────────────────────────╮
-│ rdap.example.net · IANA bootstrap · 2 notices hidden · use --details         │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Registration ──────────────────────╮ ╭─ Contacts · 1 ───────────────────────╮
+│ [CLIENT TRANSFER PROHIBITED]        │ │ REGISTRANT / TECHNICAL               │
+│                                     │ │   Example Registry · id-1234         │
+│ Name       example.com              │ ╰──────────────────────────────────────╯
+│ Handle     2336799_DOMAIN_COM-VRSN  │
+│ Registrar  Example Registrar Inc.   │ ╭─ Timeline · 3 ───────────────────────╮
+╰─────────────────────────────────────╯ │ Registered  1995-08-14               │
+                                        │ Expires     2026-08-13               │
+╭─ DNS · 2 ───────────────────────────╮ │ Updated     2025-08-14               │
+│ DNSSEC  signed delegation           │ ╰──────────────────────────────────────╯
+│                                     │
+│ • A.IANA-SERVERS.NET                │ ╭─ Source ─────────────────────────────╮
+│ • B.IANA-SERVERS.NET                │ │ Protocol   RDAP                      │
+╰─────────────────────────────────────╯ │ Authority  rdap.example.net          │
+                                        │ Discovery  IANA bootstrap            │
+                                        │ Notices    2 hidden · use --details  │
+                                        ╰──────────────────────────────────────╯
 ```
 
 The dashboard adapts to the terminal: wide windows use a multi-panel mosaic, while narrow windows stack the same semantic panels into one column. Contacts stay visible but are consolidated instead of repeated. Lengthy registry notices are summarized by count; add `--details` when you want their full text and links. The flag affects only the pretty dashboard; other output formats remain unchanged.
