@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,20 +22,34 @@ import (
 
 var version = "dev"
 
+type cliTask string
+
+const (
+	taskLookup  cliTask = "lookup"
+	taskScan    cliTask = "scan"
+	taskAXFR    cliTask = "axfr"
+	taskExpires cliTask = "expires"
+	taskGet     cliTask = "get"
+)
+
 type cliOptions struct {
-	target           string
+	target           string // retained for single-target compatibility in callers/tests
+	targets          []string
+	inputSources     []cliInputSource
+	fields           []whodis.ProjectionField
+	jobs             int
 	format           string
 	formatSet        bool
 	output           string
+	task             cliTask
 	protocol         whodis.Protocol
+	protocolSet      bool
 	fallback         whodis.FallbackMode
+	fallbackSet      bool
 	server           string
 	timeout          time.Duration
 	refreshBootstrap bool
-	dnsMode          whodis.DNSMode
-	dnsModeSet       bool
 	dnsResolver      string
-	axfr             bool
 	color            string
 	colorSet         bool
 	details          bool
@@ -41,6 +57,11 @@ type cliOptions struct {
 	force            bool
 	help             bool
 	showVersion      bool
+}
+
+type cliInputSource struct {
+	target string
+	path   string
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -53,6 +74,9 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 	if len(args) > 0 && args[0] == "config" {
 		return runConfig(args[1:], stdout, stderr, runtime)
 	}
+	if len(args) > 0 && args[0] == "help" {
+		return runHelp(args[1:], stdout, stderr)
+	}
 	options, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
@@ -60,16 +84,36 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		return 2
 	}
 	if options.help {
-		printUsage(stdout)
+		if options.task != taskLookup {
+			printTaskUsage(stdout, options.task)
+		} else if options.protocolSet {
+			printProtocolsUsage(stdout)
+		} else {
+			printUsage(stdout)
+		}
 		return 0
 	}
 	if options.showVersion {
 		fmt.Fprintln(stdout, "whodis", resolvedVersion())
 		return 0
 	}
-	if options.target == "" {
+	inputs, err := resolveInputs(options, runtime)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		if len(options.inputSources) == 0 {
+			printUsage(stderr)
+			return 2
+		}
+		return 1
+	}
+	if len(inputs) == 0 {
 		fmt.Fprintln(stderr, "whodis: a target is required")
 		printUsage(stderr)
+		return 2
+	}
+	if err := validateTaskTargets(inputs, options.task); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		printTaskUsage(stderr, options.task)
 		return 2
 	}
 	if options.colorSet {
@@ -89,6 +133,10 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		}
 		return 2
 	}
+	if format == whodis.FormatRaw && (options.task != taskLookup || len(inputs) != 1 || len(options.fields) > 0) {
+		fmt.Fprintln(stderr, "whodis: raw output requires one ordinary registration lookup")
+		return 2
+	}
 	color, details, err := choosePresentation(options, format, runtime)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
@@ -99,14 +147,34 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		return 2
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
-	defer cancel()
 	client := whodis.NewClient(whodis.ClientOptions{Timeout: options.timeout})
-	result, err := client.Lookup(ctx, options.target, whodis.LookupOptions{
+	lookupOptions := whodis.LookupOptions{
 		Protocol: options.protocol, Fallback: options.fallback, Server: options.server,
 		Timeout: options.timeout, RefreshBootstrap: options.refreshBootstrap,
-		DNSMode: options.dnsMode, DNSResolver: options.dnsResolver,
-	})
+		DNSMode: taskDNSMode(options.task), DNSResolver: options.dnsResolver,
+	}
+	if options.task == taskLookup && len(inputs) == 1 && len(options.fields) == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
+		defer cancel()
+		result, err := client.Lookup(ctx, inputs[0], lookupOptions)
+		if err != nil {
+			printLookupError(stderr, err, format)
+			return exitCode(err)
+		}
+		writer, closeWriter, err := openOutput(options.output, options.force, stdout)
+		if err != nil {
+			fmt.Fprintln(stderr, "whodis:", err)
+			return 1
+		}
+		defer closeWriter()
+		if err := whodis.Render(writer, result, format, whodis.RenderOptions{Color: color, Details: details}); err != nil {
+			fmt.Fprintln(stderr, "whodis: could not render output:", err)
+			return 1
+		}
+		return 0
+	}
+
+	batch, err := client.LookupBatch(context.Background(), inputs, whodis.BatchLookupOptions{LookupOptions: lookupOptions, Workers: options.jobs})
 	if err != nil {
 		printLookupError(stderr, err, format)
 		return exitCode(err)
@@ -118,8 +186,21 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		return 1
 	}
 	defer closeWriter()
-	if err := whodis.Render(writer, result, format, whodis.RenderOptions{Color: color, Details: details}); err != nil {
+	if err := whodis.RenderBatch(writer, batch, format, whodis.BatchRenderOptions{RenderOptions: whodis.RenderOptions{Color: color, Details: details}, Fields: options.fields}); err != nil {
 		fmt.Fprintln(stderr, "whodis: could not render output:", err)
+		return 1
+	}
+	if batch.HasErrors() {
+		failed := 0
+		for _, item := range batch.Items {
+			if item.Error != nil {
+				failed++
+			}
+		}
+		if len(batch.Items) == 1 {
+			return batchExitCode(batch.Items[0].Error)
+		}
+		fmt.Fprintf(stderr, "whodis: %d of %d lookups failed\n", failed, len(batch.Items))
 		return 1
 	}
 	return 0
@@ -155,12 +236,29 @@ func isReleaseVersion(value string) bool {
 }
 
 func parseArgs(args []string) (cliOptions, error) {
-	options := cliOptions{protocol: whodis.ProtocolAuto, fallback: whodis.FallbackUnavailable, timeout: 15 * time.Second, dnsMode: whodis.DNSOff, color: "auto"}
-	var targets []string
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
+	options := cliOptions{task: taskLookup, protocol: whodis.ProtocolAuto, fallback: whodis.FallbackUnavailable, timeout: 15 * time.Second, color: "auto", jobs: 4}
+	appendTarget := func(target string) {
+		options.targets = append(options.targets, target)
+		options.inputSources = append(options.inputSources, cliInputSource{target: target})
+	}
+	appendField := func(field whodis.ProjectionField) {
+		for _, existing := range options.fields {
+			if existing == field {
+				return
+			}
+		}
+		options.fields = append(options.fields, field)
+	}
+	remaining, err := parseCommandPrefix(args, &options, appendField)
+	if err != nil {
+		return options, err
+	}
+	for index := 0; index < len(remaining); index++ {
+		arg := remaining[index]
 		if arg == "--" {
-			targets = append(targets, args[index+1:]...)
+			for _, target := range remaining[index+1:] {
+				appendTarget(target)
+			}
 			break
 		}
 		name, inline, hasInline := strings.Cut(arg, "=")
@@ -168,41 +266,42 @@ func parseArgs(args []string) (cliOptions, error) {
 			if hasInline {
 				return inline, nil
 			}
-			if index+1 >= len(args) {
+			if index+1 >= len(remaining) {
 				return "", fmt.Errorf("%s requires a value", name)
 			}
 			index++
-			return args[index], nil
+			return remaining[index], nil
 		}
 		switch name {
 		case "-h", "--help":
 			options.help = true
 		case "--version":
 			options.showVersion = true
-		case "-f", "--format":
-			v, err := value()
-			if err != nil {
-				return options, err
-			}
-			options.format, options.formatSet = v, true
 		case "-o", "--output":
 			v, err := value()
 			if err != nil {
 				return options, err
 			}
 			options.output = v
-		case "--protocol":
+		case "-i", "--input":
 			v, err := value()
 			if err != nil {
 				return options, err
 			}
-			options.protocol = whodis.Protocol(v)
-		case "--fallback":
+			if strings.TrimSpace(v) == "" {
+				return options, fmt.Errorf("%s requires a non-empty path", name)
+			}
+			options.inputSources = append(options.inputSources, cliInputSource{path: v})
+		case "-j", "--jobs":
 			v, err := value()
 			if err != nil {
 				return options, err
 			}
-			options.fallback = whodis.FallbackMode(v)
+			jobs, err := strconv.Atoi(v)
+			if err != nil || jobs < 1 || jobs > 32 {
+				return options, fmt.Errorf("--jobs must be a whole number between 1 and 32")
+			}
+			options.jobs = jobs
 		case "--server":
 			v, err := value()
 			if err != nil {
@@ -225,81 +324,221 @@ func parseArgs(args []string) (cliOptions, error) {
 				return options, err
 			}
 			options.color, options.colorSet = v, true
-		case "--refresh-bootstrap":
+		case "--refresh":
 			options.refreshBootstrap = true
-		case "--dns":
-			options.dnsMode, options.dnsModeSet = whodis.DNSScan, true
-			if hasInline {
-				options.dnsMode = whodis.DNSMode(strings.ToLower(strings.TrimSpace(inline)))
-				break
-			}
-			if index+1 < len(args) {
-				if mode, ok := dnsMode(args[index+1]); ok {
-					options.dnsMode = mode
-					index++
-				}
-			}
 		case "--resolver":
 			v, err := value()
 			if err != nil {
 				return options, err
 			}
 			options.dnsResolver = v
-		case "--axfr":
-			options.axfr = true
 		case "--details":
+			if options.detailsSet && !options.details {
+				return options, fmt.Errorf("--details conflicts with --summary")
+			}
 			options.details, options.detailsSet = true, true
-		case "--no-details":
+		case "--summary":
+			if options.detailsSet && options.details {
+				return options, fmt.Errorf("--summary conflicts with --details")
+			}
 			options.details, options.detailsSet = false, true
+		case "--strict":
+			if options.fallbackSet && options.fallback != whodis.FallbackNone {
+				return options, fmt.Errorf("--strict conflicts with --try-both")
+			}
+			options.fallback, options.fallbackSet = whodis.FallbackNone, true
+		case "--try-both":
+			if options.fallbackSet && options.fallback != whodis.FallbackAnyError {
+				return options, fmt.Errorf("--try-both conflicts with --strict")
+			}
+			options.fallback, options.fallbackSet = whodis.FallbackAnyError, true
+		case "--dashboard", "--tree", "--geekboys", "--plain", "--json", "--yaml", "--markdown", "--raw":
+			if hasInline {
+				return options, fmt.Errorf("%s does not take a value", name)
+			}
+			if options.formatSet {
+				return options, fmt.Errorf("only one output format shortcut may be used")
+			}
+			options.format, options.formatSet = strings.TrimPrefix(name, "--"), true
 		case "--force":
 			options.force = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return options, fmt.Errorf("unknown option %s", arg)
 			}
-			targets = append(targets, arg)
+			appendTarget(arg)
 		}
 	}
-	if len(targets) > 1 {
-		return options, fmt.Errorf("only one target may be queried at a time")
+	if len(options.targets) > 0 {
+		options.target = options.targets[0]
 	}
-	if len(targets) == 1 {
-		options.target = targets[0]
-	}
-	if options.protocol != whodis.ProtocolAuto && options.protocol != whodis.ProtocolRDAP && options.protocol != whodis.ProtocolWHOIS {
-		return options, fmt.Errorf("--protocol must be auto, rdap, or whois")
-	}
-	if options.fallback != whodis.FallbackUnavailable && options.fallback != whodis.FallbackNone && options.fallback != whodis.FallbackAnyError {
-		return options, fmt.Errorf("--fallback must be unavailable, none, or any-error")
-	}
-	if options.dnsResolver != "" && !options.dnsModeSet {
-		options.dnsMode = whodis.DNSScan
-	}
-	if options.axfr {
-		if options.dnsModeSet && options.dnsMode != whodis.DNSAXFR {
-			return options, fmt.Errorf("--axfr conflicts with --dns %s; use --dns axfr", options.dnsMode)
-		}
-		options.dnsMode = whodis.DNSAXFR
-	}
-	switch options.dnsMode {
-	case whodis.DNSAuto, whodis.DNSOff, whodis.DNSScan, whodis.DNSAXFR:
-	default:
-		return options, fmt.Errorf("--dns must be auto, off, scan, or axfr")
-	}
-	if options.dnsResolver != "" && options.dnsMode == whodis.DNSOff {
-		return options, fmt.Errorf("--resolver cannot be used with --dns off")
+	if err := validateCLIOptions(options); err != nil {
+		return options, err
 	}
 	return options, nil
 }
 
-func dnsMode(value string) (whodis.DNSMode, bool) {
-	mode := whodis.DNSMode(strings.ToLower(strings.TrimSpace(value)))
-	switch mode {
-	case whodis.DNSAuto, whodis.DNSOff, whodis.DNSScan, whodis.DNSAXFR:
-		return mode, true
-	default:
-		return "", false
+func parseCommandPrefix(args []string, options *cliOptions, appendField func(whodis.ProjectionField)) ([]string, error) {
+	if len(args) == 0 || args[0] == "--" || strings.HasPrefix(args[0], "-") {
+		return args, nil
 	}
+	index := 0
+	switch args[index] {
+	case string(whodis.ProtocolRDAP), string(whodis.ProtocolWHOIS), string(whodis.ProtocolRWHOIS):
+		options.protocol, options.protocolSet = whodis.Protocol(args[index]), true
+		index++
+	}
+	if index >= len(args) || args[index] == "--" || strings.HasPrefix(args[index], "-") {
+		return args[index:], nil
+	}
+	switch args[index] {
+	case string(taskScan):
+		options.task = taskScan
+		index++
+	case string(taskAXFR):
+		options.task = taskAXFR
+		index++
+	case string(taskExpires):
+		options.task = taskExpires
+		appendField(whodis.FieldExpiration)
+		index++
+	case string(taskGet):
+		options.task = taskGet
+		index++
+		if index >= len(args) || args[index] == "--help" || args[index] == "-h" {
+			if index < len(args) {
+				options.help = true
+				index++
+			}
+			return args[index:], nil
+		}
+		if strings.HasPrefix(args[index], "-") || args[index] == "--" {
+			return nil, fmt.Errorf("get requires a comma-separated field list")
+		}
+		if err := parseFieldList(args[index], appendField); err != nil {
+			return nil, err
+		}
+		index++
+	}
+	return args[index:], nil
+}
+
+func parseFieldList(value string, appendField func(whodis.ProjectionField)) error {
+	for _, name := range strings.Split(value, ",") {
+		field, err := whodis.ParseProjectionField(name)
+		if err != nil {
+			return err
+		}
+		appendField(field)
+	}
+	return nil
+}
+
+func validateCLIOptions(options cliOptions) error {
+	if options.protocol == whodis.ProtocolRWHOIS && strings.TrimSpace(options.server) == "" && !options.help {
+		return fmt.Errorf("rwhois requires --server")
+	}
+	if options.server != "" && !options.protocolSet {
+		return fmt.Errorf("--server requires rdap, whois, or rwhois")
+	}
+	if options.server != "" && options.fallbackSet {
+		return fmt.Errorf("--server cannot be combined with --strict or --try-both")
+	}
+	if options.refreshBootstrap && options.protocolSet && options.protocol != whodis.ProtocolRDAP {
+		return fmt.Errorf("--refresh is only available with automatic routing or rdap")
+	}
+	if options.dnsResolver != "" && options.task != taskScan && options.task != taskAXFR {
+		return fmt.Errorf("--resolver is only available with scan or axfr")
+	}
+	return nil
+}
+
+func taskDNSMode(task cliTask) whodis.DNSMode {
+	switch task {
+	case taskScan:
+		return whodis.DNSScan
+	case taskAXFR:
+		return whodis.DNSAXFR
+	default:
+		return whodis.DNSOff
+	}
+}
+
+func validateTaskTargets(inputs []string, task cliTask) error {
+	if task != taskScan && task != taskAXFR {
+		return nil
+	}
+	for _, input := range inputs {
+		target, err := whodis.ParseTarget(input)
+		if err == nil && target.Kind != whodis.KindDomain {
+			return fmt.Errorf("%s requires domain targets; %q is an %s", task, input, target.Kind)
+		}
+	}
+	return nil
+}
+
+func resolveInputs(options cliOptions, runtime cliRuntime) ([]string, error) {
+	var inputs []string
+	stdinUsed := false
+	readSource := func(reader io.Reader, description string) error {
+		if reader == nil {
+			return fmt.Errorf("could not read %s", description)
+		}
+		values, err := readTargetLines(reader)
+		if err != nil {
+			return fmt.Errorf("could not read %s: %w", description, err)
+		}
+		inputs = append(inputs, values...)
+		return nil
+	}
+	for _, source := range options.inputSources {
+		if source.path == "" {
+			inputs = append(inputs, source.target)
+			continue
+		}
+		if source.path == "-" {
+			if stdinUsed {
+				return nil, fmt.Errorf("standard input can only be used once")
+			}
+			stdinUsed = true
+			if err := readSource(runtime.stdin, "standard input"); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		file, err := os.Open(source.path)
+		if err != nil {
+			return nil, fmt.Errorf("could not open input file %s: %w", source.path, err)
+		}
+		err = readSource(file, source.path)
+		closeErr := file.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("could not close input file %s: %w", source.path, closeErr)
+		}
+	}
+	if len(options.inputSources) == 0 && runtime.stdin != nil && runtime.stdinIsTerminal != nil && !runtime.stdinIsTerminal() {
+		if err := readSource(runtime.stdin, "standard input"); err != nil {
+			return nil, err
+		}
+	}
+	return inputs, nil
+}
+
+func readTargetLines(reader io.Reader) ([]string, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 4<<10), 1<<20)
+	var inputs []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		inputs = append(inputs, line)
+	}
+	return inputs, scanner.Err()
 }
 
 func chooseFormat(options cliOptions, stdout io.Writer, runtime cliRuntime) (whodis.Format, error) {
@@ -321,6 +560,12 @@ func chooseFormat(options cliOptions, stdout io.Writer, runtime cliRuntime) (who
 			return "", fmt.Errorf("invalid %s value: %w", formatEnvironmentVariable, err)
 		}
 		return format, nil
+	}
+	if len(options.fields) > 0 {
+		if runtime.isTerminal(stdout) {
+			return whodis.FormatPretty, nil
+		}
+		return whodis.FormatPlain, nil
 	}
 	config, exists, err := loadOptionalUserConfig(runtime)
 	if err != nil {
@@ -449,50 +694,187 @@ func exitCode(err error) int {
 	}
 }
 
+func batchExitCode(err *whodis.BatchError) int {
+	if err == nil {
+		return 0
+	}
+	switch err.Kind {
+	case whodis.ErrorInvalidInput:
+		return 2
+	case whodis.ErrorNotFound:
+		return 3
+	case whodis.ErrorRateLimited:
+		return 4
+	default:
+		return 1
+	}
+}
+
 func printUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage:
-  whodis <target> [options]
+  whodis [rdap|whois|rwhois] [scan|axfr|expires|get <fields>] [target ...] [options]
   whodis config
-  whodis config set format|color|details <value>
-  whodis config get format|color|details
-  whodis config unset format|color|details
-  whodis config reset
-  whodis config path
+  whodis help [scan|axfr|expires|get|protocols|formats|advanced]
 
 Targets: domain names, IPv4/IPv6 addresses or CIDRs, and ASNs (AS15169).
 
-Options:
-  -f, --format <type>       dashboard, tree, geekboys, plain, json, yaml, markdown, or raw
-  -o, --output <file|->     write to a file; format is inferred from extension
-      --protocol <name>     auto (default), rdap, or whois
-      --fallback <mode>     unavailable (default), none, or any-error
-      --server <endpoint>   explicitly choose an RDAP URL or WHOIS server
+Commands:
+  (none)                    full registration lookup (the default)
+  scan                      registration plus public DNS discovery
+  axfr                      registration plus an authoritative zone-transfer attempt
+  expires                   expiration only; useful for one or many domains
+  get <fields>              selected fields, comma-separated
+
+Output shortcuts (choose one):
+  --dashboard  --tree  --geekboys  --plain  --json  --yaml  --markdown  --raw
+
+Common options:
+  -i, --input <file|->      add newline-delimited targets; - reads standard input
+  -o, --output <file|->     write to a file; format is inferred from its extension
+  -j, --jobs <count>        concurrent batch lookups (default: 4; range: 1-32)
       --timeout <duration>  request timeout (default: 15s)
-      --refresh-bootstrap   refresh IANA RDAP service data
-      --dns[=<mode>]        discover public DNS records (bare: scan; modes: auto, off, scan, axfr)
-      --axfr                try an authoritative zone transfer; same as --dns axfr
-      --resolver <address>  DNS resolver host or IP, with an optional port
       --color <mode>        auto (default), always, or never
-      --details             expand notices in dashboard, tree, and geekboys output
-      --no-details          summarize notices for this lookup
+      --details             expand notices in visual output
+      --summary             summarize notices in visual output
       --force               overwrite an existing output file
-  -h, --help                show this help
-      --version             show version
+	  -h, --help                show this help
+	      --version             show version
+
+Routing and DNS:
+      --server <endpoint>   explicit endpoint; requires rdap, whois, or rwhois
+      --strict              do not fall back to another registration protocol
+      --try-both            fall back after any protocol error
+      --refresh             refresh IANA RDAP service data
+      --resolver <address>  DNS resolver for scan or axfr
 
 Environment:
-  WHODIS_FORMAT             default output format when --format and file inference are absent
+  WHODIS_FORMAT             default output format when no shortcut or file inference applies
 
 Examples:
   whodis example.com
+  whodis scan example.com --tree
+  whodis expires google.com yahoo.com
+  whodis get expiration,registrar -i domains.txt -o results.txt
+  printf 'google.com\nyahoo.com\n' | whodis expires
+  whodis whois example.cc --strict
+  whodis rwhois get status 23.228.169.1 --server rwhois.example.net
   whodis -- config
-  whodis example.com --format tree
   whodis config
-  whodis config set format geekboys
-  whodis config set color never
-  whodis example.com --dns
-  whodis example.com --axfr
-  whodis 8.8.8.8 --format json
-  whodis AS15169 --output google-asn.yaml
-  whodis example.cc --protocol whois --fallback none
 `)
+}
+
+func printTaskUsage(writer io.Writer, task cliTask) {
+	switch task {
+	case taskScan:
+		fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] scan <domain> [<domain> ...] [options]
+
+Looks up registration data and public DNS records (A, AAAA, CNAME, MX, NS, TXT, CAA, and more).
+Only domain targets are accepted. Use --resolver <host[:port]> to choose the DNS resolver.
+
+Example: whodis scan example.com --tree
+`)
+	case taskAXFR:
+		fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] axfr <domain> [<domain> ...] [options]
+
+Looks up registration data and attempts an authoritative DNS zone transfer. When transfer is unavailable,
+Whodis keeps the regular DNS scan results and reports that limitation in the result.
+Only domain targets are accepted. Use --resolver <host[:port]> to choose the DNS resolver.
+
+Example: whodis axfr example.com --json
+`)
+	case taskExpires:
+		fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] expires <target> [<target> ...] [options]
+
+Returns only each target's expiration date. With a terminal it uses a compact grid; redirected output is plain text.
+
+Example: whodis expires google.com yahoo.com -o expirations.txt
+`)
+	case taskGet:
+		fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] get <fields> <target> [<target> ...] [options]
+
+<fields> is a comma-separated list of: expiration, registration, updated, registrar, registry,
+status, nameservers, dnssec, protocol.
+
+Example: whodis get expiration,registrar,status google.com yahoo.com --plain
+`)
+	default:
+		printUsage(writer)
+	}
+}
+
+func printProtocolsUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] [command] [target ...] [options]
+
+Routing defaults to automatic selection. Put a protocol before the command to force it:
+  whodis rdap example.com
+  whodis whois scan example.com --strict
+  whodis rwhois get status 192.0.2.1 --server rwhois.example.net
+
+--server requires an explicit protocol. RWhois always requires --server.
+--strict disables fallback; --try-both allows fallback after any protocol error.
+--refresh refreshes IANA RDAP service data and is available with automatic routing or rdap.
+`)
+}
+
+func printFormatsUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Output shortcuts:
+  --dashboard  organized terminal dashboard (default on a terminal)
+  --tree       indented registration view
+  --geekboys   retro terminal view
+  --plain      portable text
+  --json       JSON
+  --yaml       YAML
+  --markdown   Markdown
+  --raw        unmodified source response; one ordinary lookup only
+
+Use exactly one shortcut. Without one, Whodis infers a format from --output, WHODIS_FORMAT,
+saved preferences, and whether output is a terminal.
+`)
+}
+
+func printAdvancedUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Advanced options:
+  -i, --input <file|->      add newline-delimited targets; - reads standard input
+  -o, --output <file|->     write to a file; refuses to overwrite unless --force is used
+  -j, --jobs <count>        batch concurrency, from 1 through 32
+      --timeout <duration>  per-lookup timeout
+      --color <mode>        auto, always, or never
+      --details             expand notices in dashboard, tree, and geekboys views
+      --summary             summarize notices in those views
+      --resolver <address>  DNS resolver for scan or axfr
+      --server <endpoint>   explicit server, with rdap/whois/rwhois
+      --strict              do not fall back to another registration protocol
+      --try-both            fall back after any protocol error
+      --refresh             refresh IANA RDAP service data
+      --force               overwrite --output's existing file
+`)
+}
+
+func runHelp(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printUsage(stdout)
+		return 0
+	}
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "whodis: help accepts one topic")
+		printUsage(stderr)
+		return 2
+	}
+	switch args[0] {
+	case string(taskScan), string(taskAXFR), string(taskExpires), string(taskGet):
+		printTaskUsage(stdout, cliTask(args[0]))
+	case "protocols":
+		printProtocolsUsage(stdout)
+	case "formats":
+		printFormatsUsage(stdout)
+	case "advanced":
+		printAdvancedUsage(stdout)
+	case "config":
+		printConfigUsage(stdout)
+	default:
+		fmt.Fprintf(stderr, "whodis: unknown help topic %q\n", args[0])
+		printUsage(stderr)
+		return 2
+	}
+	return 0
 }

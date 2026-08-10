@@ -34,6 +34,15 @@ func (a whoisAdapter) Lookup(ctx context.Context, target Target, route RouteDeci
 		if whoisNotFound(raw) {
 			return Object{}, sources, lookupError(ErrorNotFound, "registration object was not found by WHOIS authority", nil)
 		}
+		if rwhois := rwhoisReferral(document); rwhois != "" {
+			route := RouteDecision{Protocol: ProtocolRWHOIS, Endpoint: rwhois, DiscoverySource: "WHOIS RWhois referral", Reason: "authoritative WHOIS service delegated the registration object"}
+			object, rwhoisSources, err := a.client.lookupWithRoute(ctx, target, route)
+			if err != nil {
+				return Object{}, append(sources, rwhoisSources...), err
+			}
+			sources = append(sources, rwhoisSources...)
+			return mergeObjects(object, normalizeWHOIS(target, document)), sources, nil
+		}
 		referral := whoisReferral(document)
 		if referral == "" || strings.EqualFold(referral, endpoint) {
 			return normalizeWHOIS(target, document), sources, nil
@@ -161,7 +170,7 @@ func whoisReferral(document whoisDocument) string {
 		return ""
 	}
 	if strings.HasPrefix(strings.ToLower(value), "rwhois://") {
-		return "" // RWhois is deliberately deferred to its own adapter.
+		return ""
 	}
 	value = strings.TrimPrefix(value, "whois://")
 	value = strings.TrimSuffix(value, "/")
@@ -169,6 +178,50 @@ func whoisReferral(document whoisDocument) string {
 		return ""
 	}
 	return value
+}
+
+func rwhoisReferral(document whoisDocument) string {
+	for _, key := range []string{"referralserver", "refer", "referto", "whois", "whois server"} {
+		for _, value := range document.Fields[compactKey(key)] {
+			value = strings.TrimSpace(value)
+			if !strings.HasPrefix(strings.ToLower(value), "rwhois://") {
+				continue
+			}
+			if endpoint, err := canonicalEndpoint(ProtocolRWHOIS, value); err == nil {
+				return endpoint
+			}
+		}
+	}
+	return ""
+}
+
+// probeRWHOISReferral follows ordinary WHOIS referrals only long enough to
+// find an advertised RWhois authority. It is deliberately best-effort: it is
+// used to enrich an already-successful RDAP response.
+func (a whoisAdapter) probeRWHOISReferral(ctx context.Context, target Target, endpoint string) (Object, []Source, string, bool) {
+	seen := map[string]bool{}
+	var sources []Source
+	for hop := 0; hop < 4; hop++ {
+		if seen[strings.ToLower(endpoint)] {
+			return Object{}, nil, "", false
+		}
+		seen[strings.ToLower(endpoint)] = true
+		raw, err := a.query(ctx, endpoint, whoisQuery(target))
+		if err != nil || whoisNotFound(raw) {
+			return Object{}, nil, "", false
+		}
+		document := parseWHOIS(raw)
+		sources = append(sources, Source{Protocol: ProtocolWHOIS, Endpoint: endpoint, Authority: endpoint, Raw: raw})
+		if referral := rwhoisReferral(document); referral != "" {
+			return normalizeWHOIS(target, document), sources, referral, true
+		}
+		referral := whoisReferral(document)
+		if referral == "" || strings.EqualFold(referral, endpoint) {
+			return Object{}, nil, "", false
+		}
+		endpoint = referral
+	}
+	return Object{}, nil, "", false
 }
 
 func whoisNotFound(raw string) bool {

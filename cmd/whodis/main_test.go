@@ -13,12 +13,12 @@ import (
 func TestParseArgsDetails(t *testing.T) {
 	for _, format := range []string{"dashboard", "tree", "geekboys", "plain", "json", "yaml", "markdown", "raw"} {
 		t.Run(format, func(t *testing.T) {
-			options, err := parseArgs([]string{"example.com", "--format", format, "--details"})
+			options, err := parseArgs([]string{"example.com", "--" + format, "--details"})
 			if err != nil {
 				t.Fatalf("parseArgs() error = %v", err)
 			}
-			if !options.details {
-				t.Fatal("parseArgs() details = false, want true")
+			if !options.details || !options.formatSet || options.format != format {
+				t.Fatalf("parseArgs() = %+v, want details and %s shortcut", options, format)
 			}
 			runtime := cliRuntime{
 				getenv:        func(string) string { return "" },
@@ -33,7 +33,7 @@ func TestParseArgsDetails(t *testing.T) {
 }
 
 func TestParseArgsNoDetailsAndColorTracking(t *testing.T) {
-	options, err := parseArgs([]string{"example.com", "--details", "--no-details", "--color", "never"})
+	options, err := parseArgs([]string{"example.com", "--summary", "--color", "never"})
 	if err != nil {
 		t.Fatalf("parseArgs() error = %v", err)
 	}
@@ -50,36 +50,31 @@ func TestParseArgsDNSOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseArgs() error = %v", err)
 	}
-	if options.dnsMode != whodis.DNSOff {
-		t.Fatalf("default DNS mode = %q, want off", options.dnsMode)
+	if options.task != taskLookup || taskDNSMode(options.task) != whodis.DNSOff {
+		t.Fatalf("default task = %q, want registration-only lookup", options.task)
 	}
 
-	for _, args := range [][]string{
-		{"example.com", "--dns"},
-		{"--dns", "example.com"},
-		{"example.com", "--dns", "scan"},
-		{"example.com", "--dns=scan"},
-	} {
+	for _, args := range [][]string{{"scan", "example.com"}, {"rdap", "scan", "example.com"}} {
 		options, err = parseArgs(args)
-		if err != nil || options.target != "example.com" || options.dnsMode != whodis.DNSScan {
+		if err != nil || options.target != "example.com" || options.task != taskScan || taskDNSMode(options.task) != whodis.DNSScan {
 			t.Fatalf("parseArgs(%q) = (%+v, %v), want target and scan mode", args, options, err)
 		}
 	}
 
-	options, err = parseArgs([]string{"example.com", "--resolver", "1.1.1.1:5353"})
-	if err != nil || options.dnsMode != whodis.DNSScan || options.dnsResolver != "1.1.1.1:5353" {
-		t.Fatalf("resolver DNS options = (%q, %q, %v), want scan and resolver", options.dnsMode, options.dnsResolver, err)
+	options, err = parseArgs([]string{"scan", "example.com", "--resolver", "1.1.1.1:5353"})
+	if err != nil || options.task != taskScan || options.dnsResolver != "1.1.1.1:5353" {
+		t.Fatalf("resolver DNS options = (%q, %q, %v), want scan and resolver", options.task, options.dnsResolver, err)
 	}
 
-	options, err = parseArgs([]string{"example.com", "--axfr"})
-	if err != nil || options.dnsMode != whodis.DNSAXFR {
-		t.Fatalf("--axfr = (%q, %v), want axfr and no error", options.dnsMode, err)
+	options, err = parseArgs([]string{"axfr", "example.com"})
+	if err != nil || options.task != taskAXFR || taskDNSMode(options.task) != whodis.DNSAXFR {
+		t.Fatalf("axfr command = (%q, %v), want axfr and no error", options.task, err)
 	}
 
 	for _, args := range [][]string{
-		{"example.com", "--dns=unknown"},
-		{"example.com", "--dns=off", "--resolver", "1.1.1.1"},
-		{"example.com", "--dns=off", "--axfr"},
+		{"example.com", "--resolver", "1.1.1.1"},
+		{"--dns", "example.com"},
+		{"example.com", "--axfr"},
 	} {
 		if _, err := parseArgs(args); err == nil {
 			t.Fatalf("parseArgs(%q) succeeded, want an error", args)
@@ -90,7 +85,7 @@ func TestParseArgsDNSOptions(t *testing.T) {
 func TestUsageIncludesDetailsAndDNS(t *testing.T) {
 	var output bytes.Buffer
 	printUsage(&output)
-	for _, value := range []string{"--details", "--no-details", "--dns", "--axfr", "--resolver", "whodis config"} {
+	for _, value := range []string{"scan", "axfr", "expires", "get <fields>", "--details", "--summary", "--resolver", "whodis config"} {
 		if !strings.Contains(output.String(), value) {
 			t.Fatalf("printUsage() output does not document %q:\n%s", value, output.String())
 		}
@@ -166,5 +161,107 @@ func TestRunVersionUsesInjectedVersion(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("run() stderr = %q, want empty output", stderr.String())
+	}
+}
+
+func TestParseArgsBatchSelectors(t *testing.T) {
+	options, err := parseArgs([]string{"get", "expiration,registrar", "google.com", "yahoo.com", "--jobs", "6"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if got, want := strings.Join(options.targets, ","), "google.com,yahoo.com"; got != want {
+		t.Fatalf("targets = %q, want %q", got, want)
+	}
+	if options.jobs != 6 || len(options.fields) != 2 || options.fields[0] != whodis.FieldExpiration || options.fields[1] != whodis.FieldRegistrar {
+		t.Fatalf("batch options = %#v", options)
+	}
+}
+
+func TestParseArgsProtocolTaskGrammar(t *testing.T) {
+	tests := []struct {
+		args     []string
+		protocol whodis.Protocol
+		task     cliTask
+		server   string
+		fields   []whodis.ProjectionField
+	}{
+		{args: []string{"whois", "scan", "example.com"}, protocol: whodis.ProtocolWHOIS, task: taskScan},
+		{args: []string{"rdap", "expires", "google.com"}, protocol: whodis.ProtocolRDAP, task: taskExpires, fields: []whodis.ProjectionField{whodis.FieldExpiration}},
+		{args: []string{"rwhois", "get", "status", "192.0.2.1", "--server", "rwhois.example.net"}, protocol: whodis.ProtocolRWHOIS, task: taskGet, server: "rwhois.example.net", fields: []whodis.ProjectionField{whodis.FieldStatus}},
+	}
+	for _, test := range tests {
+		options, err := parseArgs(test.args)
+		if err != nil {
+			t.Fatalf("parseArgs(%q) error = %v", test.args, err)
+		}
+		if options.protocol != test.protocol || options.task != test.task || options.server != test.server || strings.Join(projectionNames(options.fields), ",") != strings.Join(projectionNames(test.fields), ",") {
+			t.Fatalf("parseArgs(%q) = %+v, want protocol/task/server/fields %q/%q/%q/%q", test.args, options, test.protocol, test.task, test.server, test.fields)
+		}
+	}
+}
+
+func TestParseArgsRejectsLegacyFlagsWithoutHints(t *testing.T) {
+	for _, arg := range []string{"--dns", "--axfr", "--expiration", "--fields", "--format", "--protocol", "--fallback", "--refresh-bootstrap", "--no-details"} {
+		_, err := parseArgs([]string{"example.com", arg})
+		if err == nil || !strings.Contains(err.Error(), "unknown option "+arg) || strings.Contains(strings.ToLower(err.Error()), "instead") {
+			t.Fatalf("parseArgs legacy %q error = %v, want generic unknown-option error", arg, err)
+		}
+	}
+}
+
+func TestParseArgsCommandConstraints(t *testing.T) {
+	for _, args := range [][]string{
+		{"rwhois", "example.com"},
+		{"example.com", "--server", "whois.example.net"},
+		{"whois", "example.com", "--server", "whois.example.net", "--strict"},
+		{"whois", "example.com", "--refresh"},
+		{"example.com", "--strict", "--try-both"},
+		{"example.com", "--tree", "--json"},
+		{"example.com", "--details", "--summary"},
+	} {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("parseArgs(%q) succeeded, want error", args)
+		}
+	}
+	if err := validateTaskTargets([]string{"8.8.8.8"}, taskScan); err == nil {
+		t.Fatal("scan accepted an IP target, want a domain-only error")
+	}
+}
+
+func TestParseArgsEscapesReservedTarget(t *testing.T) {
+	options, err := parseArgs([]string{"whois", "--", "scan"})
+	if err != nil || options.task != taskLookup || options.protocol != whodis.ProtocolWHOIS || len(options.targets) != 1 || options.targets[0] != "scan" {
+		t.Fatalf("parseArgs escaped target = (%+v, %v), want WHOIS lookup for scan", options, err)
+	}
+}
+
+func TestCommandHelp(t *testing.T) {
+	for _, args := range [][]string{{"help", "scan"}, {"get", "--help"}, {"axfr", "--help"}} {
+		var stdout, stderr bytes.Buffer
+		if got := runWithRuntime(args, &stdout, &stderr, testRuntime(t.TempDir(), nil, false)); got != 0 || stdout.Len() == 0 || stderr.Len() != 0 {
+			t.Fatalf("run(%q) = (%d, %q, %q), want command help", args, got, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func projectionNames(fields []whodis.ProjectionField) []string {
+	names := make([]string, len(fields))
+	for index, field := range fields {
+		names[index] = string(field)
+	}
+	return names
+}
+
+func TestResolveInputsReadsPipedTargets(t *testing.T) {
+	runtime := cliRuntime{
+		stdin:           strings.NewReader("# comment\ngoogle.com\n\nyahoo.com\n"),
+		stdinIsTerminal: func() bool { return false },
+	}
+	inputs, err := resolveInputs(cliOptions{}, runtime)
+	if err != nil {
+		t.Fatalf("resolveInputs() error = %v", err)
+	}
+	if got, want := strings.Join(inputs, ","), "google.com,yahoo.com"; got != want {
+		t.Fatalf("inputs = %q, want %q", got, want)
 	}
 }

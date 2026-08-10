@@ -22,9 +22,10 @@ const (
 type Protocol string
 
 const (
-	ProtocolAuto  Protocol = "auto"
-	ProtocolRDAP  Protocol = "rdap"
-	ProtocolWHOIS Protocol = "whois"
+	ProtocolAuto   Protocol = "auto"
+	ProtocolRDAP   Protocol = "rdap"
+	ProtocolWHOIS  Protocol = "whois"
+	ProtocolRWHOIS Protocol = "rwhois"
 )
 
 // FallbackMode controls whether Whodis tries the other protocol after its
@@ -167,6 +168,68 @@ type LookupOptions struct {
 	RefreshBootstrap bool
 	DNSMode          DNSMode
 	DNSResolver      string
+}
+
+// BatchLookupOptions controls a concurrent group of independent lookups.
+// Workers defaults to four when it is zero. Per-item lookup errors are
+// returned in BatchResult rather than stopping the rest of the batch.
+type BatchLookupOptions struct {
+	LookupOptions LookupOptions
+	Workers       int
+}
+
+// BatchError is the safe-to-serialize form of a lookup failure.
+type BatchError struct {
+	Kind    ErrorKind `json:"kind" yaml:"kind"`
+	Message string    `json:"message" yaml:"message"`
+}
+
+// BatchItem retains the original input so an invalid target and a successful
+// canonicalized target can be displayed together without losing attribution.
+// Exactly one of Result and Error is set after LookupBatch completes.
+type BatchItem struct {
+	Input  string        `json:"input" yaml:"input"`
+	Result *LookupResult `json:"result,omitempty" yaml:"result,omitempty"`
+	Error  *BatchError   `json:"error,omitempty" yaml:"error,omitempty"`
+}
+
+// BatchResult is the serializable response returned by Client.LookupBatch.
+// Embedded LookupResult values retain their own schema version.
+type BatchResult struct {
+	SchemaVersion int         `json:"schema_version" yaml:"schema_version"`
+	Items         []BatchItem `json:"items" yaml:"items"`
+}
+
+// HasErrors reports whether any item in the completed batch failed.
+func (r BatchResult) HasErrors() bool {
+	for _, item := range r.Items {
+		if item.Error != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ProjectionField is a stable, script-friendly view of a normalized result.
+type ProjectionField string
+
+const (
+	FieldExpiration   ProjectionField = "expiration"
+	FieldRegistration ProjectionField = "registration"
+	FieldUpdated      ProjectionField = "updated"
+	FieldRegistrar    ProjectionField = "registrar"
+	FieldRegistry     ProjectionField = "registry"
+	FieldStatus       ProjectionField = "status"
+	FieldNameservers  ProjectionField = "nameservers"
+	FieldDNSSEC       ProjectionField = "dnssec"
+	FieldProtocol     ProjectionField = "protocol"
+)
+
+// BatchRenderOptions controls rendering of batch results. Fields selects the
+// compact projection mode; an empty list renders complete lookup results.
+type BatchRenderOptions struct {
+	RenderOptions
+	Fields []ProjectionField
 }
 
 // ClientOptions configures a reusable lookup client.

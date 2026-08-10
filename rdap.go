@@ -121,6 +121,7 @@ type rdapRecord struct {
 	Name            string       `json:"name"`
 	Type            string       `json:"type"`
 	Country         string       `json:"country"`
+	Port43          string       `json:"port43"`
 	StartAddress    string       `json:"startAddress"`
 	EndAddress      string       `json:"endAddress"`
 	StartAutnum     *uint64      `json:"startAutnum"`
@@ -169,6 +170,19 @@ type rdapNotice struct {
 type rdapLink struct {
 	Rel  string `json:"rel"`
 	Href string `json:"href"`
+}
+
+func rdapPort43(sources []Source) string {
+	for _, source := range sources {
+		if source.Protocol != ProtocolRDAP || source.Raw == "" {
+			continue
+		}
+		var record rdapRecord
+		if json.Unmarshal([]byte(source.Raw), &record) == nil && strings.TrimSpace(record.Port43) != "" {
+			return strings.TrimSpace(record.Port43)
+		}
+	}
+	return ""
 }
 
 func normalizeRDAP(kind Kind, record rdapRecord) Object {

@@ -35,6 +35,7 @@ func NewClient(options ClientOptions) *Client {
 	}
 	c.adapters[ProtocolRDAP] = rdapAdapter{client: c}
 	c.adapters[ProtocolWHOIS] = whoisAdapter{client: c}
+	c.adapters[ProtocolRWHOIS] = rwhoisAdapter{client: c}
 	for _, adapter := range options.Adapters {
 		if adapter != nil {
 			c.adapters[adapter.Protocol()] = adapter
@@ -129,7 +130,11 @@ func (c *Client) Lookup(ctx context.Context, input string, options LookupOptions
 
 	object, sources, err := c.lookupWithRoute(ctx, target, primary)
 	if err == nil {
-		result := newResult(target, primary, nil, object, sources)
+		effectiveRoute := routedSources(primary, sources)
+		if opts.Protocol == ProtocolAuto && primary.Protocol == ProtocolRDAP && (target.Kind == KindIP || target.Kind == KindASN) {
+			object, sources, effectiveRoute = c.enrichRDAPWithRWHOIS(ctx, target, object, sources, effectiveRoute)
+		}
+		result := newResult(target, effectiveRoute, nil, object, sources)
 		if dnsResults != nil {
 			result.DNS = <-dnsResults
 		}
@@ -147,7 +152,7 @@ func (c *Client) Lookup(ctx context.Context, input string, options LookupOptions
 	if fallbackErr != nil {
 		return LookupResult{}, fallbackErr
 	}
-	result := newResult(target, fallback, &primary, object, sources)
+	result := newResult(target, routedSources(fallback, sources), &primary, object, sources)
 	if dnsResults != nil {
 		result.DNS = <-dnsResults
 	}
@@ -211,8 +216,8 @@ func shouldScanDNS(target Target, options LookupOptions) bool {
 
 func (c *Client) route(ctx context.Context, target Target, options LookupOptions) (RouteDecision, error) {
 	if options.Server != "" {
-		if options.Protocol != ProtocolRDAP && options.Protocol != ProtocolWHOIS {
-			return RouteDecision{}, lookupError(ErrorInvalidInput, "--server requires --protocol rdap or --protocol whois", nil)
+		if options.Protocol != ProtocolRDAP && options.Protocol != ProtocolWHOIS && options.Protocol != ProtocolRWHOIS {
+			return RouteDecision{}, lookupError(ErrorInvalidInput, "--server requires --protocol rdap, whois, or rwhois", nil)
 		}
 		endpoint, err := canonicalEndpoint(options.Protocol, options.Server)
 		if err != nil {
@@ -226,6 +231,8 @@ func (c *Client) route(ctx context.Context, target Target, options LookupOptions
 		return c.discoverRDAP(ctx, target, options.RefreshBootstrap)
 	case ProtocolWHOIS:
 		return c.discoverWHOIS(ctx, target)
+	case ProtocolRWHOIS:
+		return RouteDecision{}, lookupError(ErrorInvalidInput, "--protocol rwhois requires --server because RWhois has no global bootstrap", nil)
 	case ProtocolAuto:
 		rdapRoute, err := c.discoverRDAP(ctx, target, options.RefreshBootstrap)
 		if err == nil {
@@ -236,7 +243,7 @@ func (c *Client) route(ctx context.Context, target Target, options LookupOptions
 		}
 		return c.discoverWHOIS(ctx, target)
 	default:
-		return RouteDecision{}, lookupError(ErrorInvalidInput, "protocol must be auto, rdap, or whois", nil)
+		return RouteDecision{}, lookupError(ErrorInvalidInput, "protocol must be auto, rdap, whois, or rwhois", nil)
 	}
 }
 
@@ -253,6 +260,54 @@ func (c *Client) lookupWithRoute(ctx context.Context, target Target, route Route
 		return Object{}, nil, lookupError(ErrorProtocol, "no adapter is registered for "+string(route.Protocol), nil)
 	}
 	return adapter.Lookup(ctx, target, route)
+}
+
+func routedSources(initial RouteDecision, sources []Source) RouteDecision {
+	if len(sources) == 0 {
+		return initial
+	}
+	last := sources[len(sources)-1]
+	if last.Protocol != ProtocolRWHOIS {
+		return initial
+	}
+	if initial.Protocol == ProtocolRWHOIS && strings.EqualFold(initial.Endpoint, last.Endpoint) {
+		return initial
+	}
+	if initial.Protocol == ProtocolRWHOIS {
+		return RouteDecision{
+			Protocol:        ProtocolRWHOIS,
+			Endpoint:        last.Endpoint,
+			DiscoverySource: "RWhois referral",
+			Reason:          "RWhois authority delegated the registration object",
+		}
+	}
+	return RouteDecision{
+		Protocol:        ProtocolRWHOIS,
+		Endpoint:        last.Endpoint,
+		DiscoverySource: "WHOIS RWhois referral",
+		Reason:          "authoritative WHOIS service delegated the registration object",
+	}
+}
+
+// enrichRDAPWithRWHOIS makes RWhois discovery invisible for the common
+// network-delegation path: RDAP advertises port43, WHOIS advertises RWhois,
+// and RWhois returns the more-specific assignment. Every probe failure keeps
+// the successful RDAP result intact.
+func (c *Client) enrichRDAPWithRWHOIS(ctx context.Context, target Target, rdapObject Object, rdapSources []Source, current RouteDecision) (Object, []Source, RouteDecision) {
+	port43 := rdapPort43(rdapSources)
+	if port43 == "" {
+		return rdapObject, rdapSources, current
+	}
+	whoisObject, whoisSources, referral, found := (whoisAdapter{client: c}).probeRWHOISReferral(ctx, target, port43)
+	if !found {
+		return rdapObject, rdapSources, current
+	}
+	route := RouteDecision{Protocol: ProtocolRWHOIS, Endpoint: referral, DiscoverySource: "RDAP port43 WHOIS referral", Reason: "RDAP authority delegated a more-specific registration object"}
+	rwhoisObject, rwhoisSources, err := c.lookupWithRoute(ctx, target, route)
+	if err != nil {
+		return rdapObject, rdapSources, current
+	}
+	return mergeObjects(rwhoisObject, mergeObjects(whoisObject, rdapObject)), append(append(rdapSources, whoisSources...), rwhoisSources...), routedSources(route, rwhoisSources)
 }
 
 func shouldFallback(err error, mode FallbackMode) bool {
@@ -278,6 +333,9 @@ func canonicalEndpoint(protocol Protocol, input string) (string, error) {
 			return "", lookupError(ErrorInvalidInput, "WHOIS server must be a host or host:port", nil)
 		}
 		return endpoint, nil
+	}
+	if protocol == ProtocolRWHOIS {
+		return canonicalRWHOISEndpoint(endpoint)
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
