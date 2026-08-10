@@ -8,7 +8,7 @@
 
 The registry world is split between old-school WHOIS and modern RDAP. `whodis` hides that split: give it a domain, IP address, network, or ASN and it finds the right service automatically. No protocol trivia required.
 
-Instead of dumping a wall of registry text, it turns the answer into a compact terminal dashboard. Registration facts, dates, DNS, contacts, and routing details each get the space they need.
+Instead of dumping a wall of registry text, it can turn the answer into a compact terminal dashboard, a hierarchical tree, a 2002-style ASCII layout, or clean plain text. Registration facts, dates, DNS, contacts, and routing details each get the space they need.
 
 ```text
 $ whodis example.com
@@ -31,12 +31,13 @@ $ whodis example.com
                                         ╰──────────────────────────────────────╯
 ```
 
-The dashboard adapts to the terminal: wide windows use a multi-panel mosaic, while narrow windows stack the same semantic panels into one column. Contacts stay visible but are consolidated instead of repeated. Lengthy registry notices are summarized by count; add `--details` when you want their full text and links. The flag affects only the pretty dashboard; other output formats remain unchanged.
+The dashboard adapts to the terminal: wide windows use a multi-panel mosaic, while narrow windows stack the same semantic panels into one column. Contacts stay visible but are consolidated instead of repeated. Lengthy registry notices are summarized by count; add `--details` when you want their full text and links. The flag also expands notices in the tree and GeekBoys views; plain and machine-readable formats remain unchanged.
 
 ## What you get
 
 - **Automatic protocol selection** — RDAP for registries that support it, WHOIS where it is still needed.
-- **Responsive terminal dashboard** — semantic panels reorganize themselves to use the available width without repeating the same contacts or notices.
+- **Four terminal views** — switch between the responsive dashboard, a semantic tree, a retro ASCII layout, and plain text.
+- **Persistent preferences** — save your favorite view once and use it automatically in terminals and pipelines.
 - **Script-friendly formats** — output plain text, JSON, YAML, Markdown, or the raw registry response.
 - **Direct file export** — use `--output result.json` and Whodis infers the format from the extension.
 - **More than domains** — look up IPv4, IPv6, CIDR networks, and autonomous system numbers such as `AS15169`.
@@ -92,6 +93,72 @@ Once installed, use it from any directory:
 whodis google.com
 ```
 
+## Choose your view
+
+Use `--format` to change one lookup:
+
+```bash
+whodis example.com --format dashboard  # current responsive grid
+whodis example.com --format tree
+whodis example.com --format geekboys
+whodis example.com --format plain
+```
+
+The tree uses the queried target as its root without repeating it inside the
+Registration panel:
+
+```text
+example.com
+├── Registration
+│   ├── Status
+│   │   └── CLIENT TRANSFER PROHIBITED
+│   ├── Handle: 2336799_DOMAIN_COM-VRSN
+│   └── Registrar: Example Registrar Inc.
+├── DNS · 2
+│   └── Nameservers
+│       ├── A.IANA-SERVERS.NET
+│       └── B.IANA-SERVERS.NET
+└── Source
+    ├── Protocol: RDAP
+    └── Discovery: IANA bootstrap
+```
+
+The headerless `geekboys` view uses responsive ASCII-only geometry inspired by
+the [2002 GeekBoys community layout](https://web.archive.org/web/20020328041200/http://www.geekboys.org/):
+
+```text
+.--- Registration ---------------------+
+| + CLIENT TRANSFER PROHIBITED +       |
+|                                      |
+| Name     : example.com               |
+| Handle   : 2336799_DOMAIN_COM-VRSN   |
+| Registrar: Example Registrar Inc.    |
++--------------------------------------'
+```
+
+Save a default view when you want the same choice in future terminals and
+stdout pipelines:
+
+```bash
+whodis config set format tree
+whodis config get format      # tree
+whodis config unset format    # restore automatic dashboard/plain selection
+whodis config path            # show the platform-specific config file
+```
+
+Because `config` is a command name, query that exact target with
+`whodis -- config`.
+
+Saved defaults may be `dashboard`, `tree`, `geekboys`, or `plain`. An explicit
+`--format` always wins. `WHODIS_FORMAT` provides a temporary environment
+override and can also select JSON, YAML, Markdown, or raw output. Named output
+files continue to take their format from the extension.
+
+Whodis stores this preference in `whodis/config.json` below the operating
+system's user configuration directory: normally `~/.config` on Linux,
+`~/Library/Application Support` on macOS, and `%AppData%` on Windows. Use
+`whodis config path` for the exact location.
+
 ## Common examples
 
 ```bash
@@ -105,7 +172,13 @@ whodis AS15169
 # Print machine-readable data
 whodis example.com --format json
 
-# Expand registry notices in the terminal dashboard
+# Try another terminal layout for one lookup
+whodis example.com --format tree
+
+# Make the ASCII view your default in terminals and pipelines
+whodis config set format geekboys
+
+# Expand registry notices in the structured terminal views
 whodis example.com --details
 
 # Export to a file; .yaml selects YAML automatically
@@ -119,8 +192,12 @@ whodis example.com --format plain
 
 ```text
 whodis <target> [options]
+whodis config set format dashboard|tree|geekboys|plain
+whodis config get format
+whodis config unset format
+whodis config path
 
--f, --format pretty|plain|json|yaml|markdown|raw
+-f, --format dashboard|tree|geekboys|plain|json|yaml|markdown|raw
 -o, --output <file|->
     --protocol auto|rdap|whois
     --fallback unavailable|none|any-error
@@ -134,7 +211,10 @@ whodis <target> [options]
     --version
 ```
 
-When `--format` is omitted with `--output`, Whodis infers JSON, YAML, Markdown, or plain text from the filename. Existing files are protected unless `--force` is supplied.
+`pretty`, `grid`, and `current` are aliases for `dashboard`; `retro` and
+`geek-boys` are aliases for `geekboys`. When `--format` is omitted with
+`--output`, Whodis infers JSON, YAML, Markdown, tree, GeekBoys, or plain text
+from the filename. Existing files are protected unless `--force` is supplied.
 
 ## How protocol selection works
 
@@ -151,11 +231,16 @@ The protocol engine is independent of terminal rendering. That keeps the same lo
 The public API is centered on:
 
 ```go
-import "github.com/Alex9001/whodis"
+import (
+    "os"
+
+    "github.com/Alex9001/whodis"
+)
 
 client := whodis.NewClient(whodis.ClientOptions{})
 route, err := client.Route(ctx, "example.com", whodis.LookupOptions{})
 result, err := client.Lookup(ctx, "example.com", whodis.LookupOptions{})
+err = whodis.Render(os.Stdout, result, whodis.FormatTree, whodis.RenderOptions{})
 ```
 
 `LookupResult` is a versioned model containing the query, routing decision, normalized registration data, notices, and registry sources. Native RDAP JSON and raw WHOIS text remain available through `--format raw`.

@@ -1,10 +1,10 @@
 # AUR publication handoff
 
-The concrete `whodis` 0.1.0 source package is ready in `packaging/aur/` and has
-been built and checked against the published GitHub source archive. An AUR
+The source-package templates and publication automation are ready. An AUR
 account and its registered SSH key are the only missing pieces for the first
-push. Copy `PKGBUILD`, `.SRCINFO`, and `LICENSE`; do not publish the `.in`
-templates with unresolved placeholders.
+push. Generate `PKGBUILD` and `.SRCINFO` from the latest stable GitHub source
+archive as described below; do not publish the `.in` templates or copy an old
+versioned package snapshot from `packaging/aur/`.
 
 The application is MIT-licensed. The separate `packaging/aur/LICENSE` applies
 0BSD only to the AUR packaging files, as recommended by the
@@ -15,8 +15,8 @@ The application is MIT-licensed. The separate `packaging/aur/LICENSE` applies
 - AUR package: `whodis` (source-built, not `whodis-bin`)
 - Maintainer: `Aleksandr Oreshkin <alex@cyberbrand.net>`
 - Upstream: `https://github.com/Alex9001/whodis`
-- Initial version: `0.1.0-1`
-- Released source SHA-256: `04c41acac76a57d572b077645b72c8f76d6dc7a3073411cb99e9bdeaf9f45c1d`
+- Initial version if published now: `0.3.0-1`
+- Released source SHA-256: derived and verified from the selected GitHub release below
 - Architecture: `x86_64`
 - Installed binary: `/usr/bin/whodis`
 - Installed application license: `/usr/share/licenses/whodis/LICENSE`
@@ -67,8 +67,17 @@ public.
 
 ## 2. Confirm the release and package name
 
-Do not continue until <https://github.com/Alex9001/whodis/releases/tag/v0.1.0>
-exists and its release workflow has completed successfully. Also open
+Set the release to publish, then confirm it exists and is stable. `v0.3.0` is
+the intended initial AUR version; replace it with a newer stable release if
+publication happens later.
+
+```bash
+release_tag=v0.3.0
+release_version=${release_tag#v}
+gh release view "$release_tag" --repo Alex9001/whodis
+```
+
+Also open
 <https://aur.archlinux.org/packages/whodis>. If another person has created that
 package, stop and follow the AUR ownership/adoption process instead of pushing
 over their work.
@@ -83,10 +92,22 @@ GitHub repository. If `../whodis-aur` already exists, inspect it instead of
 deleting or overwriting it.
 
 ```bash
+release_tag=${release_tag:-v0.3.0}
+release_version=${release_tag#v}
 git clone -c core.sshCommand='ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes' \
   ssh://aur@aur.archlinux.org/whodis.git ../whodis-aur
-cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO packaging/aur/LICENSE \
-  ../whodis-aur/
+
+aur_release_dir="$(mktemp -d)"
+gh release download "$release_tag" --repo Alex9001/whodis \
+  --pattern "whodis_${release_version}_source.tar.gz" \
+  --pattern checksums.txt \
+  --dir "$aur_release_dir"
+(
+  cd "$aur_release_dir"
+  grep "whodis_${release_version}_source.tar.gz$" checksums.txt | sha256sum -c -
+)
+source_sha256="$(sha256sum "$aur_release_dir/whodis_${release_version}_source.tar.gz" | cut -d ' ' -f 1)"
+scripts/render-aur.sh "$release_version" "$source_sha256" ../whodis-aur
 
 (
   cd ../whodis-aur
@@ -94,7 +115,7 @@ cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO packaging/aur/LICENSE \
   makepkg --printsrcinfo | diff -u .SRCINFO -
   makepkg --cleanbuild --syncdeps
   namcap PKGBUILD
-  namcap whodis-0.1.0-1-*.pkg.tar.zst
+  namcap "whodis-${release_version}-1-"*.pkg.tar.zst
 )
 ```
 
@@ -110,7 +131,7 @@ git -C ../whodis-aur config user.name 'Aleksandr Oreshkin'
 git -C ../whodis-aur config user.email 'alex@cyberbrand.net'
 git -C ../whodis-aur status --short
 git -C ../whodis-aur add PKGBUILD .SRCINFO LICENSE
-git -C ../whodis-aur commit -m 'Initial release: whodis 0.1.0'
+git -C ../whodis-aur commit -m "Initial release: whodis ${release_version}"
 git -C ../whodis-aur push origin master
 ```
 
@@ -135,7 +156,7 @@ git clone https://aur.archlinux.org/whodis.git "$whodis_aur_check"
 ```
 
 `command -v whodis` must print `/usr/bin/whodis`, and the version must be
-`0.1.0`.
+the value of `$release_version` selected above.
 
 ## 6. Enable future automatic updates
 

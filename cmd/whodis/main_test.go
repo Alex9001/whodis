@@ -2,13 +2,14 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"runtime/debug"
 	"strings"
 	"testing"
 )
 
 func TestParseArgsDetails(t *testing.T) {
-	for _, format := range []string{"pretty", "plain", "json", "yaml", "markdown", "raw"} {
+	for _, format := range []string{"dashboard", "tree", "geekboys", "plain", "json", "yaml", "markdown", "raw"} {
 		t.Run(format, func(t *testing.T) {
 			options, err := parseArgs([]string{"example.com", "--format", format, "--details"})
 			if err != nil {
@@ -17,7 +18,12 @@ func TestParseArgsDetails(t *testing.T) {
 			if !options.details {
 				t.Fatal("parseArgs() details = false, want true")
 			}
-			if _, err := chooseFormat(options); err != nil {
+			runtime := cliRuntime{
+				getenv:        func(string) string { return "" },
+				userConfigDir: func() (string, error) { return t.TempDir(), nil },
+				isTerminal:    func(io.Writer) bool { return false },
+			}
+			if _, err := chooseFormat(options, &bytes.Buffer{}, runtime); err != nil {
 				t.Fatalf("chooseFormat() error = %v", err)
 			}
 		})

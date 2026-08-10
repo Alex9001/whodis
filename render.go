@@ -16,6 +16,8 @@ type Format string
 
 const (
 	FormatPretty   Format = "pretty"
+	FormatTree     Format = "tree"
+	FormatGeekBoys Format = "geekboys"
 	FormatPlain    Format = "plain"
 	FormatJSON     Format = "json"
 	FormatYAML     Format = "yaml"
@@ -30,12 +32,16 @@ type RenderOptions struct {
 	Details bool
 }
 
-// ParseFormat validates a CLI-facing output format. text and txt are friendly
-// aliases for plain.
+// ParseFormat validates a CLI-facing output format. Common descriptions of
+// the human-facing renderers are accepted as friendly aliases.
 func ParseFormat(value string) (Format, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "pretty", "":
+	case "pretty", "dashboard", "grid", "current", "":
 		return FormatPretty, nil
+	case "tree":
+		return FormatTree, nil
+	case "geekboys", "geek-boys", "retro":
+		return FormatGeekBoys, nil
 	case "plain", "text", "txt":
 		return FormatPlain, nil
 	case "json":
@@ -79,6 +85,12 @@ func Render(writer io.Writer, result LookupResult, format Format, options Render
 		return err
 	case FormatPretty:
 		_, err := io.WriteString(writer, renderPretty(writer, result, options))
+		return err
+	case FormatTree:
+		_, err := io.WriteString(writer, renderTree(writer, result, options))
+		return err
+	case FormatGeekBoys:
+		_, err := io.WriteString(writer, renderGeekBoys(writer, result, options))
 		return err
 	default:
 		return fmt.Errorf("unsupported format %q", format)

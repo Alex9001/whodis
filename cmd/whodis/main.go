@@ -14,6 +14,7 @@ import (
 
 	"github.com/Alex9001/whodis"
 
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,6 +40,13 @@ type cliOptions struct {
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWithRuntime(args, stdout, stderr, defaultCLIRuntime())
+}
+
+func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime) int {
+	if len(args) > 0 && args[0] == "config" {
+		return runConfig(args[1:], stdout, stderr, runtime)
+	}
 	options, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
@@ -58,9 +66,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
-	format, err := chooseFormat(options)
+	format, err := chooseFormat(options, stdout, runtime)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
+		var configError *savedConfigError
+		if errors.As(err, &configError) {
+			return 1
+		}
 		return 2
 	}
 	if options.color != "auto" && options.color != "always" && options.color != "never" {
@@ -221,7 +233,7 @@ func parseArgs(args []string) (cliOptions, error) {
 	return options, nil
 }
 
-func chooseFormat(options cliOptions) (whodis.Format, error) {
+func chooseFormat(options cliOptions, stdout io.Writer, runtime cliRuntime) (whodis.Format, error) {
 	if options.formatSet {
 		return whodis.ParseFormat(options.format)
 	}
@@ -234,11 +246,43 @@ func chooseFormat(options cliOptions) (whodis.Format, error) {
 		}
 		return whodis.FormatPlain, nil
 	}
-	info, err := os.Stdout.Stat()
-	if err == nil && info.Mode()&os.ModeCharDevice != 0 {
+	if value := strings.TrimSpace(runtime.getenv(formatEnvironmentVariable)); value != "" {
+		format, err := whodis.ParseFormat(value)
+		if err != nil {
+			return "", fmt.Errorf("invalid %s value: %w", formatEnvironmentVariable, err)
+		}
+		return format, nil
+	}
+	config, exists, err := loadUserConfig(runtime)
+	if err != nil {
+		if !errors.Is(err, errConfigDirectoryUnavailable) {
+			return "", &savedConfigError{err: err}
+		}
+		exists = false
+	}
+	if exists && strings.TrimSpace(config.Format) != "" {
+		format, _, err := parsePersistentFormat(config.Format)
+		if err != nil {
+			path, pathErr := configFilePath(runtime)
+			if pathErr != nil {
+				return "", pathErr
+			}
+			return "", &savedConfigError{err: fmt.Errorf("invalid format in config %s: %w", path, err)}
+		}
+		return format, nil
+	}
+	if runtime.isTerminal(stdout) {
 		return whodis.FormatPretty, nil
 	}
 	return whodis.FormatPlain, nil
+}
+
+func writerIsTerminal(writer io.Writer) bool {
+	type fileDescriptor interface {
+		Fd() uintptr
+	}
+	output, ok := writer.(fileDescriptor)
+	return ok && term.IsTerminal(int(output.Fd()))
 }
 
 func openOutput(path string, force bool, stdout io.Writer) (io.Writer, func(), error) {
@@ -296,11 +340,15 @@ func exitCode(err error) int {
 func printUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage:
   whodis <target> [options]
+  whodis config set format dashboard|tree|geekboys|plain
+  whodis config get format
+  whodis config unset format
+  whodis config path
 
 Targets: domain names, IPv4/IPv6 addresses or CIDRs, and ASNs (AS15169).
 
 Options:
-  -f, --format <type>       pretty, plain, json, yaml, markdown, or raw
+  -f, --format <type>       dashboard, tree, geekboys, plain, json, yaml, markdown, or raw
   -o, --output <file|->     write to a file; format is inferred from extension
       --protocol <name>     auto (default), rdap, or whois
       --fallback <mode>     unavailable (default), none, or any-error
@@ -308,13 +356,19 @@ Options:
       --timeout <duration>  request timeout (default: 15s)
       --refresh-bootstrap   refresh IANA RDAP service data
       --color <mode>        auto (default), always, or never
-      --details             include full notices in pretty output
+      --details             expand notices in dashboard, tree, and geekboys output
       --force               overwrite an existing output file
   -h, --help                show this help
       --version             show version
 
+Environment:
+  WHODIS_FORMAT             default output format when --format and file inference are absent
+
 Examples:
   whodis example.com
+  whodis -- config
+  whodis example.com --format tree
+  whodis config set format geekboys
   whodis 8.8.8.8 --format json
   whodis AS15169 --output google-asn.yaml
   whodis example.cc --protocol whois --fallback none

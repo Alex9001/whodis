@@ -124,13 +124,14 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 		}
 	case KindASN:
 		name := firstNonEmpty(object.ASNName, object.Name)
+		asn := firstNonEmpty(object.ASN, result.Query.Canonical)
 		rows := dashboardRows(
-			"ASN", firstNonEmpty(object.ASN, result.Query.Canonical),
+			"ASN", asn,
 			"Name", name,
 			"Object name", distinctDashboardValue(object.Name, name),
 			"Unicode", distinctDashboardValue(object.UnicodeName, name, object.Name),
 			"Type", object.ASNType,
-			"Handle", object.Handle,
+			"Handle", distinctASNHandle(object.Handle, asn),
 			"Registrar", object.Registrar,
 			"Registry", object.Registry,
 			"Network", object.NetworkType,
@@ -189,7 +190,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 		rows := make([]dashboardRow, 0, len(contacts))
 		for _, contact := range contacts {
 			rows = append(rows, dashboardRow{
-				label: strings.Join(contact.roles, " / "),
+				label: firstNonEmpty(strings.Join(contact.roles, " / "), "Contact"),
 				value: dashboardContactValue(contact),
 			})
 		}
@@ -219,7 +220,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 	if len(notices) > 0 {
 		value := fmt.Sprintf("%d hidden · use --details", len(notices))
 		if details {
-			value = fmt.Sprintf("%d shown below", len(notices))
+			value = fmt.Sprintf("%d shown", len(notices))
 		}
 		sourceRows = append(sourceRows, dashboardRow{label: "Notices", value: value})
 	}
@@ -534,13 +535,8 @@ func renderDashboardRows(rows []dashboardRow, width int, color bool) []string {
 	if aligned {
 		valueWidth := width - maximumLabel - 2
 		for _, row := range rows {
-			for _, word := range strings.Fields(row.value) {
-				if dashboardDisplayWidth(word) > valueWidth {
-					aligned = false
-					break
-				}
-			}
-			if !aligned {
+			if dashboardHasWideWord(row.value, valueWidth) {
+				aligned = false
 				break
 			}
 		}
@@ -578,6 +574,26 @@ func renderDashboardRows(rows []dashboardRow, width int, color bool) []string {
 		}
 	}
 	return lines
+}
+
+func dashboardHasWideWord(value string, width int) bool {
+	if width < 1 {
+		return strings.TrimSpace(value) != ""
+	}
+	for _, word := range strings.Fields(value) {
+		if dashboardDisplayWidth(word) > width {
+			return true
+		}
+	}
+	return false
+}
+
+func dashboardValueBenefitsFromStacking(value string, inlineWidth, stackedWidth int) bool {
+	if dashboardHasWideWord(value, inlineWidth) {
+		return true
+	}
+	valueWidth := dashboardDisplayWidth(safeText(value))
+	return valueWidth > inlineWidth && valueWidth <= stackedWidth
 }
 
 func renderDashboardItems(items []string, width int, color bool) []string {
@@ -948,6 +964,18 @@ func distinctDashboardValue(value string, existing ...string) string {
 		}
 	}
 	return value
+}
+
+func distinctASNHandle(handle, asn string) string {
+	handleKey := strings.TrimPrefix(strings.ToUpper(safeText(handle)), "AS")
+	asnKey := strings.TrimPrefix(strings.ToUpper(safeText(asn)), "AS")
+	if handleKey != "" && asnKey != "" &&
+		strings.Trim(handleKey, "0123456789") == "" &&
+		strings.Trim(asnKey, "0123456789") == "" &&
+		strings.TrimLeft(handleKey, "0") == strings.TrimLeft(asnKey, "0") {
+		return ""
+	}
+	return distinctDashboardValue(handle, asn)
 }
 
 func appendUniqueFold(values []string, additions ...string) []string {

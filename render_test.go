@@ -211,7 +211,7 @@ func findDashboardBadge(t *testing.T, panel dashboardPanel, text string) dashboa
 }
 
 func TestRenderFormats(t *testing.T) {
-	for _, format := range []Format{FormatPretty, FormatPlain, FormatJSON, FormatYAML, FormatMarkdown, FormatRaw} {
+	for _, format := range []Format{FormatPretty, FormatTree, FormatGeekBoys, FormatPlain, FormatJSON, FormatYAML, FormatMarkdown, FormatRaw} {
 		t.Run(string(format), func(t *testing.T) {
 			output := renderForTest(t, sampleResult(), format, RenderOptions{Color: "never", Width: 80})
 			if strings.Contains(output, "\x1b[") {
