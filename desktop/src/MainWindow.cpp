@@ -67,13 +67,20 @@ MainWindow::MainWindow(QWidget *parent)
     setCentralWidget(central);
 
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
-    auto *batchAction = fileMenu->addAction(tr("&Batch Lookup…"), QKeySequence(QStringLiteral("Ctrl+B")), this, &MainWindow::openBatch);
-    Q_UNUSED(batchAction)
-    m_saveAction = fileMenu->addAction(tr("&Save Result…"), QKeySequence::Save, this, &MainWindow::saveCurrent);
+    auto *batchAction = fileMenu->addAction(tr("&Batch Lookup…"));
+    batchAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
+    connect(batchAction, &QAction::triggered, this, &MainWindow::openBatch);
+    m_saveAction = fileMenu->addAction(tr("&Save Result…"));
+    m_saveAction->setShortcut(QKeySequence::Save);
+    connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveCurrent);
     fileMenu->addSeparator();
-    fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
+    auto *exitAction = fileMenu->addAction(tr("E&xit"));
+    exitAction->setShortcut(QKeySequence::Quit);
+    connect(exitAction, &QAction::triggered, this, &QWidget::close);
     auto *editMenu = menuBar()->addMenu(tr("&Edit"));
-    m_copyAction = editMenu->addAction(tr("&Copy Current View"), QKeySequence::Copy, this, &MainWindow::copyCurrent);
+    m_copyAction = editMenu->addAction(tr("&Copy Current View"));
+    m_copyAction->setShortcut(QKeySequence::Copy);
+    connect(m_copyAction, &QAction::triggered, this, &MainWindow::copyCurrent);
     auto *toolsMenu = menuBar()->addMenu(tr("&Tools"));
     m_axfrAction = toolsMenu->addAction(tr("Authoritative Zone Transfer…"), this, &MainWindow::runAXFR);
     toolsMenu->addAction(tr("Advanced Lookup Options…"), this, &MainWindow::openAdvanced);

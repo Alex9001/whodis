@@ -63,7 +63,7 @@ jobs:
             msvc_arch: x64
           - runner: windows-11-arm
             arch: arm64
-            qt_arch: win64_msvc2022_arm64_cross_compiled
+            qt_arch: win64_msvc2022_arm64
             msvc_arch: amd64_arm64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -101,7 +101,11 @@ jobs:
           Compress-Archive -Path "$PWD/stage/bin/*" `
             -DestinationPath "release-assets/whodis-gui_windows_${{ matrix.arch }}_portable.zip"
           choco install nsis -y --no-progress
-          makensis `
+          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS/makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            throw "NSIS compiler was not installed at $makensis"
+          }
+          & $makensis `
             "/DAPP_SOURCE=$PWD\stage\bin" `
             "/DAPP_ICON=$PWD\desktop\resources\whodis.ico" `
             "/DVERSION=$version" `
