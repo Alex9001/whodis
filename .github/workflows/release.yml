@@ -30,7 +30,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libfuse2 file
+          sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libgl1-mesa-dev libfuse2 file
       - name: Install linuxdeploy
         env:
           TOOL_ARCH: ${{ matrix.tool_arch }}
@@ -63,7 +63,7 @@ jobs:
             msvc_arch: x64
           - runner: windows-11-arm
             arch: arm64
-            qt_arch: win64_msvc2022_arm64
+            qt_arch: win64_msvc2022_arm64_cross_compiled
             msvc_arch: amd64_arm64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -76,7 +76,7 @@ jobs:
           arch: ${{ matrix.msvc_arch }}
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.11.1'
+          version: '6.10.2'
           arch: ${{ matrix.qt_arch }}
           cache: true
       - name: Build and deploy
@@ -92,7 +92,7 @@ jobs:
           cmake --install build-gui
           windeployqt --release --no-translations "$PWD/stage/bin/whodis-gui.exe"
           Copy-Item README.md, LICENSE, desktop/packaging/THIRD_PARTY_NOTICES.md -Destination "$PWD/stage/bin"
-          Copy-Item "$env:QT_ROOT_DIR/LICENSES" -Destination "$PWD/stage/bin/Qt-Licenses" -Recurse
+          Copy-Item "$PWD/desktop/packaging/qt-licenses" -Destination "$PWD/stage/bin/Qt-Licenses" -Recurse
           if (-not (Test-Path "$PWD/stage/bin/Qt-Licenses/LGPL-3.0-only.txt") -or
               -not (Test-Path "$PWD/stage/bin/Qt-Licenses/GPL-3.0-only.txt")) {
             throw "The deployed Windows package is missing Qt license texts."
@@ -123,7 +123,7 @@ jobs:
           go-version: stable
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.11.1'
+          version: '6.10.2'
           arch: clang_64
           cache: true
       - name: Build universal app and DMG
@@ -163,7 +163,7 @@ jobs:
           lipo -create /tmp/whodis-engine-amd64 /tmp/whodis-engine-arm64 \
             -output "$app/Contents/Helpers/whodis-gui-engine"
           cp LICENSE README.md desktop/packaging/THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
-          cp -R "$QT_ROOT_DIR/LICENSES" "$app/Contents/Resources/Qt-Licenses"
+          scripts/collect-qt-licenses.sh "$app/Contents/Resources/Qt-Licenses"
           test -f "$app/Contents/Resources/Qt-Licenses/LGPL-3.0-only.txt"
           test -f "$app/Contents/Resources/Qt-Licenses/GPL-3.0-only.txt"
           macdeployqt "$app" -always-overwrite

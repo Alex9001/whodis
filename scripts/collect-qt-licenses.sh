@@ -9,12 +9,15 @@ fi
 
 output_dir=$1
 license_dir=${QT_LICENSE_DIR:-}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 if [ -z "$license_dir" ] && [ -n "${QT_ROOT_DIR:-}" ] && [ -d "$QT_ROOT_DIR/LICENSES" ]; then
     license_dir=$QT_ROOT_DIR/LICENSES
 fi
 if [ -z "$license_dir" ]; then
-    for candidate in /usr/share/licenses/qt6-base; do
+    for candidate in \
+        /usr/share/licenses/qt6-base \
+        "$script_dir/../desktop/packaging/qt-licenses"; do
         if [ -d "$candidate" ]; then
             license_dir=$candidate
             break

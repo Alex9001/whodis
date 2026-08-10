@@ -6,7 +6,7 @@ License version 3 option. Whodis links to the Qt shared libraries and does not
 modify Qt.
 
 The distributed Windows, macOS, and AppImage packages include a `Qt-Licenses`
-directory containing the license texts shipped with the corresponding Qt build.
+directory containing the GNU LGPL 3.0 and GPL 3.0 license texts.
 The Arch package uses the system Qt libraries and their notices under
 `/usr/share/licenses/qt6-base`.
 
