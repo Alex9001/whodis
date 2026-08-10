@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 
+#include "Appearance.h"
+
 #include <QApplication>
 #include <QCoreApplication>
 #include <QIcon>
@@ -11,10 +13,12 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain(QStringLiteral("cyberbrand.net"));
     QCoreApplication::setApplicationName(QStringLiteral("Whodis"));
     QCoreApplication::setApplicationVersion(QStringLiteral(WHODIS_GUI_VERSION));
+    const QPalette palette = Appearance::professionalPalette(application.palette());
+    application.setPalette(palette);
+    application.setStyleSheet(Appearance::professionalChromeStyleSheet(palette));
     application.setWindowIcon(QIcon(QStringLiteral(":/icons/whodis.png")));
 
     MainWindow window;
     window.show();
     return application.exec();
 }
-

@@ -11,6 +11,7 @@ class EngineClient final : public QObject
 
 public:
     explicit EngineClient(QObject *parent = nullptr);
+    ~EngineClient() override;
 
     void start();
     bool isReady() const;
@@ -41,4 +42,3 @@ private:
     bool m_ready = false;
     bool m_restarted = false;
 };
-

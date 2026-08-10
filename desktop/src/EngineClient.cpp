@@ -26,6 +26,21 @@ EngineClient::EngineClient(QObject *parent)
     });
 }
 
+EngineClient::~EngineClient()
+{
+    if (m_process.state() == QProcess::NotRunning)
+        return;
+    disconnect(&m_process, nullptr, this, nullptr);
+    m_process.closeWriteChannel();
+    if (!m_process.waitForFinished(1000)) {
+        m_process.terminate();
+        if (!m_process.waitForFinished(500)) {
+            m_process.kill();
+            m_process.waitForFinished(500);
+        }
+    }
+}
+
 void EngineClient::start()
 {
     if (m_process.state() != QProcess::NotRunning)

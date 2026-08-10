@@ -14,6 +14,8 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Widgets)
 
 set(WHODIS_GUI_SOURCES
+    src/Appearance.cpp
+    src/Appearance.h
     src/AdvancedDialog.cpp
     src/AdvancedDialog.h
     src/BatchWindow.cpp
@@ -105,4 +107,14 @@ if(BUILD_TESTING)
     target_link_libraries(whodis-gui-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
     add_test(NAME whodis-gui-widgets COMMAND whodis-gui-tests)
     set_tests_properties(whodis-gui-widgets PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    qt_add_executable(whodis-gui-appearance-tests
+        tests/AppearanceTest.cpp
+        src/Appearance.cpp
+        src/Appearance.h
+    )
+    target_include_directories(whodis-gui-appearance-tests PRIVATE src)
+    target_link_libraries(whodis-gui-appearance-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
+    add_test(NAME whodis-gui-appearance COMMAND whodis-gui-appearance-tests)
+    set_tests_properties(whodis-gui-appearance PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

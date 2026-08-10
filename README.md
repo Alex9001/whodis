@@ -1,16 +1,61 @@
-# whodis
+<p align="center">
+  <img src="docs/whodis_logo_no_bg.png" width="150" alt="Whodis logo">
+</p>
 
-[![CI](https://github.com/Alex9001/whodis/actions/workflows/ci.yml/badge.svg)](https://github.com/Alex9001/whodis/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/Alex9001/whodis?display_name=tag)](https://github.com/Alex9001/whodis/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<h1 align="center">whodis</h1>
 
-**A modern WHOIS alternative that automatically uses RDAP and RWhois where traditional WHOIS falls short — and maps the public DNS that registration data alone cannot show.**
+<p align="center">
+  <strong>WHOIS for the RDAP era.</strong><br>
+  One command for RDAP, WHOIS, RWhois, and public DNS—without protocol guesswork or walls of text.
+</p>
 
-The registry world is split between old-school WHOIS, modern RDAP, and delegated RWhois network directories. `whodis` hides that split: give it a domain, IP address, network, or ASN and it finds the right service automatically. No protocol trivia required.
+<p align="center">
+  <a href="https://github.com/Alex9001/whodis/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Alex9001/whodis/ci.yml?branch=main&amp;style=flat-square&amp;label=build" alt="Build status"></a>
+  <a href="https://github.com/Alex9001/whodis/releases/latest"><img src="https://img.shields.io/github/v/release/Alex9001/whodis?display_name=tag&amp;style=flat-square&amp;color=14b8a6" alt="Latest release"></a>
+  <a href="https://github.com/Alex9001/whodis/releases"><img src="https://img.shields.io/github/downloads/Alex9001/whodis/total?style=flat-square&amp;color=0ea5e9" alt="Release downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6366f1?style=flat-square" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Linux%20%7C%20macOS%20%7C%20Windows-111827?style=flat-square" alt="Linux, macOS, and Windows">
+</p>
 
-Instead of dumping a wall of registry text, it can turn the answer into a compact terminal dashboard, a hierarchical tree, a 2002-style ASCII layout, or clean plain text. Registration facts, dates, discovered DNS records, contacts, and routing details each get the space they need.
+<p align="center">
+  <a href="https://cyberbrand.net/whodis/">Homepage</a> ·
+  <a href="https://github.com/Alex9001/whodis/releases/latest">Download</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="https://github.com/Alex9001/whodis/issues">Issues</a>
+</p>
 
-Prefer windows and buttons? `whodis-gui` puts the same lookup engine in a focused native desktop interface for Linux, Windows, and macOS. Paste a domain, IP, ASN, or full URL, then choose **Lookup** or **Scan DNS**. Results are organized into Overview, DNS, Contacts, and Raw tabs, with a separate batch workspace for larger lists.
+The registry world is split between old-school WHOIS, modern RDAP, and delegated RWhois network directories. `whodis` hides that split: give it a domain, IP address, network, or ASN and it finds the right service automatically. Then it turns the answer into something useful—a responsive terminal dashboard, clean structured data, or a focused native desktop view.
+
+## Pick your interface
+
+| `whodis` CLI | `whodis-gui` desktop app |
+|---|---|
+| Built for shells, scripts, SSH sessions, and servers | Built for desktop power users on Linux, Windows, and macOS |
+| Dashboard, tree, retro ASCII, plain text, JSON, YAML, Markdown, and raw output | Overview, DNS, Contacts, and Raw tabs with native controls |
+| Batch queries, field selection, file input, and direct export | One-click registration and DNS scans plus a dedicated batch workspace |
+| One small Go binary with no runtime dependencies | Bundles its own private lookup engine; the CLI is not required |
+
+## See it in action
+
+<p align="center"><strong>Registration overview</strong> · Live RDAP lookup for <code>cyberbrand.net</code></p>
+
+![Whodis registration lookup for cyberbrand.net](docs/whodis-gui-registration.png)
+
+<table>
+  <tr>
+    <th width="50%">Public DNS discovery</th>
+    <th width="50%">Concurrent batch lookup</th>
+  </tr>
+  <tr>
+    <td><img src="docs/whodis-gui-dns.png" alt="Whodis DNS scan showing public records for cyberbrand.net"></td>
+    <td><img src="docs/whodis-gui-batch.png" alt="Whodis batch lookup showing four completed domain checks"></td>
+  </tr>
+</table>
+
+### Terminal dashboard
+
+The default terminal view adapts from a wide multi-panel grid to a compact single-column layout:
 
 ```text
 $ whodis example.com
