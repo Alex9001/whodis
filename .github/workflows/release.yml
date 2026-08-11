@@ -30,7 +30,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libgl1-mesa-dev libfuse2 file
+          sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libgl1-mesa-dev libfuse2 file weston xauth xvfb
       - name: Install linuxdeploy
         env:
           TOOL_ARCH: ${{ matrix.tool_arch }}
@@ -45,6 +45,70 @@ jobs:
         run: |
           mkdir -p release-assets
           scripts/package-gui-linux.sh "$GITHUB_REF_NAME" build-gui release-assets
+      - name: Smoke-test packaged AppImage on X11 and Wayland
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage=$(find release-assets -maxdepth 1 -type f -name '*.AppImage' -print -quit)
+          test -n "$appimage"
+
+          expect_running() {
+            label=$1
+            shift
+            set +e
+            "$@"
+            status=$?
+            set -e
+            if [ "$status" -ne 124 ]; then
+              echo "$label AppImage smoke test exited unexpectedly with status $status" >&2
+              return 1
+            fi
+          }
+
+          expect_running X11 xvfb-run -a \
+            timeout --signal=TERM --kill-after=3s 8s \
+            env APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=xcb "$appimage"
+
+          wayland_runtime=$(mktemp -d)
+          chmod 0700 "$wayland_runtime"
+          weston_log="$wayland_runtime/weston.log"
+          XDG_RUNTIME_DIR="$wayland_runtime" weston \
+            --backend=headless-backend.so \
+            --socket=wayland-whodis \
+            --idle-time=0 \
+            --use-pixman \
+            --log="$weston_log" &
+          weston_pid=$!
+          cleanup_weston() {
+            kill "$weston_pid" 2>/dev/null || true
+            wait "$weston_pid" 2>/dev/null || true
+          }
+          trap cleanup_weston EXIT
+
+          for attempt in $(seq 1 50); do
+            [ -S "$wayland_runtime/wayland-whodis" ] && break
+            if ! kill -0 "$weston_pid" 2>/dev/null; then
+              cat "$weston_log" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$wayland_runtime/wayland-whodis" ]; then
+            cat "$weston_log" >&2
+            echo "Weston did not create its Wayland socket" >&2
+            exit 1
+          fi
+
+          expect_running Wayland \
+            timeout --signal=TERM --kill-after=3s 8s \
+            env APPIMAGE_EXTRACT_AND_RUN=1 \
+            XDG_RUNTIME_DIR="$wayland_runtime" \
+            WAYLAND_DISPLAY=wayland-whodis \
+            QT_QPA_PLATFORM=wayland \
+            "$appimage"
+
+          cleanup_weston
+          trap - EXIT
       - uses: actions/upload-artifact@v6
         with:
           name: whodis-gui-linux-${{ matrix.arch }}
@@ -164,9 +228,9 @@ jobs:
           app=build-gui/bin/Whodis.app
           mkdir -p "$app/Contents/Helpers" "$app/Contents/Resources"
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath \
-            -ldflags="-s -w -X main.version=$version" -o /tmp/whodis-engine-amd64 ./cmd/whodis-gui-engine
+            -ldflags="-s -w -X main.version=$version -X github.com/Alex9001/whodis.version=$version" -o /tmp/whodis-engine-amd64 ./cmd/whodis-gui-engine
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
-            -ldflags="-s -w -X main.version=$version" -o /tmp/whodis-engine-arm64 ./cmd/whodis-gui-engine
+            -ldflags="-s -w -X main.version=$version -X github.com/Alex9001/whodis.version=$version" -o /tmp/whodis-engine-arm64 ./cmd/whodis-gui-engine
           lipo -create /tmp/whodis-engine-amd64 /tmp/whodis-engine-arm64 \
             -output "$app/Contents/Helpers/whodis-gui-engine"
           cp LICENSE README.md desktop/packaging/THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"

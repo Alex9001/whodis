@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QPlainTextEdit>
 #include <QTabWidget>
+#include <QTreeWidget>
 #include <QtTest>
 
 class ResultWidgetTest final : public QObject
@@ -13,6 +14,7 @@ class ResultWidgetTest final : public QObject
 private slots:
     void displaysTargetAndDNS();
     void displaysSchemaV3WorkbenchTabs();
+    void deduplicatesEquivalentTimelineAndDNSRows();
 };
 
 void ResultWidgetTest::displaysTargetAndDNS()
@@ -84,6 +86,69 @@ void ResultWidgetTest::displaysSchemaV3WorkbenchTabs()
         }
         QVERIFY2(index >= 0 && tabs->isTabVisible(index), qPrintable(name));
     }
+}
+
+void ResultWidgetTest::deduplicatesEquivalentTimelineAndDNSRows()
+{
+    ResultWidget widget;
+    const QJsonObject firstRecord{{QStringLiteral("type"), QStringLiteral("CNAME")},
+                                  {QStringLiteral("name"), QStringLiteral("webmail.example.com")},
+                                  {QStringLiteral("ttl"), 154},
+                                  {QStringLiteral("value"), QStringLiteral("mail.example.com")}};
+    QJsonObject agedRecord = firstRecord;
+    agedRecord.insert(QStringLiteral("ttl"), 155);
+    QJsonObject distinctRecord = firstRecord;
+    distinctRecord.insert(QStringLiteral("value"), QStringLiteral("backup.example.com"));
+
+    const QJsonArray events{
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("registration")}, {QStringLiteral("date"), QStringLiteral("2026-02-21T05:13:38Z")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("Registration")}, {QStringLiteral("date"), QStringLiteral("2026-02-21T05:13:38+00:00")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("expiration")}, {QStringLiteral("date"), QStringLiteral("2027-02-21T05:13:38Z")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("registrar expiration")}, {QStringLiteral("date"), QStringLiteral("2027-02-21T05:13:38+00:00")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("registrar expiration")}, {QStringLiteral("date"), QStringLiteral("2028-02-21T05:13:38Z")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("last changed")}, {QStringLiteral("date"), QStringLiteral("2026-02-21T05:15:48Z")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("changed")}, {QStringLiteral("date"), QStringLiteral("2026-02-21T05:15:48+00:00")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("last update of RDAP database")}, {QStringLiteral("date"), QStringLiteral("2026-08-11T03:19:33Z")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("last update of RDAP database")}, {QStringLiteral("date"), QStringLiteral("2026-02-21T05:13:38+00:00")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("transfer")}, {QStringLiteral("date"), QStringLiteral("2026-02-21T05:13:38.123400Z")}},
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("transfer")}, {QStringLiteral("date"), QStringLiteral("2026-02-21T05:13:38.123499Z")}},
+    };
+    const QJsonObject result{
+        {QStringLiteral("query"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")}}},
+        {QStringLiteral("route"), QJsonObject{{QStringLiteral("protocol"), QStringLiteral("rdap")}}},
+        {QStringLiteral("object"), QJsonObject{{QStringLiteral("name"), QStringLiteral("example.com")}, {QStringLiteral("events"), events}}},
+        {QStringLiteral("dns"), QJsonObject{{QStringLiteral("records"), QJsonArray{firstRecord, agedRecord, distinctRecord}}}},
+    };
+    widget.setItem(QJsonObject{{QStringLiteral("input"), QStringLiteral("example.com")}, {QStringLiteral("result"), result}});
+    QCOMPARE(widget.dnsRowCount(), 2);
+
+    const QTreeWidget *overview = widget.findChild<QTreeWidget *>();
+    QVERIFY(overview);
+    QTreeWidgetItem *timeline = nullptr;
+    for (int row = 0; row < overview->topLevelItemCount(); ++row) {
+        if (overview->topLevelItem(row)->text(0) == QStringLiteral("Timeline")) {
+            timeline = overview->topLevelItem(row);
+            break;
+        }
+    }
+    QVERIFY(timeline);
+    QCOMPARE(timeline->childCount(), 6);
+    int databaseRows = 0;
+    int transferRows = 0;
+    for (int row = 0; row < timeline->childCount(); ++row) {
+        const QTreeWidgetItem *event = timeline->child(row);
+        if (event->text(0) == QStringLiteral("last update of RDAP database")) {
+            ++databaseRows;
+            QVERIFY(event->text(1).contains(QStringLiteral(" · ")));
+        }
+        if (event->text(0) == QStringLiteral("transfer")) {
+            ++transferRows;
+            QVERIFY(event->text(1).contains(QStringLiteral(".123400Z")));
+            QVERIFY(event->text(1).contains(QStringLiteral(".123499Z")));
+        }
+    }
+    QCOMPARE(databaseRows, 1);
+    QCOMPARE(transferRows, 1);
 }
 
 QTEST_MAIN(ResultWidgetTest)

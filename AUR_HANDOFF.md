@@ -62,13 +62,13 @@ Never commit, paste, or upload the private key. Only the `.pub` half is public.
 
 ## 2. Select a release
 
-Use the newest stable release containing the GUI source. `v0.6.4` is the
-current minimum eligible release; replace it with `v1.0.0` or any newer stable
-release when the account is ready. Do not use a prerelease because automatic
-AUR publication deliberately ignores prerelease tags.
+Use the newest stable release containing the GUI source. The current package
+target is `v1.0.1`; replace it with a newer stable release if one exists when
+the account is ready. Do not use a prerelease because automatic AUR publication
+deliberately ignores prerelease tags.
 
 ```bash
-release_tag=v0.6.4
+release_tag=v1.0.1
 release_version=${release_tag#v}
 gh release view "$release_tag" --repo Alex9001/whodis
 ```

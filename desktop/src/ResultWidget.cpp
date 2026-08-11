@@ -1,13 +1,14 @@
 #include "ResultWidget.h"
 
 #include <QComboBox>
+#include <QDateTime>
 #include <QHeaderView>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QLabel>
 #include <QPlainTextEdit>
-#include <QSet>
 #include <QStackedLayout>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -69,18 +70,25 @@ QJsonObject reportDNS(const QJsonObject &report)
 QJsonArray operationRecords(const QJsonObject &dns)
 {
     QJsonArray records;
-    QSet<QString> seen;
-    const auto append = [&records, &seen](const QJsonArray &values) {
+    QHash<QString, int> indexes;
+    const auto append = [&records, &indexes](const QJsonArray &values) {
         for (const QJsonValue &value : values) {
             const QJsonObject record = value.toObject();
-            const QString key = record.value(QStringLiteral("name")).toString() + QLatin1Char('\0')
-                + record.value(QStringLiteral("type")).toString() + QLatin1Char('\0')
-                + record.value(QStringLiteral("ttl")).toVariant().toString() + QLatin1Char('\0')
+            QString name = record.value(QStringLiteral("name")).toString().trimmed().toLower();
+            while (name.endsWith(QLatin1Char('.')))
+                name.chop(1);
+            const QString key = name + QLatin1Char('\0')
+                + record.value(QStringLiteral("type")).toString().trimmed().toUpper() + QLatin1Char('\0')
                 + record.value(QStringLiteral("value")).toString();
-            if (!seen.contains(key)) {
-                seen.insert(key);
-                records.append(record);
+            const auto existing = indexes.constFind(key);
+            if (existing != indexes.cend()) {
+                const int index = existing.value();
+                if (record.value(QStringLiteral("ttl")).toInt() > records.at(index).toObject().value(QStringLiteral("ttl")).toInt())
+                    records.replace(index, record);
+                continue;
             }
+            indexes.insert(key, records.size());
+            records.append(record);
         }
     };
     append(dns.value(QStringLiteral("inventory")).toObject().value(QStringLiteral("records")).toArray());
@@ -94,6 +102,121 @@ QJsonArray operationRecords(const QJsonObject &dns)
     for (const QJsonValue &remoteValue : dns.value(QStringLiteral("remote")).toArray())
         append(remoteValue.toObject().value(QStringLiteral("answers")).toArray());
     return records;
+}
+
+QString compactEventAction(QString action)
+{
+    action = action.trimmed().toLower();
+    action.remove(QLatin1Char(' '));
+    action.remove(QLatin1Char('-'));
+    action.remove(QLatin1Char('_'));
+    action.remove(QLatin1Char('.'));
+    return action;
+}
+
+QString eventActionClass(const QString &action)
+{
+    const QString key = compactEventAction(action);
+    if (key == QStringLiteral("registration") || key == QStringLiteral("registered")
+        || key == QStringLiteral("creation") || key == QStringLiteral("created")
+        || key == QStringLiteral("registrarregistration"))
+        return QStringLiteral("registration");
+    if (key == QStringLiteral("expiration") || key == QStringLiteral("expiry")
+        || key == QStringLiteral("expires") || key == QStringLiteral("registryexpiration")
+        || key == QStringLiteral("registryexpiry") || key == QStringLiteral("registrarexpiration"))
+        return QStringLiteral("expiration");
+    if (key == QStringLiteral("lastchanged") || key == QStringLiteral("lastupdate")
+        || key == QStringLiteral("updated") || key == QStringLiteral("changed"))
+        return QStringLiteral("lastchanged");
+    return key;
+}
+
+QString canonicalEventAction(const QString &actionClass)
+{
+    if (actionClass == QStringLiteral("registration"))
+        return QStringLiteral("registration");
+    if (actionClass == QStringLiteral("expiration"))
+        return QStringLiteral("expiration");
+    if (actionClass == QStringLiteral("lastchanged"))
+        return QStringLiteral("last changed");
+    return {};
+}
+
+QString eventDateKey(const QString &date)
+{
+    const QString value = date.trimmed();
+    QDateTime parsed = QDateTime::fromString(value, Qt::ISODateWithMs);
+    if (!parsed.isValid())
+        parsed = QDateTime::fromString(value, Qt::ISODate);
+    if (parsed.isValid()) {
+        int zoneStart = value.size();
+        if (value.endsWith(QLatin1Char('Z'), Qt::CaseInsensitive))
+            --zoneStart;
+        else if (value.size() >= 6 && (value.at(value.size() - 6) == QLatin1Char('+') || value.at(value.size() - 6) == QLatin1Char('-')))
+            zoneStart -= 6;
+        QString fraction = QStringLiteral("0");
+        const int dot = value.lastIndexOf(QLatin1Char('.'), zoneStart - 1);
+        if (dot >= 0) {
+            const QString candidate = value.mid(dot + 1, zoneStart - dot - 1);
+            bool digitsOnly = !candidate.isEmpty();
+            for (const QChar character : candidate)
+                digitsOnly = digitsOnly && character.isDigit();
+            if (digitsOnly) {
+                fraction = candidate;
+                while (fraction.endsWith(QLatin1Char('0')) && fraction.size() > 1)
+                    fraction.chop(1);
+            }
+        }
+        return QString::number(parsed.toSecsSinceEpoch()) + QLatin1Char('.') + fraction;
+    }
+    return value.toLower();
+}
+
+QList<QPair<QString, QString>> consolidatedEvents(const QJsonArray &values)
+{
+    QList<QPair<QString, QString>> unique;
+    QHash<QString, int> semanticIndexes;
+    for (const QJsonValue &value : values) {
+        const QJsonObject event = value.toObject();
+        QString action = event.value(QStringLiteral("action")).toString().trimmed();
+        const QString date = event.value(QStringLiteral("date")).toString().trimmed();
+        if (action.isEmpty() && date.isEmpty())
+            continue;
+        const QString actionClass = eventActionClass(action);
+        const QString key = actionClass + QLatin1Char('\0') + eventDateKey(date);
+        const auto existing = semanticIndexes.constFind(key);
+        if (existing != semanticIndexes.cend()) {
+            const QString canonical = canonicalEventAction(actionClass);
+            if (!canonical.isEmpty())
+                unique[existing.value()].first = canonical;
+            continue;
+        }
+        semanticIndexes.insert(key, unique.size());
+        unique.append(qMakePair(action, date));
+    }
+
+    QList<QPair<QString, QString>> rows;
+    QList<QStringList> rowDateKeys;
+    QHash<QString, int> rowIndexes;
+    for (const auto &event : unique) {
+        const QString action = event.first.isEmpty() ? QStringLiteral("Event") : event.first;
+        const QString date = event.second.isEmpty() ? QStringLiteral("unknown") : event.second;
+        const QString actionKey = compactEventAction(action);
+        const auto existing = rowIndexes.constFind(actionKey);
+        if (existing == rowIndexes.cend()) {
+            rowIndexes.insert(actionKey, rows.size());
+            rows.append(qMakePair(action, date));
+            rowDateKeys.append(QStringList{eventDateKey(date)});
+            continue;
+        }
+        const int index = existing.value();
+        const QString dateKey = eventDateKey(date);
+        if (!rowDateKeys[index].contains(dateKey)) {
+            rowDateKeys[index].append(dateKey);
+            rows[index].second += QStringLiteral(" · ") + date;
+        }
+    }
+    return rows;
 }
 
 }
@@ -286,10 +409,10 @@ void ResultWidget::populateOverview(const QJsonObject &result)
     const QJsonArray events = object.value(QStringLiteral("events")).toArray();
     if (!events.isEmpty()) {
         auto *timeline = addGroup(m_overview, tr("Timeline"));
-        for (const QJsonValue &value : events) {
-            const QJsonObject event = value.toObject();
-            addValue(timeline, event.value(QStringLiteral("action")).toString(), event.value(QStringLiteral("date")).toString());
-        }
+        for (const auto &event : consolidatedEvents(events))
+            addValue(timeline, event.first, event.second);
+        if (timeline->childCount() == 0)
+            delete timeline;
     }
 
     const QJsonArray nameservers = object.value(QStringLiteral("nameservers")).toArray();
@@ -323,7 +446,9 @@ void ResultWidget::populateDNS(const QJsonObject &result)
 {
     m_dns->setSortingEnabled(false);
     m_dns->setRowCount(0);
-    const QJsonArray records = result.value(QStringLiteral("dns")).toObject().value(QStringLiteral("records")).toArray();
+    const QJsonArray rawRecords = result.value(QStringLiteral("dns")).toObject().value(QStringLiteral("records")).toArray();
+    const QJsonObject inventory{{QStringLiteral("records"), rawRecords}};
+    const QJsonArray records = operationRecords(QJsonObject{{QStringLiteral("inventory"), inventory}});
     m_dns->setRowCount(records.size());
     for (int row = 0; row < records.size(); ++row) {
         const QJsonObject record = records.at(row).toObject();

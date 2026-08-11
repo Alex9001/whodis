@@ -92,6 +92,23 @@ func TestDNSResolverNormalization(t *testing.T) {
 	}
 }
 
+func TestUniqueDNSRecordsTreatsTTLAgingAsOneRecord(t *testing.T) {
+	records := uniqueDNSRecords([]DNSRecord{
+		{Name: "webmail.example.test", Type: "CNAME", TTL: 154, Value: "mail.example.test"},
+		{Name: "webmail.example.test", Type: "CNAME", TTL: 155, Value: "mail.example.test"},
+		{Name: "webmail.example.test", Type: "CNAME", TTL: 155, Value: "backup.example.test"},
+		{Name: "autodiscover.example.test", Type: "CNAME", TTL: 155, Value: "mail.example.test"},
+	})
+	if len(records) != 3 {
+		t.Fatalf("uniqueDNSRecords() = %#v, want three distinct owner/type/value records", records)
+	}
+	for _, record := range records {
+		if record.Name == "webmail.example.test" && record.Value == "mail.example.test" && record.TTL != 155 {
+			t.Fatalf("deduplicated record TTL = %d, want largest observation 155", record.TTL)
+		}
+	}
+}
+
 func fixtureDNSScanner(transfer func(context.Context, string, []string) ([]DNSRecord, error)) dnsScanner {
 	return dnsScanner{queryFunc: fixtureDNSQuery, transferFunc: transfer}
 }

@@ -64,6 +64,28 @@ func TestRDAPAndWHOISNormalizers(t *testing.T) {
 	}
 }
 
+func TestNewResultDeduplicatesEquivalentEventsAndRetainsDistinctDates(t *testing.T) {
+	object := Object{Events: []Event{
+		{Action: "registration", Date: "2026-02-21T05:13:38Z"},
+		{Action: "Registration", Date: "2026-02-21T05:13:38+00:00"},
+		{Action: "expiration", Date: "2027-02-21T05:13:38Z"},
+		{Action: "registrar expiration", Date: "2027-02-21T05:13:38+00:00"},
+		{Action: "registrar expiration", Date: "2028-02-21T05:13:38Z"},
+		{Action: "last update of RDAP database", Date: "2026-08-11T03:19:33Z"},
+		{Action: "last update of RDAP database", Date: "2026-02-21T05:13:38+00:00"},
+	}}
+	result := newResult(Target{}, RouteDecision{}, nil, object, nil)
+	if len(result.Object.Events) != 5 {
+		t.Fatalf("normalized events = %#v, want five unique facts", result.Object.Events)
+	}
+	if result.Object.Events[0].Action != "registration" || result.Object.Events[1].Action != "expiration" {
+		t.Fatalf("equivalent event aliases were not normalized: %#v", result.Object.Events)
+	}
+	if result.Object.Events[2].Action != "registrar expiration" || result.Object.Events[2].Date != "2028-02-21T05:13:38Z" {
+		t.Fatalf("distinct registrar expiration was lost: %#v", result.Object.Events)
+	}
+}
+
 func TestClientUsesInjectedAdapter(t *testing.T) {
 	adapter := staticAdapter{protocol: ProtocolRDAP, object: Object{Kind: KindDomain, Name: "example.test"}}
 	client := NewClient(ClientOptions{Timeout: time.Second, Adapters: []ProtocolAdapter{adapter}})

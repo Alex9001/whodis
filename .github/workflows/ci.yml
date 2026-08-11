@@ -8,6 +8,33 @@ permissions:
   contents: read
 
 jobs:
+  aur-metadata:
+    name: Validate rendered AUR metadata
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install checkout dependency
+        run: pacman -Syu --noconfirm git
+      - uses: actions/checkout@v6
+      - name: Compare templates with makepkg output
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd --create-home aur-builder
+          checksum=0000000000000000000000000000000000000000000000000000000000000000
+
+          cli_dir=$(mktemp -d)
+          scripts/render-aur.sh 1.0.1 "$checksum" "$cli_dir"
+          chown -R aur-builder:aur-builder "$cli_dir"
+          runuser -u aur-builder -- makepkg -D "$cli_dir" --printsrcinfo |
+            diff -u "$cli_dir/.SRCINFO" -
+
+          gui_dir=$(mktemp -d)
+          scripts/render-aur-gui.sh 1.0.1 "$checksum" "$gui_dir"
+          chown -R aur-builder:aur-builder "$gui_dir"
+          runuser -u aur-builder -- makepkg -D "$gui_dir" --printsrcinfo |
+            diff -u "$gui_dir/.SRCINFO" -
+
   test:
     runs-on: ubuntu-latest
     steps:

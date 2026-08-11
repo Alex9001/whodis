@@ -142,12 +142,12 @@ func renderPlain(result LookupResult) string {
 		for _, warning := range result.DNS.Warnings {
 			line("DNS warning", warning)
 		}
-		for _, record := range result.DNS.Records {
+		for _, record := range uniqueDNSRecords(result.DNS.Records) {
 			line(fmt.Sprintf("DNS %s %s (%ds)", record.Type, record.Name, record.TTL), record.Value)
 		}
 	}
-	for _, event := range object.Events {
-		line("Event "+event.Action, event.Date)
+	for _, event := range consolidateEvents(object.Events) {
+		line("Event "+event.label, event.value)
 	}
 	for _, entity := range object.Entities {
 		value := firstNonEmpty(entity.Name, entity.Organization, entity.Email, entity.Phone)
@@ -175,10 +175,10 @@ func renderMarkdown(result LookupResult) string {
 	for _, row := range rows {
 		fmt.Fprintf(&builder, "| %s | %s |\n", markdownCell(row[0]), markdownCell(row[1]))
 	}
-	if len(result.Object.Events) > 0 {
+	if events := consolidateEvents(result.Object.Events); len(events) > 0 {
 		builder.WriteString("\n## Events\n\n| Action | Date |\n| --- | --- |\n")
-		for _, event := range result.Object.Events {
-			fmt.Fprintf(&builder, "| %s | %s |\n", markdownCell(event.Action), markdownCell(event.Date))
+		for _, event := range events {
+			fmt.Fprintf(&builder, "| %s | %s |\n", markdownCell(event.label), markdownCell(event.value))
 		}
 	}
 	if nameservers := displayNameservers(result); len(nameservers) > 0 {
@@ -196,9 +196,9 @@ func renderMarkdown(result LookupResult) string {
 				fmt.Fprintf(&builder, "- %s\n", markdownCell(warning))
 			}
 		}
-		if len(result.DNS.Records) > 0 {
+		if records := uniqueDNSRecords(result.DNS.Records); len(records) > 0 {
 			builder.WriteString("\n| Type | Name | TTL | Value |\n| --- | --- | ---: | --- |\n")
-			for _, record := range result.DNS.Records {
+			for _, record := range records {
 				fmt.Fprintf(&builder, "| %s | %s | %d | %s |\n", markdownCell(record.Type), markdownCell(record.Name), record.TTL, markdownCell(record.Value))
 			}
 		}

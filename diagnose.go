@@ -269,7 +269,7 @@ func fetchMTAStsPolicy(ctx context.Context, domain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("User-Agent", "whodis/1")
+	request.Header.Set("User-Agent", productUserAgent())
 	response, err := (&http.Client{Timeout: 6 * time.Second}).Do(request)
 	if err != nil {
 		return "", fmt.Errorf("MTA-STS policy fetch failed: %w", err)
@@ -384,7 +384,7 @@ func probeHTTP(ctx context.Context, endpoint string) HTTPProbe {
 		return nil
 	}
 	request, _ := http.NewRequestWithContext(ctx, http.MethodHead, endpoint, nil)
-	request.Header.Set("User-Agent", "whodis/1")
+	request.Header.Set("User-Agent", productUserAgent())
 	started := time.Now()
 	response, err := client.Do(request)
 	probe.Duration = time.Since(started)

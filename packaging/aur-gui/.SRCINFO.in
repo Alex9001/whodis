@@ -13,6 +13,7 @@ pkgbase = whodis-gui
 	depends = gcc-libs
 	depends = glibc
 	depends = qt6-base
+	options = !lto
 	source = whodis_@PKGVER@_source.tar.gz::https://github.com/Alex9001/whodis/releases/download/v@PKGVER@/whodis_@PKGVER@_source.tar.gz
 	sha256sums = @SHA256@
 

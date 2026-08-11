@@ -15,7 +15,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      - -s -w -X main.version={{ .Version }} -X github.com/Alex9001/whodis.version={{ .Version }}
     goos:
       - linux
       - darwin

@@ -111,8 +111,9 @@ func renderReportTerminal(report Report, format Format, options RenderOptions) s
 
 func renderDNSReport(builder *strings.Builder, result *DNSOperationResult, width int) {
 	if result.Inventory != nil {
-		rows := make([][]string, 0, len(result.Inventory.Records))
-		for _, record := range result.Inventory.Records {
+		records := uniqueDNSRecords(result.Inventory.Records)
+		rows := make([][]string, 0, len(records))
+		for _, record := range records {
 			rows = append(rows, []string{record.Name, record.Type, strconv.FormatUint(uint64(record.TTL), 10), record.Value})
 		}
 		writeReportTable(builder, "DNS inventory", []string{"Name", "Type", "TTL", "Value"}, rows, width)

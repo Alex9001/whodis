@@ -64,7 +64,7 @@ func queryGlobalping(ctx context.Context, name string, types []uint16, options D
 			continue
 		}
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("User-Agent", "whodis/1")
+		request.Header.Set("User-Agent", productUserAgent())
 		if options.GlobalpingToken != "" {
 			request.Header.Set("Authorization", "Bearer "+options.GlobalpingToken)
 		}
@@ -109,7 +109,7 @@ func pollGlobalping(ctx context.Context, client *http.Client, endpoint, id, toke
 		if err != nil {
 			return nil, err
 		}
-		request.Header.Set("User-Agent", "whodis/1")
+		request.Header.Set("User-Agent", productUserAgent())
 		if token != "" {
 			request.Header.Set("Authorization", "Bearer "+token)
 		}

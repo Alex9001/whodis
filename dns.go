@@ -552,14 +552,20 @@ func uniqueStrings(values []string) []string {
 }
 
 func uniqueDNSRecords(records []DNSRecord) []DNSRecord {
-	seen := make(map[string]struct{}, len(records))
+	indexes := make(map[string]int, len(records))
 	result := make([]DNSRecord, 0, len(records))
 	for _, record := range records {
 		key := dnsRecordKey(record)
-		if _, exists := seen[key]; exists {
+		if index, exists := indexes[key]; exists {
+			// TTL counts down in caches and therefore does not identify a
+			// resource record. Keep the largest observation as the clearest
+			// approximation of the published TTL.
+			if record.TTL > result[index].TTL {
+				result[index].TTL = record.TTL
+			}
 			continue
 		}
-		seen[key] = struct{}{}
+		indexes[key] = len(result)
 		result = append(result, record)
 	}
 	sort.Slice(result, func(left, right int) bool {
@@ -578,7 +584,7 @@ func uniqueDNSRecords(records []DNSRecord) []DNSRecord {
 }
 
 func dnsRecordKey(record DNSRecord) string {
-	return record.Name + "\x00" + record.Type + "\x00" + strconv.FormatUint(uint64(record.TTL), 10) + "\x00" + record.Value
+	return record.Name + "\x00" + record.Type + "\x00" + record.Value
 }
 
 func dnsRecordSignature(record DNSRecord) string {

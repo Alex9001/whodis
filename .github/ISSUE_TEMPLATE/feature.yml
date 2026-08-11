@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a focused improvement or new workflow
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the concrete workflow or limitation rather than only the desired switch or button.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - Registration routing
+        - DNS or diagnostics
+        - CLI and structured output
+        - Native GUI
+        - Packaging or installation
+        - Go API
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds

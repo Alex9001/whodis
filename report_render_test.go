@@ -30,3 +30,24 @@ func TestRenderReportJSONUsesSchemaV3(t *testing.T) {
 		t.Fatalf("JSON report = %s", output.String())
 	}
 }
+
+func TestRenderReportDeduplicatesInventoryTTLAging(t *testing.T) {
+	report := Report{SchemaVersion: ReportSchemaVersion, Operation: OperationDNSInventory, Query: Target{Canonical: "example.test"}, DNS: &DNSOperationResult{
+		Mode: "inventory",
+		Inventory: &DNSResult{Records: []DNSRecord{
+			{Name: "webmail.example.test", Type: "CNAME", TTL: 154, Value: "same-target.example.test"},
+			{Name: "webmail.example.test", Type: "CNAME", TTL: 155, Value: "same-target.example.test"},
+			{Name: "webmail.example.test", Type: "CNAME", TTL: 155, Value: "distinct-target.example.test"},
+		}},
+	}}
+	var output bytes.Buffer
+	if err := RenderReport(&output, report, FormatPretty, RenderOptions{Width: 120}); err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(output.String(), "same-target.example.test"); count != 1 {
+		t.Fatalf("aged inventory record occurs %d times, want once:\n%s", count, output.String())
+	}
+	if count := strings.Count(output.String(), "distinct-target.example.test"); count != 1 {
+		t.Fatalf("distinct inventory record occurs %d times, want once:\n%s", count, output.String())
+	}
+}

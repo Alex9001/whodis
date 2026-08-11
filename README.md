@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A WHOIS alternative that actually understands modern domain infrastructure.</strong><br>
-  Whodis automatically uses RDAP when old WHOIS cannot answer, falls back when it should, and turns the result into something you can read.
+  Whodis starts with authoritative RDAP, falls back to WHOIS when needed, follows RWhois referrals, and turns the result into something you can read.
 </p>
 
 <p align="center">
@@ -38,8 +38,8 @@ service, or export a stable machine-readable report.
   the available width without repeating contacts, notices, or nameservers.
 - **Multiple personalities** — dashboard, semantic tree, retro GeekBoys ASCII,
   and portable plain text are one switch away.
-- **Structured output** — JSON schema v3, YAML, and Markdown contain the same
-  operation results and scoped errors as the screen view.
+- **Structured output** — versioned JSON and YAML support automation, while
+  portable Markdown turns operation results into a readable report.
 - **Focused batch tables** — check many targets, select fields such as
   expiration and registrar, and write directly to a file.
 - **Raw source access** — preserve the original RDAP JSON, WHOIS, or RWhois
@@ -130,8 +130,10 @@ Download `whodis-gui` from the
 - **Windows:** use the per-user setup executable or portable ZIP.
 - **macOS:** open the universal DMG and drag Whodis into Applications.
 
-Desktop packages are currently unsigned, so Windows SmartScreen or macOS
-Gatekeeper may require a one-time confirmation.
+Desktop packages are not code-signed or notarized. Windows SmartScreen and
+macOS Gatekeeper will warn on first launch. Verify the published SHA-256
+checksum or GitHub build attestation, then use **More info → Run anyway** on
+Windows or **Open Anyway** in macOS Privacy & Security settings.
 
 ## Quick start
 

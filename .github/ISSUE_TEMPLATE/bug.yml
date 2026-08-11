@@ -1,0 +1,66 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Whodis. Remove private registration or contact data before posting output.
+  - type: input
+    id: version
+    attributes:
+      label: Whodis version
+      description: Output from `whodis --version` or Help → About.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Application
+      options:
+        - CLI
+        - Native GUI
+        - Both
+        - Packaging or installer
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: Fedora 42 amd64, macOS 15 arm64, Windows 11 amd64
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the command or GUI action and a safe public target when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include sanitized output, screenshots, or errors.
+    validations:
+      required: true
+  - type: textarea
+    id: network
+    attributes:
+      label: Network context
+      description: Note firewalls, proxies, VPNs, split DNS, or blocked direct DNS/SMTP traffic.
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not disclose a security vulnerability or secret.
+          required: true

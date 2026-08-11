@@ -22,6 +22,28 @@ qmake=$(command -v "$qmake" || true)
 export QMAKE=$qmake
 [ -d "$output_dir" ] || { echo "output directory does not exist: $output_dir" >&2; exit 2; }
 
+qt_plugins=$("$qmake" -query QT_INSTALL_PLUGINS)
+[ -d "$qt_plugins/platforms" ] || {
+    echo "Qt platform plugin directory does not exist: $qt_plugins/platforms" >&2
+    exit 1
+}
+wayland_platform_plugins=
+for plugin in libqwayland.so libqwayland-egl.so libqwayland-generic.so; do
+    if [ -f "$qt_plugins/platforms/$plugin" ]; then
+        if [ -n "$wayland_platform_plugins" ]; then
+            wayland_platform_plugins="$wayland_platform_plugins;$plugin"
+        else
+            wayland_platform_plugins=$plugin
+        fi
+    fi
+done
+[ -n "$wayland_platform_plugins" ] || {
+    echo "Qt Wayland platform plugins are required to build the AppImage" >&2
+    exit 1
+}
+export EXTRA_PLATFORM_PLUGINS=$wayland_platform_plugins
+export EXTRA_QT_MODULES=waylandcompositor
+
 case "$(uname -m)" in
     x86_64|amd64) release_arch=amd64 ;;
     aarch64|arm64) release_arch=arm64 ;;
@@ -52,5 +74,27 @@ NO_STRIP=1 OUTPUT="$output" "$linuxdeploy" \
     --plugin qt \
     --output appimage
 test -f "$output"
+test -f "$app_dir/usr/plugins/platforms/libqxcb.so"
+wayland_platform_deployed=false
+for plugin in libqwayland.so libqwayland-egl.so libqwayland-generic.so; do
+    if [ -f "$app_dir/usr/plugins/platforms/$plugin" ]; then
+        wayland_platform_deployed=true
+        break
+    fi
+done
+[ "$wayland_platform_deployed" = true ] || {
+    echo "linuxdeploy did not bundle a Qt Wayland platform plugin" >&2
+    exit 1
+}
+for plugin_group in \
+    wayland-decoration-client \
+    wayland-graphics-integration-client \
+    wayland-shell-integration; do
+    find "$app_dir/usr/plugins/$plugin_group" -type f -name '*.so' -print -quit |
+        grep -q . || {
+            echo "linuxdeploy did not bundle Qt plugin group: $plugin_group" >&2
+            exit 1
+        }
+done
 APPIMAGE_EXTRACT_AND_RUN=1 "$output" --appimage-version >/dev/null
 echo "Created $output"

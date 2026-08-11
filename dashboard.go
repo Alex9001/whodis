@@ -180,7 +180,9 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 
 	nameservers := displayNameservers(result)
 	dnsRows := dashboardRows("DNSSEC", object.DNSSEC)
+	var dnsRecords []DNSRecord
 	if result.DNS != nil {
+		dnsRecords = uniqueDNSRecords(result.DNS.Records)
 		method := "Pattern scan · incomplete"
 		if result.DNS.Method == "axfr" {
 			method = "AXFR · partial"
@@ -190,7 +192,7 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 		}
 		dnsRows = append(dnsRows,
 			dashboardRow{label: "Discovery", value: method},
-			dashboardRow{label: "Records", value: strconv.Itoa(len(result.DNS.Records))},
+			dashboardRow{label: "Records", value: strconv.Itoa(len(dnsRecords))},
 		)
 		if len(result.DNS.Warnings) > 0 {
 			dnsRows = append(dnsRows, dashboardRow{label: "Warnings", value: strconv.Itoa(len(result.DNS.Warnings))})
@@ -205,14 +207,14 @@ func buildDashboard(result LookupResult, details bool) dashboardView {
 	}
 
 	fullWidth := make([]dashboardPanel, 0, 1)
-	if result.DNS != nil && len(result.DNS.Records) > 0 {
-		title := fmt.Sprintf("DNS Records · %d", len(result.DNS.Records))
+	if result.DNS != nil && len(dnsRecords) > 0 {
+		title := fmt.Sprintf("DNS Records · %d", len(dnsRecords))
 		if result.DNS.Method == "axfr" && result.DNS.Complete {
 			title += " · complete zone transfer"
 		} else {
 			title += " · discovered"
 		}
-		fullWidth = append(fullWidth, dashboardPanel{title: title, kind: panelDNSRecords, records: result.DNS.Records})
+		fullWidth = append(fullWidth, dashboardPanel{title: title, kind: panelDNSRecords, records: dnsRecords})
 	}
 
 	contacts := consolidateContacts(object.Entities)
@@ -803,6 +805,7 @@ func renderDashboardNotices(notices []dashboardNotice, width int, color bool) []
 }
 
 func consolidateEvents(events []Event) []dashboardRow {
+	events = uniqueEvents(events)
 	rows := make([]dashboardRow, 0, len(events))
 	indexes := make(map[string]int)
 	for _, event := range events {

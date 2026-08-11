@@ -160,6 +160,7 @@ func (c *Client) Lookup(ctx context.Context, input string, options LookupOptions
 }
 
 func newResult(target Target, route RouteDecision, fallback *RouteDecision, object Object, sources []Source) LookupResult {
+	object.Events = uniqueEvents(object.Events)
 	return LookupResult{
 		SchemaVersion: 2,
 		Query:         target,
@@ -169,6 +170,71 @@ func newResult(target Target, route RouteDecision, fallback *RouteDecision, obje
 		Object:        object,
 		Sources:       sources,
 	}
+}
+
+// uniqueEvents removes duplicate lifecycle facts contributed by overlapping
+// registry and registrar RDAP responses. RFC 3339 permits multiple spellings
+// of the same instant (for example Z and +00:00), and authorities sometimes
+// use a more specific alias such as "registrar expiration" for the same fact.
+// Different instants are always retained.
+func uniqueEvents(events []Event) []Event {
+	result := make([]Event, 0, len(events))
+	indexes := make(map[string]int, len(events))
+	for _, event := range events {
+		event.Action = strings.TrimSpace(event.Action)
+		event.Date = strings.TrimSpace(event.Date)
+		if event.Action == "" && event.Date == "" {
+			continue
+		}
+		actionClass := eventActionClass(event.Action)
+		key := actionClass + "\x00" + eventDateKey(event.Date)
+		if index, exists := indexes[key]; exists {
+			// Prefer Whodis's common lifecycle wording only when two source
+			// events have already proved equivalent by action class and instant.
+			if canonical := canonicalEventAction(actionClass); canonical != "" {
+				result[index].Action = canonical
+			}
+			continue
+		}
+		indexes[key] = len(result)
+		result = append(result, event)
+	}
+	return result
+}
+
+func eventActionClass(action string) string {
+	key := strings.ToLower(strings.TrimSpace(action))
+	key = strings.NewReplacer(" ", "", "-", "", "_", "", ".", "").Replace(key)
+	switch key {
+	case "registration", "registered", "creation", "created", "registrarregistration":
+		return "registration"
+	case "expiration", "expiry", "expires", "registryexpiration", "registryexpiry", "registrarexpiration":
+		return "expiration"
+	case "lastchanged", "lastupdate", "updated", "changed":
+		return "lastchanged"
+	default:
+		return key
+	}
+}
+
+func canonicalEventAction(actionClass string) string {
+	switch actionClass {
+	case "registration":
+		return "registration"
+	case "expiration":
+		return "expiration"
+	case "lastchanged":
+		return "last changed"
+	default:
+		return ""
+	}
+}
+
+func eventDateKey(date string) string {
+	if parsed, err := time.Parse(time.RFC3339Nano, date); err == nil {
+		return parsed.UTC().Format(time.RFC3339Nano)
+	}
+	return strings.ToLower(strings.TrimSpace(date))
 }
 
 func normalizedOptions(options LookupOptions) LookupOptions {

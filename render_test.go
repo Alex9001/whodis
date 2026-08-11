@@ -736,6 +736,38 @@ func TestPrettyDashboardHandlesUnknownEventDates(t *testing.T) {
 	}
 }
 
+func TestHumanFormatsDeduplicateEquivalentEventsAndAgedDNSRecords(t *testing.T) {
+	result := sampleResult()
+	result.Object.Events = []Event{
+		{Action: "registration", Date: "2026-02-21T05:13:38Z"},
+		{Action: "Registration", Date: "2026-02-21T05:13:38+00:00"},
+		{Action: "expiration", Date: "2027-02-21T05:13:38Z"},
+		{Action: "registrar expiration", Date: "2027-02-21T05:13:38+00:00"},
+	}
+	result.DNS = &DNSResult{Method: "scan", Records: []DNSRecord{
+		{Name: "webmail.example.test", Type: "CNAME", TTL: 154, Value: "same-target.example.test"},
+		{Name: "webmail.example.test", Type: "CNAME", TTL: 155, Value: "same-target.example.test"},
+		{Name: "webmail.example.test", Type: "CNAME", TTL: 155, Value: "distinct-target.example.test"},
+	}}
+	for _, format := range []Format{FormatPretty, FormatTree, FormatGeekBoys, FormatPlain, FormatMarkdown} {
+		t.Run(string(format), func(t *testing.T) {
+			output := renderForTest(t, result, format, RenderOptions{Color: "never", Width: 160})
+			if got := countFold(output, "same-target.example.test"); got != 1 {
+				t.Fatalf("aged DNS record occurs %d times, want once:\n%s", got, output)
+			}
+			if got := countFold(output, "distinct-target.example.test"); got != 1 {
+				t.Fatalf("distinct DNS value occurs %d times, want once:\n%s", got, output)
+			}
+			if got := countFold(output, "2026-02-21T05:13:38"); got != 1 {
+				t.Fatalf("equivalent registration instant occurs %d times, want once:\n%s", got, output)
+			}
+			if got := countFold(output, "2027-02-21T05:13:38"); got != 1 {
+				t.Fatalf("equivalent expiration instant occurs %d times, want once:\n%s", got, output)
+			}
+		})
+	}
+}
+
 func TestDashboardWidthHasSafetyCeiling(t *testing.T) {
 	if got := dashboardWidth(&bytes.Buffer{}, maximumDashboardWidth*1000); got != maximumDashboardWidth {
 		t.Fatalf("dashboardWidth() = %d, want safety ceiling %d", got, maximumDashboardWidth)
