@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QPlainTextEdit>
 #include <QTabWidget>
 #include <QtTest>
 
@@ -34,6 +35,11 @@ void ResultWidgetTest::displaysTargetAndDNS()
     QVERIFY(tabs);
     QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("DNS"));
     QVERIFY(widget.copyText().contains(QStringLiteral("example.com")));
+
+    const QPlainTextEdit *raw = widget.findChild<QPlainTextEdit *>();
+    QVERIFY(raw);
+    QCOMPARE(raw->lineWrapMode(), QPlainTextEdit::WidgetWidth);
+    QCOMPARE(raw->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
 }
 
 QTEST_MAIN(ResultWidgetTest)

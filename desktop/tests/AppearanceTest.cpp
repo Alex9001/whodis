@@ -9,6 +9,7 @@ class AppearanceTest final : public QObject
 private slots:
     void controlsAreReadable_data();
     void controlsAreReadable();
+    void darkThemeSuppliesDarkControlSurfaces();
     void chromeStyleUsesProfessionalPalette();
 };
 
@@ -24,6 +25,22 @@ void AppearanceTest::controlsAreReadable_data()
     QTest::newRow("dark") << QColor(QStringLiteral("#191919"))
                           << QColor(QStringLiteral("#141414"))
                           << QColor(QStringLiteral("#25282d"));
+}
+
+void AppearanceTest::darkThemeSuppliesDarkControlSurfaces()
+{
+    QPalette light;
+    light.setColor(QPalette::Window, QColor(QStringLiteral("#f5f7fa")));
+    light.setColor(QPalette::Base, QColor(QStringLiteral("#ffffff")));
+    light.setColor(QPalette::Button, QColor(QStringLiteral("#e5e7eb")));
+
+    const QPalette dark = Appearance::themedPalette(light, true);
+    QCOMPARE(dark.color(QPalette::Active, QPalette::Window), QColor(QStringLiteral("#171b20")));
+    QCOMPARE(dark.color(QPalette::Active, QPalette::Base), QColor(QStringLiteral("#101419")));
+    QCOMPARE(dark.color(QPalette::Active, QPalette::Button), QColor(QStringLiteral("#252d35")));
+    QVERIFY(Appearance::contrastRatio(dark.color(QPalette::Active, QPalette::WindowText),
+                                      dark.color(QPalette::Active, QPalette::Window))
+            >= Appearance::MinimumTextContrast);
 }
 
 void AppearanceTest::controlsAreReadable()
@@ -70,6 +87,8 @@ void AppearanceTest::controlsAreReadable()
 void AppearanceTest::chromeStyleUsesProfessionalPalette()
 {
     QPalette palette;
+    palette.setColor(QPalette::Active, QPalette::Window, QColor(QStringLiteral("#171b20")));
+    palette.setColor(QPalette::Active, QPalette::Mid, QColor(QStringLiteral("#252d35")));
     palette.setColor(QPalette::Active, QPalette::WindowText, QColor(QStringLiteral("#e4ebf1")));
     palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(QStringLiteral("#aab5bf")));
     palette.setColor(QPalette::Active, QPalette::HighlightedText, QColor(QStringLiteral("#f4fbff")));
@@ -79,6 +98,10 @@ void AppearanceTest::chromeStyleUsesProfessionalPalette()
     QVERIFY(style.contains(QStringLiteral("QMenuBar::item:selected")));
     QVERIFY(style.contains(QStringLiteral("QMenu::item:selected")));
     QVERIFY(style.contains(QStringLiteral("QToolBar QToolButton:hover")));
+    QVERIFY(style.contains(QStringLiteral("QMenuBar {")));
+    QVERIFY(style.contains(QStringLiteral("background: #171b20")));
+    QVERIFY(style.contains(QStringLiteral("border: none")));
+    QVERIFY(style.contains(QStringLiteral("padding: 4px 8px")));
     QVERIFY(style.contains(QStringLiteral("color: #e4ebf1")));
     QVERIFY(style.contains(QStringLiteral("color: #aab5bf")));
     QVERIFY(style.contains(QStringLiteral("color: #f4fbff")));

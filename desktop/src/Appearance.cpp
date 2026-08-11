@@ -58,6 +58,29 @@ double contrastRatio(const QColor &foreground, const QColor &background)
     return (lighter + 0.05) / (darker + 0.05);
 }
 
+QPalette themedPalette(const QPalette &palette, bool darkMode)
+{
+    if (!darkMode)
+        return professionalPalette(palette);
+
+    QPalette dark = palette;
+    for (const QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
+        dark.setColor(group, QPalette::Window, QColor(QStringLiteral("#171b20")));
+        dark.setColor(group, QPalette::Base, QColor(QStringLiteral("#101419")));
+        dark.setColor(group, QPalette::AlternateBase, QColor(QStringLiteral("#1e252c")));
+        dark.setColor(group, QPalette::Button, QColor(QStringLiteral("#252d35")));
+        dark.setColor(group, QPalette::ToolTipBase, QColor(QStringLiteral("#252d35")));
+        dark.setColor(group, QPalette::ToolTipText, QColor(QStringLiteral("#f4f8fb")));
+        dark.setColor(group, QPalette::BrightText, QColor(QStringLiteral("#ffffff")));
+        dark.setColor(group, QPalette::Light, QColor(QStringLiteral("#39444e")));
+        dark.setColor(group, QPalette::Midlight, QColor(QStringLiteral("#303942")));
+        dark.setColor(group, QPalette::Mid, QColor(QStringLiteral("#252d35")));
+        dark.setColor(group, QPalette::Dark, QColor(QStringLiteral("#101419")));
+        dark.setColor(group, QPalette::Shadow, QColor(QStringLiteral("#080a0c")));
+    }
+    return professionalPalette(dark);
+}
+
 QPalette professionalPalette(const QPalette &palette)
 {
     QPalette adjusted = palette;
@@ -110,18 +133,24 @@ QString professionalChromeStyleSheet(const QPalette &palette)
     const QString disabled = palette.color(QPalette::Disabled, QPalette::WindowText).name(QColor::HexRgb);
     const QString selected = palette.color(QPalette::Active, QPalette::HighlightedText).name(QColor::HexRgb);
     const QString highlight = palette.color(QPalette::Active, QPalette::Highlight).name(QColor::HexRgb);
+    const QString chrome = palette.color(QPalette::Active, QPalette::Window).name(QColor::HexRgb);
+    const QString border = palette.color(QPalette::Active, QPalette::Mid).name(QColor::HexRgb);
 
     return QStringLiteral(
-               "QMenuBar::item { color: %1; background: transparent; }"
-               "QMenuBar::item:selected, QMenuBar::item:pressed { color: %2; background: %3; }"
-               "QMenuBar::item:disabled { color: %4; background: transparent; }"
-               "QMenu::item { color: %1; }"
+               "QMenuBar { color: %1; background: %5; border: none; margin: 0; padding: 0; }"
+               "QMenuBar::item { color: %1; background: transparent; border: none; margin: 0; padding: 4px 8px; }"
+               "QMenuBar::item:selected, QMenuBar::item:pressed { color: %2; background: %3; border: none; margin: 0; padding: 4px 8px; }"
+               "QMenuBar::item:disabled { color: %4; background: transparent; border: none; margin: 0; padding: 4px 8px; }"
+               "QMenu { color: %1; background: %5; border: 1px solid %6; padding: 3px 0; }"
+               "QMenu::item { color: %1; background: transparent; border: none; margin: 0; padding: 5px 24px 5px 28px; }"
                "QMenu::item:selected { color: %2; background: %3; }"
-               "QMenu::item:disabled { color: %4; }"
-               "QToolBar QToolButton { color: %1; }"
-               "QToolBar QToolButton:hover, QToolBar QToolButton:pressed { color: %2; background: %3; }"
-               "QToolBar QToolButton:disabled { color: %4; background: transparent; }")
-        .arg(normal, selected, highlight, disabled);
+               "QMenu::item:disabled { color: %4; background: transparent; }"
+               "QMenu::separator { height: 1px; background: %6; margin: 4px 8px; }"
+               "QToolBar { color: %1; background: %5; border: none; margin: 0; padding: 2px; spacing: 2px; }"
+               "QToolBar QToolButton { color: %1; background: transparent; border: 1px solid transparent; margin: 1px; padding: 4px 7px; }"
+               "QToolBar QToolButton:hover, QToolBar QToolButton:pressed { color: %2; background: %3; border: 1px solid transparent; margin: 1px; padding: 4px 7px; }"
+               "QToolBar QToolButton:disabled { color: %4; background: transparent; border: 1px solid transparent; margin: 1px; padding: 4px 7px; }")
+        .arg(normal, selected, highlight, disabled, chrome, border);
 }
 
 } // namespace Appearance

@@ -92,7 +92,8 @@ ResultWidget::ResultWidget(QWidget *parent)
     rawLayout->addWidget(m_rawSource);
     rawLayout->addWidget(m_rawText);
     m_rawText->setReadOnly(true);
-    m_rawText->setLineWrapMode(QPlainTextEdit::NoWrap);
+    m_rawText->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    m_rawText->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     connect(m_rawSource, &QComboBox::currentIndexChanged, this, [this](int index) {
         m_rawText->setPlainText(m_rawSource->itemData(index, Qt::UserRole).toString());
     });
