@@ -66,7 +66,7 @@ One stable tag builds both applications:
 - Windows jobs publish amd64 and arm64 per-user installers and portable ZIPs.
 - macOS publishes one universal DMG for Intel and Apple silicon.
 
-Desktop artifacts are unsigned in the first release. The Linux AppImages and
+Desktop artifacts are currently unsigned. The Linux AppImages and
 Windows/macOS bundles include the Qt runtime and its license notices. The AUR
 `whodis-gui` package builds from source and uses Arch's shared Qt package.
 

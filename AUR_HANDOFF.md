@@ -24,7 +24,7 @@ only to the AUR packaging files.
 - GUI install: `/usr/bin/whodis-gui`, private engine under
   `/usr/libexec/whodis/`, desktop entry, and icon
 - GUI dependency: `qt6-base`
-- Minimum GUI version: `0.6.4-1`; use the newest stable release when publishing
+- Current package target: `1.0.1-1`; use the newest stable release when publishing
 
 The workstation previously had a dedicated key:
 
