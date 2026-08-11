@@ -6,7 +6,7 @@ import (
 	"github.com/Alex9001/whodis"
 )
 
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -62,6 +62,19 @@ type lookupParams struct {
 	RefreshBootstrap bool     `json:"refresh_bootstrap,omitempty"`
 }
 
+type runParams struct {
+	Targets          []string               `json:"targets"`
+	Operation        whodis.Operation       `json:"operation"`
+	Protocol         whodis.Protocol        `json:"protocol,omitempty"`
+	Fallback         whodis.FallbackMode    `json:"fallback,omitempty"`
+	Server           string                 `json:"server,omitempty"`
+	TimeoutMS        int                    `json:"timeout_ms,omitempty"`
+	Workers          int                    `json:"workers,omitempty"`
+	RefreshBootstrap bool                   `json:"refresh_bootstrap,omitempty"`
+	DNS              whodis.DNSOptions      `json:"dns,omitempty"`
+	Diagnose         whodis.DiagnoseOptions `json:"diagnose,omitempty"`
+}
+
 type cancelParams struct {
 	RequestID string `json:"request_id"`
 }
@@ -98,6 +111,18 @@ type lookupResult struct {
 	Token    string `json:"token"`
 	Items    []item `json:"items"`
 	Canceled bool   `json:"canceled,omitempty"`
+}
+
+type reportItem struct {
+	Input      string        `json:"input"`
+	Report     whodis.Report `json:"report"`
+	RawSources []rawSource   `json:"raw_sources,omitempty"`
+}
+
+type runResult struct {
+	Token    string       `json:"token"`
+	Items    []reportItem `json:"items"`
+	Canceled bool         `json:"canceled,omitempty"`
 }
 
 type exportResult struct {

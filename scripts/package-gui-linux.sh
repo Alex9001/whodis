@@ -41,6 +41,8 @@ DESTDIR="$app_dir" cmake --install "$build_dir"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 "$script_dir/collect-qt-licenses.sh" \
     "$app_dir/usr/share/licenses/whodis-gui/Qt-Licenses"
+"$script_dir/collect-go-licenses.sh" \
+    "$app_dir/usr/share/licenses/whodis-gui/Go-Licenses"
 
 output="$output_dir/whodis-gui_linux_${release_arch}.AppImage"
 NO_STRIP=1 OUTPUT="$output" "$linuxdeploy" \

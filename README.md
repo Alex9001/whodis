@@ -5,8 +5,8 @@
 <h1 align="center">whodis</h1>
 
 <p align="center">
-  <strong>WHOIS for the RDAP era.</strong><br>
-  One command for RDAP, WHOIS, RWhois, and public DNS—without protocol guesswork or walls of text.
+  <strong>A WHOIS alternative that actually understands modern domain infrastructure.</strong><br>
+  Whodis automatically uses RDAP when old WHOIS cannot answer, falls back when it should, and turns the result into something you can read.
 </p>
 
 <p align="center">
@@ -25,16 +25,28 @@
   <a href="https://github.com/Alex9001/whodis/issues">Issues</a>
 </p>
 
-The registry world is split between old-school WHOIS, modern RDAP, and delegated RWhois network directories. `whodis` hides that split: give it a domain, IP address, network, or ASN and it finds the right service automatically. Then it turns the answer into something useful—a responsive terminal dashboard, clean structured data, or a focused native desktop view.
+Classic `whois` gives you a protocol-era text dump. Whodis accepts a domain,
+IP address, network, or ASN, discovers the right RDAP, WHOIS, or RWhois
+authority, and organizes the answer into a responsive terminal dashboard. When
+you need more than ownership data, the same application can inventory DNS,
+compare resolvers, trace delegation, diagnose web and mail service, or export a
+stable machine-readable report.
 
-## Pick your interface
+## Output made for humans—and scripts
 
-| `whodis` CLI | `whodis-gui` desktop app |
-|---|---|
-| Built for shells, scripts, SSH sessions, and servers | Built for desktop power users on Linux, Windows, and macOS |
-| Dashboard, tree, retro ASCII, plain text, JSON, YAML, Markdown, and raw output | Overview, DNS, Contacts, and Raw tabs with native controls |
-| Batch queries, field selection, file input, and direct export | One-click registration and DNS scans plus a dedicated batch workspace |
-| One small Go binary with no runtime dependencies | Bundles its own private lookup engine; the CLI is not required |
+- **Responsive terminal dashboard** — a spreadsheet-like panel grid that uses
+  the available width without repeating contacts, notices, or nameservers.
+- **Multiple personalities** — dashboard, semantic tree, retro GeekBoys ASCII,
+  and portable plain text are one switch away.
+- **Structured output** — JSON schema v3, YAML, and Markdown contain the same
+  operation results and scoped errors as the screen view.
+- **Focused batch tables** — check many targets, select fields such as
+  expiration and registrar, and write directly to a file.
+- **Raw source access** — preserve the original RDAP JSON, WHOIS, or RWhois
+  response when one unmodified registration lookup is what you need.
+- **Native desktop workbench** — Lookup, DNS Inventory, DNS Query, Compare,
+  Delegation, Diagnose, Services, Findings, Contacts, and Raw views without a
+  browser or a separately installed CLI.
 
 ## See it in action
 
@@ -44,7 +56,7 @@ The registry world is split between old-school WHOIS, modern RDAP, and delegated
 
 <table>
   <tr>
-    <th width="50%">Public DNS discovery</th>
+    <th width="50%">Public DNS inventory</th>
     <th width="50%">Concurrent batch lookup</th>
   </tr>
   <tr>
@@ -53,450 +65,322 @@ The registry world is split between old-school WHOIS, modern RDAP, and delegated
   </tr>
 </table>
 
-### Terminal dashboard
-
-The default terminal view adapts from a wide multi-panel grid to a compact single-column layout:
-
-```text
-$ whodis example.com
-╭─ Registration ──────────────────────╮ ╭─ Contacts · 1 ───────────────────────╮
-│ [CLIENT TRANSFER PROHIBITED]        │ │ REGISTRANT / TECHNICAL               │
-│                                     │ │   Example Registry · id-1234         │
-│ Name       example.com              │ ╰──────────────────────────────────────╯
-│ Handle     2336799_DOMAIN_COM-VRSN  │
-│ Registrar  Example Registrar Inc.   │ ╭─ Timeline · 3 ───────────────────────╮
-╰─────────────────────────────────────╯ │ Registered  1995-08-14               │
-                                        │ Expires     2026-08-13               │
-╭─ DNS · 2 ───────────────────────────╮ │ Updated     2025-08-14               │
-│ DNSSEC  signed delegation           │ ╰──────────────────────────────────────╯
-│                                     │
-│ • A.IANA-SERVERS.NET                │ ╭─ Source ─────────────────────────────╮
-│ • B.IANA-SERVERS.NET                │ │ Protocol   RDAP                      │
-╰─────────────────────────────────────╯ │ Authority  rdap.example.net          │
-                                        │ Discovery  IANA bootstrap            │
-                                        │ Notices    2 hidden · use --details  │
-                                        ╰──────────────────────────────────────╯
-```
-
-The dashboard adapts to the terminal: wide windows use a multi-panel mosaic, while narrow windows stack the same semantic panels into one column. Contacts stay visible but are consolidated instead of repeated. Lengthy registry notices are summarized by count; add `--details` when you want their full text and links. The flag also expands notices in the tree and GeekBoys views; plain and machine-readable formats remain unchanged.
-
-For domain lookups, use `scan` when you want a fast public-DNS discovery pass and a full-width, terminal-friendly record grid. It finds the useful common records—addresses, mail routing, verification and policy TXT records, service records, HTTPS/SVCB records, and nameservers—without turning one lookup into an uncontrolled crawl.
-
-## What you get
-
-- **Automatic protocol selection** — RDAP where it is available, WHOIS where it is still needed, and RWhois for delegated network records.
-- **DNS discovery built in** — common public DNS records appear in an adaptive grid beside registration data; JSON, YAML, Markdown, and plain text include the same structured records.
-- **Four terminal views** — switch between the responsive dashboard, a semantic tree, a retro ASCII layout, and plain text.
-- **Persistent preferences** — save your favorite view once and use it automatically in terminals and pipelines.
-- **Batch checks and field exports** — check many targets at once, pull only expiration dates or other registration fields, and save a clean `.txt` table.
-- **Script-friendly formats** — output plain text, JSON, YAML, Markdown, or the raw registry response.
-- **Direct file export** — use `--output result.json` and Whodis infers the format from the extension.
-- **More than domains** — look up IPv4, IPv6, CIDR networks, and autonomous system numbers such as `AS15169`.
-- **Cross-platform builds** — the same CLI is designed for Linux, macOS, and Windows.
-- **A native desktop companion** — a clean Qt Widgets interface follows the host system theme and bundles its own private lookup engine; the CLI is not required.
+The terminal dashboard rearranges the same normalized data into a wide mosaic
+or a narrow single-column view. Long registry notices are deduplicated and
+summarized; `--details` expands them.
 
 ## Install
 
-Whodis is released as two independent applications from the same repository:
+Whodis releases two independent applications from one codebase:
 
-- `whodis` is the small command-line program for shells, scripts, and servers.
-- `whodis-gui` is the desktop program for Linux, Windows, and macOS. It includes a private engine and does not require `whodis` on `PATH`.
+- `whodis` is the small CLI for shells, scripts, SSH sessions, and servers.
+- `whodis-gui` is the native desktop app. It bundles a private Whodis engine
+  and does not require the CLI on `PATH`.
 
-### Command line
-
-#### Linux and macOS
+### Linux and macOS CLI
 
 ```bash
 curl -fsSL https://github.com/Alex9001/whodis/releases/latest/download/install.sh | sh
 ```
 
-The installer detects your operating system and CPU, verifies the release
-checksum, and places `whodis` in `/usr/local/bin`. It asks for `sudo` only if
-that directory is not writable.
+The installer detects the operating system and CPU, verifies SHA-256 against
+the release checksums, and installs `whodis` into `/usr/local/bin`. It asks for
+`sudo` only when the destination is not writable.
 
-#### Windows
+### Windows CLI
 
-Run in PowerShell—no administrator window is required:
+Run this in PowerShell; an administrator window is not required:
 
 ```powershell
 irm https://github.com/Alex9001/whodis/releases/latest/download/install.ps1 | iex
 ```
 
-The installer puts Whodis under your local application-data directory and adds
-it to your user `PATH` without creating duplicate entries.
+The installer verifies the archive, installs under local application data, and
+adds the directory to the user `PATH`. Open a new terminal and type `whodis`.
 
-#### With Go
-
-If you already have Go installed:
+### Go, archives, and Arch Linux
 
 ```bash
 go install github.com/Alex9001/whodis/cmd/whodis@latest
 ```
 
-Go installs the binary into `GOBIN` (normally `~/go/bin`). Make sure that
-directory is on `PATH`.
+Prebuilt CLI archives are published for Linux, macOS, Windows, FreeBSD, and
+OpenBSD on amd64 and supported arm64 targets. Source-built AUR definitions for
+`whodis` and `whodis-gui` are ready; the maintainer's one-time account and key
+steps are in [AUR_HANDOFF.md](AUR_HANDOFF.md).
 
-Prebuilt archives for every supported platform and `checksums.txt` are also
-available on the [latest GitHub Release](https://github.com/Alex9001/whodis/releases/latest).
+Each release also carries installable `.deb`, `.rpm`, `.apk`, and Arch Linux
+packages. An optional non-root multi-architecture container is published to
+GitHub Container Registry:
+
+```bash
+docker run --rm ghcr.io/alex9001/whodis example.com
+```
 
 ### Desktop app
 
-Download the `whodis-gui` package for your system from the
+Download `whodis-gui` from the
 [latest GitHub Release](https://github.com/Alex9001/whodis/releases/latest):
 
-- **Linux:** download the AppImage for `amd64` or `arm64`, make it executable,
-  and run it. It is self-contained and does not install the CLI.
-- **Windows:** use the matching `setup.exe` for a normal per-user installation,
-  or the portable ZIP when you do not want an installer.
-- **macOS:** download the universal DMG, drag Whodis to Applications, then
-  Control-click **Whodis** and choose **Open** on the first launch.
+- **Linux:** run the amd64 or arm64 AppImage.
+- **Windows:** use the per-user setup executable or portable ZIP.
+- **macOS:** open the universal DMG and drag Whodis into Applications.
 
-The first desktop packages are intentionally unsigned, so Windows SmartScreen
-or macOS Gatekeeper may ask you to confirm the first launch. Signing and store
-distribution can be added later without changing the application architecture.
-
-The source-built AUR packages are prepared but cannot be submitted until the
-maintainer's AUR account is registered. The exact one-time publication steps
-for both packages are preserved in [AUR_HANDOFF.md](AUR_HANDOFF.md); after
-publication Arch users will be able to choose `whodis`, `whodis-gui`, or both.
-
-## Desktop interface
-
-The main window stays deliberately small: one target field, **Lookup**,
-**Scan DNS**, and **Batch**. It accepts domains, IP addresses, ASNs, and full
-HTTP or HTTPS URLs; URLs are reduced to their hostname before lookup.
-
-- **Overview** groups registration, timeline, nameservers, source, and notices.
-- **DNS** shows discovered records in a sortable table.
-- **Contacts** keeps registrant, administrative, and technical records readable.
-- **Raw** preserves the original RDAP, WHOIS, or RWhois response.
-- **Batch** imports or pastes target lists, reports progress, retries failures,
-  and exports CSV, TSV, or JSON.
-
-Advanced options expose protocol selection, fallback behavior, custom WHOIS or
-RWhois authorities, resolvers, timeouts, cache refresh, and an explicitly
-confirmed AXFR action. The GUI talks to a bundled private Go engine over a
-versioned local protocol, so desktop code never reimplements lookup behavior
-and the server-focused CLI remains free of Qt dependencies.
+Desktop packages are currently unsigned, so Windows SmartScreen or macOS
+Gatekeeper may require a one-time confirmation.
 
 ## Quick start
 
-Once installed, use it from any directory:
+Registration stays effortless:
 
 ```bash
 whodis google.com
+whodis 8.8.8.8
+whodis AS15169
 ```
 
-## Batch checks and expiration lists
-
-Give Whodis more than one target to run a bounded concurrent batch. Use
-`expires` when all you need is the expiration date, or `get` for a small
-registration-data table. Text files are headered tab-separated values,
-so they open cleanly in a spreadsheet and remain easy to process in a shell.
+Ask for the operation you want when you need more:
 
 ```bash
-# TARGET, EXPIRATION, and ERROR columns in a compact terminal grid
+# Registration plus a practical public-DNS inventory, including MX
+whodis scan example.com
+
+# Arbitrary DNS types or numeric TYPE values
+whodis dns query example.com A AAAA MX HTTPS TYPE257
+
+# Compare normalized answers from recursive and authoritative resolvers
+whodis dns compare example.com A
+
+# Follow delegation iteratively from a root server
+whodis dns trace example.com NS
+
+# Bounded DNS, reachability, HTTP, TLS, SMTP, and mail-policy checks
+whodis diagnose example.com
+```
+
+## A full DNS client, not a decorative lookup
+
+`whodis dns query` accepts named or numeric record types and classes. Resolver
+URIs select the transport explicitly:
+
+| Resolver form | Transport |
+|---|---|
+| `system`, `1.1.1.1`, `udp://1.1.1.1` | UDP with automatic TCP retry on truncation |
+| `tcp://1.1.1.1` | DNS over TCP |
+| `tls://dns.example` or `dot://…` | DNS over TLS |
+| `https://…/dns-query` | DNS over HTTPS |
+| `h3://…/dns-query` | DNS over HTTP/3 |
+| `doq://dns.example` | DNS over QUIC |
+| `sdns://…` | DNSCrypt stamp |
+
+Responses retain header flags, timing, transport, resolver identity, answer,
+authority, additional records, raw wire bytes, EDNS Extended DNS Errors, and a
+DNSSEC state. EDNS controls include buffer size, DO, NSID, explicit ECS,
+cookie, padding, checking-disabled, and recursion behavior.
+
+```bash
+whodis dns query example.com MX TXT --resolver tls://dns.quad9.net --dnssec
+
+whodis dns compare example.com A \
+  --resolver https://cloudflare-dns.com/dns-query \
+  --resolver tls://dns.google \
+  --strategy consensus
+
+whodis dns transfer example.com --ixfr --serial 12345 --tls
+```
+
+Compare ignores TTL and answer order when deciding whether resolvers disagree.
+Trace follows referrals from embedded root hints and reports glue, missing glue,
+lame delegation, and DNSSEC delegation state. AXFR and IXFR are always explicit,
+bounded by a record safety limit, and support TSIG and TLS.
+
+With `--dnssec`, Whodis locally verifies positive signed answer RRsets and their
+DNSKEY/DS chain against embedded IANA root trust anchors. It reports `secure`,
+`insecure`, `bogus`, or `indeterminate` rather than blindly trusting a
+resolver's AD bit.
+
+### Optional worldwide DNS views
+
+Globalping is strictly opt-in because it sends the target and location request
+to a third-party service and may consume API quota:
+
+```bash
+whodis dns query example.com A --globalping --from US --from Europe --limit 3
+whodis diagnose example.com --remote
+```
+
+Set `GLOBALPING_TOKEN` when using authenticated quota. Whodis has no telemetry,
+account system, or background network activity of its own.
+
+## Diagnose without becoming a port scanner
+
+`whodis diagnose` uses only endpoints derived from the target and its published
+configuration. Work is time-bounded and capped:
+
+- DNS inventory with local DNSSEC validation and iterative delegation tracing
+- representative IPv4 and IPv6 reachability
+- apex and `www` HTTP/HTTPS status and redirect chains
+- TLS identity, certificate dates, cipher, version, and ALPN
+- sampled MX SMTP greeting, EHLO capabilities, STARTTLS, and TLS verification
+- SPF, DMARC, MTA-STS, and TLS-RPT discovery, plus MTA-STS policy retrieval
+- DNS-advertised SRV, SVCB, and HTTPS service endpoints
+- optional local path trace with `--trace`
+
+Findings are deterministic `pass`, `info`, `warning`, or `error` observations
+with evidence. There is deliberately no opaque overall score and no arbitrary
+port-range scanner.
+
+## Batch checks and files
+
+Most registration and workstation commands accept several targets and preserve
+input order while using bounded concurrency:
+
+```bash
 whodis expires google.com yahoo.com
-
-# Add more registration fields and save a text table
-whodis get expiration,registrar,status google.com yahoo.com -o domains.txt
-
-# One target per line; blank and # comment lines are ignored
-whodis expires --input domains.txt -o expirations.txt
-
-# Stdin works when no targets are supplied directly
+whodis get expiration,registrar,status -i domains.txt -o results.txt
+whodis diagnose example.com example.net --json -o diagnosis.json
 printf 'google.com\nyahoo.com\n' | whodis expires
 ```
 
-Batch lookups keep input order, continue when an individual target fails, and
-return a nonzero status after writing the attributed error rows. Use
-`--jobs 1` through `--jobs 32` to control concurrency (the default is four).
+Use `--jobs 1` through `--jobs 32` to control concurrency. Individual failures
+remain attributed to their input and do not erase successful results. Existing
+files are protected unless `--force` is supplied. `.json`, `.yaml`, `.md`, and
+`.txt` output names select their formats automatically.
 
-## Choose your view
+## Choose defaults once
 
-Use an output shortcut to change one lookup:
-
-```bash
-whodis example.com --dashboard  # current responsive grid
-whodis example.com --tree
-whodis example.com --geekboys
-whodis example.com --plain
-```
-
-## DNS discovery
-
-`whodis example.com` is registration-only: it uses RDAP, WHOIS, and any
-published RWhois referral as needed, then shows the nameservers supplied by the
-registration authority once. Use `scan` to use your system DNS resolver for
-common public records. The dashboard then puts those records in a Type / Name /
-Value / TTL grid; the other terminal views adapt the same data to their own
-layouts.
-
-The scan checks the apex plus practical names such as `www`, `api`, `mail`,
-`autodiscover`, DMARC/MTA-STS/TLS reporting names, common DKIM selectors, and
-well-known service records. It detects wildcard responses and avoids presenting
-matching guesses as confirmed hostnames. CNAME, MX, NS, SRV, HTTPS, and SVCB
-targets inside the queried domain get address follow-up where applicable.
-
-DNS does not provide a general way to list every owner name in a zone, so the
-normal result is explicitly marked as a discovery scan rather than a complete
-zone. Use these controls when needed:
-
-```bash
-# Discover live public records, including MX records
-whodis scan example.com
-
-# A resolver also requests discovery (the default is the system resolver)
-whodis scan example.com --resolver 1.1.1.1
-
-# Ask the domain's authoritative nameservers for a full zone transfer.
-# This is never attempted automatically and most public zones correctly refuse it.
-whodis axfr example.com
-```
-
-If an explicit AXFR is refused or unavailable, Whodis returns the normal
-discovery result with a warning instead of failing the registration lookup.
-
-The tree uses the queried target as its root without repeating it inside the
-Registration panel:
-
-```text
-example.com
-├── Registration
-│   ├── Status
-│   │   └── CLIENT TRANSFER PROHIBITED
-│   ├── Handle: 2336799_DOMAIN_COM-VRSN
-│   └── Registrar: Example Registrar Inc.
-├── DNS · 2
-│   └── Nameservers
-│       ├── A.IANA-SERVERS.NET
-│       └── B.IANA-SERVERS.NET
-└── Source
-    ├── Protocol: RDAP
-    └── Discovery: IANA bootstrap
-```
-
-The headerless `geekboys` view uses responsive ASCII-only geometry inspired by
-the [2002 GeekBoys community layout](https://web.archive.org/web/20020328041200/http://www.geekboys.org/):
-
-```text
-.--- Registration ---------------------+
-| + CLIENT TRANSFER PROHIBITED +       |
-|                                      |
-| Name     : example.com               |
-| Handle   : 2336799_DOMAIN_COM-VRSN   |
-| Registrar: Example Registrar Inc.    |
-+--------------------------------------'
-```
-
-### Make Whodis yours
-
-Run the built-in setup wizard once to choose the view that feels right. It uses
-simple numbered prompts, keeps the current answer when you press Enter, and
-shows a review before it saves anything:
+Run the interactive wizard:
 
 ```bash
 whodis config
 ```
 
-The wizard can save three display preferences:
-
-- Output format: automatic, dashboard, tree, GeekBoys, or plain text
-- Color: automatic, always, or never
-- Registry notices: automatic, compact summary, or expanded details
-
-Automatic format keeps the best default for the situation: the dashboard in a
-terminal and plain text in a pipeline. Command-line options still win for a
-single lookup, so `--summary` temporarily returns notices to their compact
-summary without changing the saved preference.
-
-For scripts, configuration management stays direct and quiet:
+It configures six preferences: output layout, color, notice detail, default DNS
+resolver, multi-resolver strategy, and DNSSEC requests. Press Enter to retain a
+choice or review everything before saving. Direct commands are available for
+automation:
 
 ```bash
 whodis config set format tree
-whodis config set color never
-whodis config set details expanded
-whodis config get format       # tree
-whodis config unset details    # return that preference to automatic behavior
-whodis config reset            # remove every saved display preference
-whodis config path             # show the platform-specific config file
+whodis config set resolver 'https://cloudflare-dns.com/dns-query'
+whodis config set strategy consensus
+whodis config set dnssec on
+whodis config get resolver
+whodis config reset
 ```
 
-Because `config` is a command name, query that exact target with
-`whodis -- config`.
+Command-line options always override saved defaults; `--no-dnssec` provides an
+explicit one-run override. Generate shell completion with `whodis completion
+bash|zsh|fish|powershell`.
 
-An explicit output shortcut always wins. `WHODIS_FORMAT` provides a temporary
-format override and can also select JSON, YAML, Markdown, or raw output. Named
-output files continue to take their format from the extension. Explicit
-`--color`, `--details`, and `--summary` likewise override the saved display
-choices.
-
-Whodis stores this preference in `whodis/config.json` below the operating
-system's user configuration directory: normally `~/.config` on Linux,
-`~/Library/Application Support` on macOS, and `%AppData%` on Windows. Use
-`whodis config path` for the exact location.
-
-## Common examples
-
-```bash
-# Registration lookups choose RDAP, WHOIS, or a published RWhois referral
-whodis example.com
-
-# IP addresses and ASNs work the same way
-whodis 8.8.8.8
-whodis AS15169
-
-# Print machine-readable data
-whodis example.com --json
-
-# Try another terminal layout for one lookup
-whodis example.com --tree
-
-# Make the ASCII view your default in terminals and pipelines
-whodis config set format geekboys
-
-# Choose all display defaults with numbered prompts
-whodis config
-
-# Expand registry notices for one structured terminal lookup
-whodis example.com --details
-
-# Keep the saved expanded preference, but summarize notices just this time
-whodis example.com --summary
-
-# Export to a file; .yaml selects YAML automatically
-whodis AS15169 --output google-asn.yaml
-
-# Direct RWhois requires an authority; the default TCP port is 4321
-whodis rwhois 192.0.2.1 --server rwhois.example.net
-
-# Get clean, unstyled terminal text
-whodis example.com --plain
-```
-
-## Command-line options
+## Command shape
 
 ```text
-whodis [rdap|whois|rwhois] [scan|axfr|expires|get <fields>] [target ...] [options]
-whodis config
-whodis config wizard
-whodis config set format auto|dashboard|tree|geekboys|plain
-whodis config set color auto|always|never
-whodis config set details auto|summary|expanded
-whodis config get format|color|details
-whodis config unset format|color|details
-whodis config reset
-whodis config path
-
--o, --output <file|->
--i, --input <file|->
--j, --jobs <1-32>
-    --server <endpoint>
-    --timeout <duration>
-    --refresh
-    --resolver <address>
-    --color auto|always|never
-    --details
-    --summary
-    --strict
-    --try-both
-    --dashboard|--tree|--geekboys|--plain|--json|--yaml|--markdown|--raw
-    --force
--h, --help
-    --version
+whodis <target>
+whodis registration <target...>
+whodis scan <domain...>
+whodis dns query <name> [TYPE...]
+whodis dns compare <name> [TYPE...]
+whodis dns trace <name> [TYPE]
+whodis dns transfer <zone>
+whodis diagnose <domain...>
+whodis expires <target...>
+whodis get <fields> <target...>
 ```
 
-The protocol word, when present, comes first. `scan` adds public DNS discovery;
-`axfr` tries an authoritative zone transfer and still returns the ordinary scan
-when transfer is unavailable; `expires` is the expiration-only projection; and
-`get` takes any comma-separated combination of `expiration`, `registration`,
-`updated`, `registrar`, `registry`, `status`, `nameservers`, `dnssec`, and
-`protocol`. `scan` and `axfr` accept domains only. To query a target that is
-itself a command word, start the target list with `--`, such as
-`whodis -- scan` or `whodis whois -- scan`.
+Add `--dashboard`, `--tree`, `--geekboys`, `--plain`, `--json`, `--yaml`, or
+`--markdown` to select output. `whodis help dns`, `whodis help diagnose`, and
+`whodis help advanced` document operation-specific controls. The older `scan`
+and `axfr` spellings remain available for compatibility.
 
-Choose at most one output shortcut. Without one, Whodis infers JSON, YAML,
-Markdown, tree, GeekBoys, or plain text from `--output`; otherwise it consults
-`WHODIS_FORMAT`, saved preferences, and whether output is a terminal. Existing
-files are protected unless `--force` is supplied. `--raw` is limited to one
-ordinary, unprojected registration lookup.
+## How registration routing works
 
-`--resolver` accepts a resolver host or IP with an optional port (bracket IPv6
-addresses when including a port) and is available with `scan` or `axfr`.
+Whodis caches IANA's RDAP bootstrap registries for domains, IPv4, IPv6, and
+ASNs. Domain routes use the longest registry suffix; IP routes use the longest
+network prefix; ASN routes use the published number ranges. HTTPS endpoints are
+preferred and alternate endpoints are tried before changing protocol.
 
-## How protocol selection works
+When no RDAP service is published, Whodis asks `whois.iana.org` for the
+authoritative WHOIS server and follows a bounded referral chain. It follows a
+published `rwhois://` referral automatically. A direct authority can be forced
+with `whodis rdap|whois|rwhois ... --server`; RWhois direct mode requires the
+server because no global RWhois bootstrap exists.
 
-Whodis fetches and caches IANA's RDAP bootstrap registries for domains, IPv4, IPv6, and ASNs. Domain routes use the longest matching registry suffix, IP routes use the longest matching network prefix, and ASN routes use IANA's number ranges. HTTPS endpoints are preferred, and secondary endpoints are tried before switching protocols.
+Automatic routing falls back only for an unavailable or unusable service.
+Authoritative not-found and rate-limit responses remain visible. `--try-both`
+widens diagnostic fallback and `--strict` disables it.
 
-When IANA does not list an RDAP service for a target, Whodis asks `whois.iana.org` for the authoritative WHOIS server and follows a bounded referral chain. If that authority publishes an `rwhois://` referral, Whodis follows it automatically. For successful automatic IP and ASN RDAP lookups, Whodis also uses the RDAP `port43` hint to make a best-effort WHOIS probe for a more-specific RWhois record; a failed probe leaves the RDAP answer intact.
+## Go SDK and report schema
 
-Automatic routing falls back only when the selected service is unavailable or unusable. Authoritative not-found and rate-limit responses remain visible. Use `--try-both` for wider diagnostic coverage or `--strict` for a strict single-protocol lookup. To force a protocol, place `rdap`, `whois`, or `rwhois` before the command; direct RWhois requires `--server`.
-
-## Go API and interfaces
-
-The protocol engine is independent of terminal and desktop rendering. The CLI,
-native Qt desktop app, and other Go applications reuse the same lookup and
-normalized result model.
-
-The public API is centered on:
+The supported public API is renderer-independent. The CLI and GUI both call the
+same concurrency-safe `Engine` and provider boundaries:
 
 ```go
-import (
-    "os"
-
-    "github.com/Alex9001/whodis"
-)
-
-client := whodis.NewClient(whodis.ClientOptions{})
-route, err := client.Route(ctx, "example.com", whodis.LookupOptions{})
-result, err := client.Lookup(ctx, "example.com", whodis.LookupOptions{})
-err = whodis.Render(os.Stdout, result, whodis.FormatTree, whodis.RenderOptions{})
-
-batch, err := client.LookupBatch(ctx, []string{"example.com", "example.net"}, whodis.BatchLookupOptions{})
-err = whodis.RenderBatch(os.Stdout, batch, whodis.FormatPlain, whodis.BatchRenderOptions{
-    Fields: []whodis.ProjectionField{whodis.FieldExpiration},
+engine := whodis.NewEngine(whodis.EngineOptions{})
+report, err := engine.Run(ctx, whodis.Request{
+    Operation: whodis.OperationDNSQuery,
+    Target:    "example.com",
+    DNS:       whodis.DNSOptions{Types: []string{"A", "AAAA", "MX"}},
 })
+err = whodis.RenderReport(os.Stdout, report, whodis.FormatJSON, whodis.RenderOptions{})
 ```
 
-`LookupResult` schema version 2 contains the query, routing decision, normalized registration data, DNS discovery result, notices, and registry sources. `BatchResult` schema version 1 keeps each original input beside either a result or a serializable error. `DNSResult.Complete` is true only after a successful authoritative AXFR; ordinary scans are intentionally incomplete. Native RDAP JSON, raw WHOIS, and raw RWhois responses remain available through `--raw` for one ordinary, unprojected target.
+`Report` schema version 3 keeps registration, DNS, diagnosis, findings, and
+provider-scoped errors independent, so one failed registry or probe does not
+erase useful results. `Engine.RunBatch` preserves input order, accepts bounded
+workers, supports cancellation, and emits progress callbacks. Registration,
+DNS, and Diagnose providers are interfaces for embedding and deterministic
+tests.
 
-Additional protocols can implement `ProtocolAdapter` without coupling them to the CLI or a particular operating system.
+The established `Client`, `LookupResult` schema v2, `Render`, and legacy batch
+API remain available for registration-focused integrations. The native GUI's
+private newline-delimited JSON-RPC protocol is version 2 and carries schema-v3
+reports, progress, cancel, in-memory result tokens, and exports.
 
-## Development
+## Development and release integrity
 
 ```bash
 git clone https://github.com/Alex9001/whodis.git
 cd whodis
-go test ./...
+go test -race ./...
 go vet ./...
 go run ./cmd/whodis example.com
 ```
 
-The desktop app additionally needs CMake, Ninja, Qt 6 Core/Gui/Widgets, and a
-C++17 compiler. See [desktop/README.md](desktop/README.md) for local build,
-test, engine-protocol, and packaging details.
+The desktop build additionally needs CMake, Ninja, Qt 6 Core/Gui/Widgets/Test,
+and a C++17 compiler; source builds require Go 1.25 or newer. See
+[desktop/README.md](desktop/README.md). Tests use
+fixtures and in-memory protocol sessions rather than consuming public registry
+or Globalping quota.
 
-Tests use local fixtures and in-memory protocol sessions; public registries are
-not queried during the test suite. Live checks are intentionally manual because
-registry availability and query limits are external conditions.
+Release automation cross-builds the pure-Go CLI, builds native desktop bundles,
+runs race and vulnerability checks, generates SHA-256 checksums and SBOMs, and
+attests release provenance. Releases remain split into CLI and GUI assets so a
+server never needs to install Qt.
 
-## Known limitations
+## Current limitations
 
-- RWhois has no global bootstrap registry. Automatic discovery depends on an
-  RDAP `port43` hint or a WHOIS `ReferralServer`; otherwise the authority must
-  be supplied with `rwhois --server <host>`.
-- Normal DNS discovery checks a practical set of common names and record types,
-  not every possible owner name in a zone. Only a successful authoritative AXFR
-  is complete, and most public nameservers refuse zone transfers.
-- `get` exports the normalized registration fields listed by `whodis help get`; it
-  does not yet select arbitrary JSON paths or individual DNS record types.
-- Raw protocol output is available only for one unprojected target. Multi-target
-  and field-selected output must use a structured or human-readable format.
-- Authenticated RDAP, proprietary registry APIs, and web scraping are not
-  included.
-- Desktop packages are currently unsigned and are distributed directly through
-  GitHub Releases; Microsoft Store, Mac App Store, and mobile builds are not
-  part of the first desktop release.
+- RWhois has no global bootstrap registry. Automatic discovery needs a
+  published RDAP `port43` hint or WHOIS `ReferralServer`; otherwise use an
+  explicit `rwhois --server` authority.
+- DNS inventory checks a maintained set of practical owner names and record
+  types; DNS has no universal record-list operation. Only a successful AXFR is
+  a complete zone, and most public authoritative servers correctly refuse it.
+- Local DNSSEC validation currently validates positive signed answer chains.
+  Authenticated denial proofs for NXDOMAIN/NODATA are reported as
+  `indeterminate` rather than overstated as secure.
+- Path tracing can require operating-system ICMP permissions. Whodis reports a
+  scoped warning when the host does not allow the native probe.
+- Diagnose samples bounded representative addresses, MX hosts, and advertised
+  services. It is evidence collection, not continuous monitoring or an
+  exhaustive security audit.
+- Raw source output is limited to registration responses. Multi-target and
+  workstation operations use human-readable or structured report formats.
+- Authenticated registry accounts, proprietary registry APIs, web scraping,
+  generic port scanning, telemetry, mobile apps, and app-store distribution are
+  intentionally out of scope.
+- Desktop packages are currently unsigned and distributed through GitHub
+  Releases.
 
 ## License
 

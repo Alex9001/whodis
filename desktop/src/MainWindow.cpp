@@ -33,7 +33,9 @@ MainWindow::MainWindow(QWidget *parent)
     , m_advanced(new AdvancedDialog(this))
     , m_target(new QLineEdit(this))
     , m_lookup(new QPushButton(tr("Lookup"), this))
-    , m_scan(new QPushButton(tr("Scan DNS"), this))
+    , m_scan(new QPushButton(tr("Scan"), this))
+    , m_dns(new QPushButton(QStringLiteral("DNS"), this))
+    , m_diagnose(new QPushButton(tr("Diagnose"), this))
     , m_batch(new QPushButton(tr("Batch…"), this))
     , m_cancel(new QPushButton(tr("Cancel"), this))
     , m_progress(new QProgressBar(this))
@@ -57,6 +59,8 @@ MainWindow::MainWindow(QWidget *parent)
     queryLayout->addWidget(m_target, 1);
     queryLayout->addWidget(m_lookup);
     queryLayout->addWidget(m_scan);
+    queryLayout->addWidget(m_dns);
+    queryLayout->addWidget(m_diagnose);
     queryLayout->addWidget(m_batch);
     queryLayout->addWidget(m_cancel);
     queryLayout->addWidget(m_progress);
@@ -82,6 +86,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_copyAction->setShortcut(QKeySequence::Copy);
     connect(m_copyAction, &QAction::triggered, this, &MainWindow::copyCurrent);
     auto *toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    m_compareAction = toolsMenu->addAction(tr("Compare DNS Resolvers"), this, &MainWindow::runDNSCompare);
+    m_traceAction = toolsMenu->addAction(tr("Trace DNS Delegation"), this, &MainWindow::runDNSTrace);
+    toolsMenu->addSeparator();
     m_axfrAction = toolsMenu->addAction(tr("Authoritative Zone Transfer…"), this, &MainWindow::runAXFR);
     toolsMenu->addAction(tr("Advanced Lookup Options…"), this, &MainWindow::openAdvanced);
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -103,6 +110,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_validationTimer, &QTimer::timeout, this, &MainWindow::validateTarget);
     connect(m_lookup, &QPushButton::clicked, this, &MainWindow::runLookup);
     connect(m_scan, &QPushButton::clicked, this, &MainWindow::runDNSScan);
+    connect(m_dns, &QPushButton::clicked, this, &MainWindow::runDNSQuery);
+    connect(m_diagnose, &QPushButton::clicked, this, &MainWindow::runDiagnose);
     connect(m_batch, &QPushButton::clicked, this, &MainWindow::openBatch);
     connect(m_cancel, &QPushButton::clicked, this, &MainWindow::cancelLookup);
     connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int) {
@@ -149,12 +158,32 @@ void MainWindow::validateTarget()
 
 void MainWindow::runLookup()
 {
-    startLookup(QStringLiteral("registration"));
+    startOperation(QStringLiteral("registration"));
 }
 
 void MainWindow::runDNSScan()
 {
-    startLookup(QStringLiteral("scan"));
+    startOperation(QStringLiteral("dns.inventory"));
+}
+
+void MainWindow::runDNSQuery()
+{
+    startOperation(QStringLiteral("dns.query"));
+}
+
+void MainWindow::runDNSCompare()
+{
+    startOperation(QStringLiteral("dns.compare"));
+}
+
+void MainWindow::runDNSTrace()
+{
+    startOperation(QStringLiteral("dns.trace"));
+}
+
+void MainWindow::runDiagnose()
+{
+    startOperation(QStringLiteral("diagnose"));
 }
 
 void MainWindow::runAXFR()
@@ -163,21 +192,34 @@ void MainWindow::runAXFR()
         return;
     if (QMessageBox::question(this, tr("Attempt zone transfer"),
                               tr("Whodis will ask the authoritative nameservers for a complete zone transfer. Most public zones correctly refuse this. Continue?")) == QMessageBox::Yes)
-        startLookup(QStringLiteral("axfr"));
+        startOperation(QStringLiteral("dns.transfer"));
 }
 
-void MainWindow::startLookup(const QString &mode)
+void MainWindow::startOperation(const QString &operation)
 {
     const QString target = m_target->text().trimmed();
     if (!m_engine->isReady() || target.isEmpty() || !m_lookupRequest.isEmpty())
         return;
     QJsonObject params = m_advanced->options();
+    const QString resolver = params.take(QStringLiteral("resolver")).toString();
+    QJsonObject dns = params.value(QStringLiteral("dns")).toObject();
+    if (!resolver.isEmpty())
+        dns.insert(QStringLiteral("resolvers"), QJsonArray{resolver});
+    if (operation == QStringLiteral("dns.query"))
+        dns.insert(QStringLiteral("types"), QJsonArray{QStringLiteral("A"), QStringLiteral("AAAA")});
+    if (!dns.isEmpty())
+        params.insert(QStringLiteral("dns"), dns);
     params.insert(QStringLiteral("targets"), QJsonArray{target});
-    params.insert(QStringLiteral("mode"), mode);
-    m_lookupRequest = m_engine->request(QStringLiteral("lookup"), params);
+    params.insert(QStringLiteral("operation"), operation);
+    m_lookupRequest = m_engine->request(QStringLiteral("run"), params);
     m_resultToken.clear();
     setBusy(true);
-    statusBar()->showMessage(mode == QStringLiteral("scan") ? tr("Looking up registration and DNS…") : tr("Looking up registration…"));
+    if (operation == QStringLiteral("diagnose"))
+        statusBar()->showMessage(tr("Diagnosing DNS, web, TLS, mail, and services…"));
+    else if (operation.startsWith(QStringLiteral("dns.")))
+        statusBar()->showMessage(tr("Running DNS operation…"));
+    else
+        statusBar()->showMessage(tr("Looking up registration…"));
 }
 
 void MainWindow::cancelLookup()
@@ -214,13 +256,17 @@ void MainWindow::saveCurrent()
 {
     if (m_resultToken.isEmpty())
         return;
-    const QString filters = tr("JSON (*.json);;Plain text (*.txt);;Raw response (*.raw.txt)");
+    const QString filters = tr("JSON (*.json);;YAML (*.yaml);;Markdown (*.md);;Plain text (*.txt);;Raw response (*.raw.txt)");
     QString selectedFilter;
     const QString path = QFileDialog::getSaveFileName(this, tr("Save Whodis result"), m_result->currentTarget() + QStringLiteral(".json"), filters, &selectedFilter);
     if (path.isEmpty())
         return;
     QString format = QStringLiteral("json");
-    if (selectedFilter.contains(QStringLiteral("Plain"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".txt"), Qt::CaseInsensitive))
+    if (selectedFilter.contains(QStringLiteral("YAML"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".yaml"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".yml"), Qt::CaseInsensitive))
+        format = QStringLiteral("yaml");
+    else if (selectedFilter.contains(QStringLiteral("Markdown"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive))
+        format = QStringLiteral("markdown");
+    else if (selectedFilter.contains(QStringLiteral("Plain"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".txt"), Qt::CaseInsensitive))
         format = QStringLiteral("plain");
     if (selectedFilter.contains(QStringLiteral("Raw"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".raw.txt"), Qt::CaseInsensitive))
         format = QStringLiteral("raw");
@@ -239,7 +285,7 @@ void MainWindow::handleResponse(const QString &id, const QString &method, const 
         updateActionState();
         return;
     }
-    if (method == QStringLiteral("lookup") && id == m_lookupRequest) {
+    if (method == QStringLiteral("run") && id == m_lookupRequest) {
         const QJsonObject lookup = result.toObject();
         m_resultToken = lookup.value(QStringLiteral("token")).toString();
         const QJsonArray items = lookup.value(QStringLiteral("items")).toArray();
@@ -250,13 +296,9 @@ void MainWindow::handleResponse(const QString &id, const QString &method, const 
             return;
         }
         const QJsonObject item = items.at(0).toObject();
-        const QJsonObject error = item.value(QStringLiteral("error")).toObject();
-        if (!error.isEmpty()) {
-            statusBar()->showMessage(error.value(QStringLiteral("message")).toString());
-        } else {
-            m_result->setItem(item);
-            statusBar()->showMessage(tr("Lookup complete."), 5000);
-        }
+        m_result->setReportItem(item);
+        const QJsonArray errors = item.value(QStringLiteral("report")).toObject().value(QStringLiteral("errors")).toArray();
+        statusBar()->showMessage(errors.isEmpty() ? tr("Operation complete.") : tr("Operation complete with %1 partial error(s).").arg(errors.size()), 5000);
         m_lookupRequest.clear();
         setBusy(false);
         return;
@@ -302,6 +344,8 @@ void MainWindow::setBusy(bool busy)
     m_target->setReadOnly(busy);
     m_lookup->setVisible(!busy);
     m_scan->setVisible(!busy);
+    m_dns->setVisible(!busy);
+    m_diagnose->setVisible(!busy);
     m_batch->setEnabled(!busy);
     m_cancel->setVisible(busy);
     m_progress->setVisible(busy);
@@ -314,7 +358,11 @@ void MainWindow::updateActionState()
     const bool valid = !m_validKind.isEmpty();
     m_lookup->setEnabled(m_engine->isReady() && idle && valid);
     m_scan->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
+    m_dns->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
+    m_diagnose->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
     m_axfrAction->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
+    m_compareAction->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
+    m_traceAction->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
     m_saveAction->setEnabled(!m_resultToken.isEmpty());
     m_copyAction->setEnabled(!m_result->currentTarget().isEmpty());
 }

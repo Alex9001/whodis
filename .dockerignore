@@ -1,0 +1,11 @@
+.git
+.github
+build*
+dist
+.release-assets
+docs
+desktop
+packaging
+*.AppImage
+*.dmg
+*.exe

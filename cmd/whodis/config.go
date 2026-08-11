@@ -37,9 +37,12 @@ type cliRuntime struct {
 // automatic selection; a nil Details value means the renderer's compact
 // default. The pointer preserves a deliberate saved summary preference.
 type userConfig struct {
-	Format  string `json:"format,omitempty"`
-	Color   string `json:"color,omitempty"`
-	Details *bool  `json:"details,omitempty"`
+	Format           string   `json:"format,omitempty"`
+	Color            string   `json:"color,omitempty"`
+	Details          *bool    `json:"details,omitempty"`
+	DNSResolvers     []string `json:"dns_resolvers,omitempty"`
+	ResolverStrategy string   `json:"resolver_strategy,omitempty"`
+	DNSSEC           *bool    `json:"dnssec,omitempty"`
 }
 
 func defaultCLIRuntime() cliRuntime {
@@ -163,17 +166,24 @@ func removeUserConfig(runtime cliRuntime) error {
 }
 
 func configIsEmpty(config userConfig) bool {
-	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil
+	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil && len(config.DNSResolvers) == 0 && strings.TrimSpace(config.ResolverStrategy) == "" && config.DNSSEC == nil
 }
 
 func configsEqual(left, right userConfig) bool {
-	if left.Format != right.Format || left.Color != right.Color {
+	if left.Format != right.Format || left.Color != right.Color || left.ResolverStrategy != right.ResolverStrategy || strings.Join(left.DNSResolvers, "\x00") != strings.Join(right.DNSResolvers, "\x00") {
 		return false
 	}
-	if left.Details == nil || right.Details == nil {
-		return left.Details == nil && right.Details == nil
+	if !equalOptionalBool(left.Details, right.Details) || !equalOptionalBool(left.DNSSEC, right.DNSSEC) {
+		return false
 	}
-	return *left.Details == *right.Details
+	return true
+}
+
+func equalOptionalBool(left, right *bool) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func saveOrRemoveUserConfig(runtime cliRuntime, config userConfig) error {
@@ -249,6 +259,14 @@ func validateUserConfig(config userConfig) error {
 	if _, err := parsePersistentColor(config.Color); err != nil {
 		return err
 	}
+	if _, err := parsePersistentResolverStrategy(config.ResolverStrategy); err != nil {
+		return err
+	}
+	if len(config.DNSResolvers) > 0 {
+		if err := whodis.ValidateDNSOptions(whodis.DNSOptions{Resolvers: config.DNSResolvers}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -261,14 +279,34 @@ func canonicalUserConfig(config userConfig) (userConfig, error) {
 	if err != nil {
 		return userConfig{}, err
 	}
-	canonical := userConfig{Details: config.Details}
+	strategy, err := parsePersistentResolverStrategy(config.ResolverStrategy)
+	if err != nil {
+		return userConfig{}, err
+	}
+	canonical := userConfig{Details: config.Details, DNSResolvers: append([]string(nil), config.DNSResolvers...), DNSSEC: config.DNSSEC}
 	if format != "auto" {
 		canonical.Format = format
 	}
 	if color != "auto" {
 		canonical.Color = color
 	}
+	if strategy != "first" {
+		canonical.ResolverStrategy = strategy
+	}
 	return canonical, nil
+}
+
+func parsePersistentResolverStrategy(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || value == "auto" {
+		return "first", nil
+	}
+	switch whodis.ResolverStrategy(value) {
+	case whodis.ResolverFirst, whodis.ResolverAll, whodis.ResolverFastest, whodis.ResolverRandom, whodis.ResolverConsensus:
+		return value, nil
+	default:
+		return "", fmt.Errorf("resolver strategy %q cannot be saved; choose first, all, fastest, random, or consensus", value)
+	}
 }
 
 func modifyUserConfig(runtime cliRuntime, modify func(*userConfig) error) error {
@@ -301,6 +339,15 @@ func configValue(config userConfig, key string) (string, error) {
 		return parsePersistentColor(config.Color)
 	case "details":
 		return persistentDetailsValue(config.Details), nil
+	case "resolver":
+		if len(config.DNSResolvers) == 0 {
+			return "system", nil
+		}
+		return strings.Join(config.DNSResolvers, ","), nil
+	case "strategy":
+		return parsePersistentResolverStrategy(config.ResolverStrategy)
+	case "dnssec":
+		return persistentOptionalBool(config.DNSSEC), nil
 	default:
 		return "", fmt.Errorf("unknown preference %q", key)
 	}
@@ -340,8 +387,42 @@ func setConfigValue(config *userConfig, key, value string) error {
 		}
 		config.Details = choice
 		return nil
+	case "resolver":
+		if strings.EqualFold(strings.TrimSpace(value), "system") || strings.EqualFold(strings.TrimSpace(value), "auto") {
+			config.DNSResolvers = nil
+			return nil
+		}
+		var resolvers []string
+		for _, resolver := range strings.Split(value, ",") {
+			if strings.TrimSpace(resolver) != "" {
+				resolvers = append(resolvers, strings.TrimSpace(resolver))
+			}
+		}
+		if err := whodis.ValidateDNSOptions(whodis.DNSOptions{Resolvers: resolvers}); err != nil {
+			return err
+		}
+		config.DNSResolvers = resolvers
+		return nil
+	case "strategy":
+		strategy, err := parsePersistentResolverStrategy(value)
+		if err != nil {
+			return err
+		}
+		if strategy == "first" {
+			config.ResolverStrategy = ""
+		} else {
+			config.ResolverStrategy = strategy
+		}
+		return nil
+	case "dnssec":
+		choice, err := parseOptionalBool(value)
+		if err != nil {
+			return err
+		}
+		config.DNSSEC = choice
+		return nil
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, or details", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, or dnssec", key)
 	}
 }
 
@@ -353,10 +434,41 @@ func unsetConfigValue(config *userConfig, key string) error {
 		config.Color = ""
 	case "details":
 		config.Details = nil
+	case "resolver":
+		config.DNSResolvers = nil
+	case "strategy":
+		config.ResolverStrategy = ""
+	case "dnssec":
+		config.DNSSEC = nil
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, or details", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, or dnssec", key)
 	}
 	return nil
+}
+
+func parseOptionalBool(value string) (*bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return nil, nil
+	case "on", "true", "yes":
+		choice := true
+		return &choice, nil
+	case "off", "false", "no":
+		choice := false
+		return &choice, nil
+	default:
+		return nil, fmt.Errorf("value %q must be auto, on, or off", value)
+	}
+}
+
+func persistentOptionalBool(value *bool) string {
+	if value == nil {
+		return "auto"
+	}
+	if *value {
+		return "on"
+	}
+	return "off"
 }
 
 type wizardChoice struct {
@@ -402,7 +514,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "get":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details|resolver|strategy|dnssec")
 			return 2
 		}
 		config, exists, err := loadUserConfig(runtime)
@@ -426,7 +538,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "set":
 		if len(args) != 3 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details <value>")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details|resolver|strategy|dnssec <value>")
 			return 2
 		}
 		if err := setConfigValue(&userConfig{}, args[1], args[2]); err != nil {
@@ -442,7 +554,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "unset":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details|resolver|strategy|dnssec")
 			return 2
 		}
 		if err := unsetConfigValue(&userConfig{}, args[1]); err != nil {
@@ -511,12 +623,15 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	_, format, _ := parsePersistentFormat(config.Format)
 	color, _ := parsePersistentColor(config.Color)
 	details := persistentDetailsValue(config.Details)
+	resolver := resolverPreset(config.DNSResolvers)
+	strategy, _ := parsePersistentResolverStrategy(config.ResolverStrategy)
+	dnssec := persistentOptionalBool(config.DNSSEC)
 	scanner := bufio.NewScanner(runtime.stdin)
 
 	fmt.Fprintln(stdout, "Whodis preferences")
 	fmt.Fprintln(stdout, "Enter a number, press Enter to keep the current choice, or type q to cancel.")
 
-	format, cancelled, err := promptWizardChoice(scanner, stdout, 1, 3, "Output format", format, []wizardChoice{
+	format, cancelled, err := promptWizardChoice(scanner, stdout, 1, 6, "Output format", format, []wizardChoice{
 		{value: "auto", label: "Auto", description: "dashboard in a terminal; plain text when piped or redirected"},
 		{value: "dashboard", label: "Dashboard", description: "responsive panel grid that adapts to terminal width"},
 		{value: "tree", label: "Tree", description: "hierarchical view for scanning relationships"},
@@ -527,7 +642,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	color, cancelled, err = promptWizardChoice(scanner, stdout, 2, 3, "Color", color, []wizardChoice{
+	color, cancelled, err = promptWizardChoice(scanner, stdout, 2, 6, "Color", color, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use color only on a capable terminal; respect NO_COLOR"},
 		{value: "always", label: "Always", description: "force ANSI color in dashboard and tree output"},
 		{value: "never", label: "Never", description: "never emit ANSI color"},
@@ -536,10 +651,43 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	details, cancelled, err = promptWizardChoice(scanner, stdout, 3, 3, "Registry notices", details, []wizardChoice{
+	details, cancelled, err = promptWizardChoice(scanner, stdout, 3, 6, "Registry notices", details, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use the compact summary behavior built into visual formats"},
 		{value: "summary", label: "Summary", description: "always show only the deduplicated notice count"},
 		{value: "expanded", label: "Expanded", description: "show deduplicated titles, descriptions, and links"},
+	})
+	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+		return wizardExitCode(err)
+	}
+
+	resolverChoices := []wizardChoice{
+		{value: "system", label: "System", description: "use the resolvers configured by the operating system"},
+		{value: "cloudflare", label: "Cloudflare", description: "DNS-over-HTTPS through Cloudflare's public resolver"},
+		{value: "quad9", label: "Quad9", description: "DNS-over-TLS through Quad9's public resolver"},
+		{value: "google", label: "Google", description: "DNS-over-HTTPS through Google's public resolver"},
+	}
+	if resolver == "custom" {
+		resolverChoices = append(resolverChoices, wizardChoice{value: "custom", label: "Custom", description: "keep the resolver URIs already stored in this config"})
+	}
+	resolver, cancelled, err = promptWizardChoice(scanner, stdout, 4, 6, "Default DNS resolver", resolver, resolverChoices)
+	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+		return wizardExitCode(err)
+	}
+
+	strategy, cancelled, err = promptWizardChoice(scanner, stdout, 5, 6, "Multiple resolver behavior", strategy, []wizardChoice{
+		{value: "first", label: "First", description: "stop after the first successful resolver"},
+		{value: "all", label: "All", description: "retain every resolver response"},
+		{value: "fastest", label: "Fastest", description: "race resolvers and keep the first successful response"},
+		{value: "consensus", label: "Consensus", description: "query all resolvers and compare normalized answers"},
+	})
+	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+		return wizardExitCode(err)
+	}
+
+	dnssec, cancelled, err = promptWizardChoice(scanner, stdout, 6, 6, "DNSSEC requests", dnssec, []wizardChoice{
+		{value: "auto", label: "Auto", description: "use each command's normal DNSSEC behavior"},
+		{value: "on", label: "On", description: "request DNSSEC records by default"},
+		{value: "off", label: "Off", description: "do not request DNSSEC records by default"},
 	})
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
 		return wizardExitCode(err)
@@ -558,6 +706,17 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
+	if resolver != "custom" {
+		draft.DNSResolvers = resolverPresetValues(resolver)
+	}
+	if err := setConfigValue(&draft, "strategy", strategy); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	}
+	if err := setConfigValue(&draft, "dnssec", dnssec); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	}
 	draft, err = canonicalUserConfig(draft)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
@@ -568,6 +727,9 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	fmt.Fprintf(stdout, "  Format : %s\n", wizardDisplayValue(format))
 	fmt.Fprintf(stdout, "  Color  : %s\n", wizardDisplayValue(color))
 	fmt.Fprintf(stdout, "  Notices: %s\n", wizardDisplayValue(details))
+	fmt.Fprintf(stdout, "  Resolver: %s\n", wizardDisplayValue(resolver))
+	fmt.Fprintf(stdout, "  Strategy: %s\n", wizardDisplayValue(strategy))
+	fmt.Fprintf(stdout, "  DNSSEC  : %s\n", wizardDisplayValue(dnssec))
 	fmt.Fprintf(stdout, "  File   : %s\n", path)
 	confirmed, cancelled, err := promptWizardConfirmation(scanner, stdout)
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
@@ -595,6 +757,32 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	}
 	fmt.Fprintf(stdout, "Saved preferences to %s. Command-line options still override these defaults.\n", path)
 	return 0
+}
+
+func resolverPreset(resolvers []string) string {
+	if len(resolvers) == 0 {
+		return "system"
+	}
+	joined := strings.Join(resolvers, "\x00")
+	for _, name := range []string{"cloudflare", "quad9", "google"} {
+		if joined == strings.Join(resolverPresetValues(name), "\x00") {
+			return name
+		}
+	}
+	return "custom"
+}
+
+func resolverPresetValues(name string) []string {
+	switch name {
+	case "cloudflare":
+		return []string{"https://1.1.1.1/dns-query", "https://1.0.0.1/dns-query"}
+	case "quad9":
+		return []string{"tls://dns.quad9.net"}
+	case "google":
+		return []string{"https://dns.google/dns-query"}
+	default:
+		return nil
+	}
 }
 
 func promptWizardChoice(scanner *bufio.Scanner, stdout io.Writer, step, total int, title, current string, choices []wizardChoice) (string, bool, error) {
@@ -686,8 +874,11 @@ func printConfigUsage(writer io.Writer) {
   whodis config set format auto|dashboard|tree|geekboys|plain
   whodis config set color auto|always|never
   whodis config set details auto|summary|expanded
-  whodis config get format|color|details
-  whodis config unset format|color|details
+  whodis config set resolver system|<URI>[,<URI>...]
+  whodis config set strategy first|all|fastest|random|consensus
+  whodis config set dnssec auto|on|off
+  whodis config get format|color|details|resolver|strategy|dnssec
+  whodis config unset format|color|details|resolver|strategy|dnssec
   whodis config reset
   whodis config path
 `)

@@ -4,7 +4,7 @@ pkgname=whodis-gui
 pkgver=@PKGVER@
 pkgrel=1
 pkgdesc='Native Qt interface for the Whodis RDAP, WHOIS, RWhois, and DNS client'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='https://github.com/Alex9001/whodis'
 license=('MIT')
 depends=('gcc-libs' 'glibc' 'qt6-base')
@@ -37,4 +37,5 @@ check() {
 package() {
   cd "whodis_${pkgver}"
   DESTDIR="${pkgdir}" cmake --install build-gui
+  scripts/collect-go-licenses.sh "${pkgdir}/usr/share/licenses/${pkgname}/Go-Licenses"
 }

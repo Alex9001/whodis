@@ -82,6 +82,60 @@ func TestParseArgsDNSOptions(t *testing.T) {
 	}
 }
 
+func TestParseArgsStructuredDNSAndDiagnose(t *testing.T) {
+	options, err := parseArgs([]string{"dns", "query", "example.com", "A", "TYPE65", "--class", "IN", "--resolver", "udp://1.1.1.1", "--resolver", "https://dns.example/dns-query", "--strategy", "consensus", "--dnssec", "--nsid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.task != taskDNSQuery || options.target != "example.com" || strings.Join(options.recordTypes, ",") != "A,TYPE65" || len(options.dnsResolvers) != 2 || options.resolverStrategy != whodis.ResolverConsensus || !options.edns.DNSSEC || !options.edns.NSID {
+		t.Fatalf("DNS query options = %#v", options)
+	}
+
+	options, err = parseArgs([]string{"dns", "transfer", "example.com", "--ixfr", "--serial", "42", "--tls", "--tsig-name", "key.example", "--tsig-secret", "c2VjcmV0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.task != taskDNSTransfer || options.transfer.Type != "IXFR" || options.transfer.Serial != 42 || !options.transfer.TLS {
+		t.Fatalf("DNS transfer options = %#v", options)
+	}
+
+	options, err = parseArgs([]string{"diagnose", "example.com", "example.net", "--trace", "--remote"})
+	if err != nil || options.task != taskDiagnose || len(options.targets) != 2 || !options.trace || !options.remote {
+		t.Fatalf("diagnose options = (%#v, %v)", options, err)
+	}
+
+	options, err = parseArgs([]string{"diagnose", "example.com", "--remote", "--from", "US", "--limit", "2"})
+	if err != nil || !options.remote || len(options.globalpingFrom) != 1 || options.globalpingLimit != 2 {
+		t.Fatalf("remote diagnose options = (%#v, %v)", options, err)
+	}
+	if _, err = parseArgs([]string{"dns", "query", "example.com", "A", "--trace"}); err == nil {
+		t.Fatal("dns query accepted diagnose-only --trace")
+	}
+}
+
+func TestRejectsOperationSpecificOptionsOnUnrelatedCommands(t *testing.T) {
+	tests := [][]string{
+		{"dns", "query", "example.com", "A", "--ixfr"},
+		{"dns", "trace", "example.com", "A", "--globalping"},
+		{"dns", "transfer", "example.com", "--tsig-algorithm", "hmac-sha256"},
+	}
+	for _, args := range tests {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("parseArgs(%q) succeeded, want an operation-specific option error", args)
+		}
+	}
+}
+
+func TestParseNoDNSSECOverride(t *testing.T) {
+	options, err := parseArgs([]string{"dns", "query", "example.com", "A", "--no-dnssec"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.dnssecSet || options.edns.DNSSEC {
+		t.Fatalf("DNSSEC override = %#v", options)
+	}
+}
+
 func TestUsageIncludesDetailsAndDNS(t *testing.T) {
 	var output bytes.Buffer
 	printUsage(&output)
@@ -161,6 +215,15 @@ func TestRunVersionUsesInjectedVersion(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("run() stderr = %q, want empty output", stderr.String())
+	}
+}
+
+func TestGeneratedShellCompletions(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"completion", shell}, &stdout, &stderr); code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "diagnose") || !strings.Contains(stdout.String(), "resolver") {
+			t.Fatalf("completion %s = (code %d, stdout %q, stderr %q)", shell, code, stdout.String(), stderr.String())
+		}
 	}
 }
 

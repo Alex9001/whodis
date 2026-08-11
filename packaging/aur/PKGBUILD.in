@@ -3,8 +3,8 @@
 pkgname=whodis
 pkgver=@PKGVER@
 pkgrel=1
-pkgdesc='Modern WHOIS alternative with automatic RDAP routing and structured output'
-arch=('x86_64')
+pkgdesc='Domain workstation with RDAP, WHOIS, RWhois, DNS, and diagnostics'
+arch=('x86_64' 'aarch64')
 url='https://github.com/Alex9001/whodis'
 license=('MIT')
 depends=('glibc')
@@ -42,4 +42,5 @@ package() {
   cd "${pkgname}_${pkgver}"
   install -Dm755 whodis "${pkgdir}/usr/bin/whodis"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  scripts/collect-go-licenses.sh "${pkgdir}/usr/share/licenses/${pkgname}/third-party"
 }

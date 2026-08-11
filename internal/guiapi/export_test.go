@@ -44,3 +44,27 @@ func TestRenderExportRejectsUnknownField(t *testing.T) {
 		t.Fatal("renderExport() accepted an unknown field")
 	}
 }
+
+func TestRenderReportExportCSVFlattensSchemaV3(t *testing.T) {
+	batch := whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: []whodis.Report{{
+		Operation: whodis.OperationDiagnose,
+		Query:     whodis.Target{Canonical: "example.com"},
+		Registration: &whodis.LookupResult{Object: whodis.Object{
+			Registrar: "Example, Inc.", Events: []whodis.Event{{Action: "expiration", Date: "2030-01-02T03:04:05Z"}},
+		}},
+		Diagnosis: &whodis.DiagnosisReport{Findings: []whodis.Finding{{ID: "dns.inventory"}}, DNS: &whodis.DNSOperationResult{
+			Inventory: &whodis.DNSResult{Records: []whodis.DNSRecord{{Name: "example.com", Type: "A", Value: "192.0.2.1"}}},
+		}},
+	}}}
+	rendered, err := renderReportExport(batch, exportParams{Format: "csv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(strings.NewReader(rendered.Content)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[1][0] != "example.com" || rows[1][2] != "2030-01-02T03:04:05Z" || rows[1][3] != "Example, Inc." || rows[1][4] != "1" || rows[1][5] != "1" {
+		t.Fatalf("CSV rows = %#v", rows)
+	}
+}

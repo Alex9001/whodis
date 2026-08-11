@@ -70,8 +70,10 @@ BatchWindow::BatchWindow(QWidget *parent)
     m_targets->setPlaceholderText(tr("One domain, IP, ASN, or URL per line\nBlank lines and lines beginning with # are ignored."));
     m_targets->setMaximumHeight(140);
     m_mode->addItem(tr("Registration"), QStringLiteral("registration"));
-    m_mode->addItem(tr("DNS Scan"), QStringLiteral("scan"));
-    m_mode->setToolTip(tr("DNS Scan adds public DNS discovery to every domain lookup."));
+    m_mode->addItem(tr("DNS Inventory"), QStringLiteral("dns.inventory"));
+    m_mode->addItem(tr("DNS Compare"), QStringLiteral("dns.compare"));
+    m_mode->addItem(tr("Diagnose"), QStringLiteral("diagnose"));
+    m_mode->setToolTip(tr("Every mode uses the same operation engine as the main window."));
     m_workers->setRange(1, 32);
     m_workers->setValue(4);
     m_workers->setToolTip(tr("Concurrent lookups"));
@@ -213,13 +215,11 @@ void BatchWindow::beginLookup(const QStringList &targets)
     for (const QString &target : targets)
         targetArray.append(target);
     const QJsonObject params{{QStringLiteral("targets"), targetArray},
-                             {QStringLiteral("mode"), m_resultMode},
+                             {QStringLiteral("operation"), m_resultMode},
                              {QStringLiteral("workers"), m_workers->value()}};
-    m_activeRequest = m_engine->request(QStringLiteral("lookup"), params);
+    m_activeRequest = m_engine->request(QStringLiteral("run"), params);
     setBusy(true);
-    statusBar()->showMessage(m_resultMode == QStringLiteral("scan")
-                                 ? tr("Scanning registration and DNS for %1 targets…").arg(targets.size())
-                                 : tr("Looking up %1 targets…").arg(targets.size()));
+    statusBar()->showMessage(tr("Running %1 for %2 targets…").arg(m_mode->currentText()).arg(targets.size()));
 }
 
 void BatchWindow::cancelLookup()
@@ -235,7 +235,7 @@ void BatchWindow::retryFailed()
 {
     QStringList failed;
     for (const QJsonObject &item : std::as_const(m_items)) {
-        if (!item.value(QStringLiteral("error")).isUndefined())
+        if (!item.value(QStringLiteral("report")).toObject().value(QStringLiteral("errors")).toArray().isEmpty())
             failed.append(item.value(QStringLiteral("input")).toString());
     }
     if (!failed.isEmpty())
@@ -262,7 +262,7 @@ void BatchWindow::exportResults()
 
 void BatchWindow::handleResponse(const QString &id, const QString &method, const QJsonValue &result)
 {
-    if (method == QStringLiteral("lookup") && id == m_activeRequest) {
+    if (method == QStringLiteral("run") && id == m_activeRequest) {
         const QJsonObject response = result.toObject();
         m_token = response.value(QStringLiteral("token")).toString();
         const QJsonArray items = response.value(QStringLiteral("items")).toArray();
@@ -273,7 +273,7 @@ void BatchWindow::handleResponse(const QString &id, const QString &method, const
         }
         if (m_table->currentRow() < 0) {
             for (int index = 0; index < m_items.size(); ++index) {
-                if (!m_items[index].value(QStringLiteral("result")).toObject().isEmpty()) {
+                if (!m_items[index].value(QStringLiteral("report")).toObject().isEmpty()) {
                     m_table->selectRow(rowForIndex(index));
                     break;
                 }
@@ -308,13 +308,6 @@ void BatchWindow::handleProgress(const QJsonObject &progress)
 {
     if (progress.value(QStringLiteral("request_id")).toString() != m_activeRequest)
         return;
-    const int index = progress.value(QStringLiteral("index")).toInt();
-    if (index >= 0 && index < m_items.size()) {
-        m_items[index] = progress.value(QStringLiteral("item")).toObject();
-        updateRow(index, m_items[index]);
-        if (m_table->currentRow() < 0 && !m_items[index].value(QStringLiteral("result")).toObject().isEmpty())
-            m_table->selectRow(rowForIndex(index));
-    }
     m_progress->setValue(progress.value(QStringLiteral("completed")).toInt());
 }
 
@@ -323,17 +316,21 @@ void BatchWindow::updateRow(int index, const QJsonObject &item)
     const int row = rowForIndex(index);
     if (row < 0)
         return;
-    const QJsonObject error = item.value(QStringLiteral("error")).toObject();
-    const QJsonObject result = item.value(QStringLiteral("result")).toObject();
-    const QJsonObject object = result.value(QStringLiteral("object")).toObject();
-    const QJsonObject route = result.value(QStringLiteral("route")).toObject();
-    const QJsonArray dnsRecords = result.value(QStringLiteral("dns")).toObject().value(QStringLiteral("records")).toArray();
-    const bool failed = !error.isEmpty();
+    const QJsonObject report = item.value(QStringLiteral("report")).toObject();
+    const QJsonObject registration = report.value(QStringLiteral("registration")).toObject();
+    const QJsonObject object = registration.value(QStringLiteral("object")).toObject();
+    const QJsonObject route = registration.value(QStringLiteral("route")).toObject();
+    QJsonObject dns = report.value(QStringLiteral("dns")).toObject();
+    if (dns.isEmpty())
+        dns = report.value(QStringLiteral("diagnosis")).toObject().value(QStringLiteral("dns")).toObject();
+    QJsonArray dnsRecords = dns.value(QStringLiteral("inventory")).toObject().value(QStringLiteral("records")).toArray();
+    const QJsonArray errors = report.value(QStringLiteral("errors")).toArray();
+    const bool failed = !errors.isEmpty();
     m_table->item(row, 0)->setText(item.value(QStringLiteral("input")).toString());
     m_table->item(row, 1)->setText(failed ? tr("Failed") : tr("Complete"));
-    m_table->item(row, 2)->setText(eventDate(result, {QStringLiteral("expiration"), QStringLiteral("expiry"), QStringLiteral("expires")}));
+    m_table->item(row, 2)->setText(eventDate(registration, {QStringLiteral("expiration"), QStringLiteral("expiry"), QStringLiteral("expires")}));
     m_table->item(row, 3)->setText(object.value(QStringLiteral("registrar")).toString());
-    if (result.contains(QStringLiteral("dns"))) {
+    if (!dns.isEmpty()) {
         m_table->item(row, 4)->setData(Qt::DisplayRole, dnsRecords.size());
         m_table->item(row, 4)->setToolTip(tr("Record types: %1").arg(dnsRecordTypes(dnsRecords)));
     } else {
@@ -341,7 +338,10 @@ void BatchWindow::updateRow(int index, const QJsonObject &item)
         m_table->item(row, 4)->setToolTip({});
     }
     m_table->item(row, 5)->setText(route.value(QStringLiteral("protocol")).toString().toUpper());
-    m_table->item(row, 6)->setText(error.value(QStringLiteral("message")).toString());
+    QStringList errorMessages;
+    for (const QJsonValue &value : errors)
+        errorMessages.append(value.toObject().value(QStringLiteral("message")).toString());
+    m_table->item(row, 6)->setText(errorMessages.join(QStringLiteral("; ")));
 }
 
 int BatchWindow::rowForIndex(int index) const
@@ -360,7 +360,7 @@ void BatchWindow::finishLookup(bool canceled)
     setBusy(false);
     int failures = 0;
     for (const QJsonObject &item : std::as_const(m_items)) {
-        if (!item.value(QStringLiteral("error")).toObject().isEmpty())
+        if (!item.value(QStringLiteral("report")).toObject().value(QStringLiteral("errors")).toArray().isEmpty())
             ++failures;
     }
     m_retry->setEnabled(failures > 0);
@@ -383,9 +383,9 @@ void BatchWindow::showSelectedResult()
     const int row = m_table->currentRow();
     const QTableWidgetItem *target = row >= 0 ? m_table->item(row, 0) : nullptr;
     const int index = target ? target->data(Qt::UserRole).toInt() : -1;
-    if (index >= 0 && index < m_items.size() && !m_items[index].value(QStringLiteral("result")).toObject().isEmpty()) {
-        m_result->setItem(m_items[index]);
-        if (m_resultMode == QStringLiteral("scan"))
+    if (index >= 0 && index < m_items.size() && !m_items[index].value(QStringLiteral("report")).toObject().isEmpty()) {
+        m_result->setReportItem(m_items[index]);
+        if (m_resultMode == QStringLiteral("dns.inventory"))
             m_result->showDNSTab();
     }
 }

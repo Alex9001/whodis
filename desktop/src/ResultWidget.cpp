@@ -7,6 +7,7 @@
 #include <QJsonValue>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QSet>
 #include <QStackedLayout>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -45,6 +46,56 @@ QTreeWidgetItem *addGroup(QTreeWidget *tree, const QString &label)
     return group;
 }
 
+void configureTable(QTableWidget *table, const QStringList &headers)
+{
+    table->setColumnCount(headers.size());
+    table->setHorizontalHeaderLabels(headers);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    table->setSortingEnabled(true);
+    table->setAlternatingRowColors(true);
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setStretchLastSection(true);
+}
+
+QJsonObject reportDNS(const QJsonObject &report)
+{
+    QJsonObject dns = report.value(QStringLiteral("dns")).toObject();
+    if (dns.isEmpty())
+        dns = report.value(QStringLiteral("diagnosis")).toObject().value(QStringLiteral("dns")).toObject();
+    return dns;
+}
+
+QJsonArray operationRecords(const QJsonObject &dns)
+{
+    QJsonArray records;
+    QSet<QString> seen;
+    const auto append = [&records, &seen](const QJsonArray &values) {
+        for (const QJsonValue &value : values) {
+            const QJsonObject record = value.toObject();
+            const QString key = record.value(QStringLiteral("name")).toString() + QLatin1Char('\0')
+                + record.value(QStringLiteral("type")).toString() + QLatin1Char('\0')
+                + record.value(QStringLiteral("ttl")).toVariant().toString() + QLatin1Char('\0')
+                + record.value(QStringLiteral("value")).toString();
+            if (!seen.contains(key)) {
+                seen.insert(key);
+                records.append(record);
+            }
+        }
+    };
+    append(dns.value(QStringLiteral("inventory")).toObject().value(QStringLiteral("records")).toArray());
+    append(dns.value(QStringLiteral("transfer")).toObject().value(QStringLiteral("records")).toArray());
+    for (const QJsonValue &messageValue : dns.value(QStringLiteral("messages")).toArray()) {
+        const QJsonObject message = messageValue.toObject();
+        append(message.value(QStringLiteral("answer")).toArray());
+        append(message.value(QStringLiteral("authority")).toArray());
+        append(message.value(QStringLiteral("additional")).toArray());
+    }
+    for (const QJsonValue &remoteValue : dns.value(QStringLiteral("remote")).toArray())
+        append(remoteValue.toObject().value(QStringLiteral("answers")).toArray());
+    return records;
+}
+
 }
 
 ResultWidget::ResultWidget(QWidget *parent)
@@ -52,6 +103,10 @@ ResultWidget::ResultWidget(QWidget *parent)
     , m_tabs(new QTabWidget(this))
     , m_overview(new QTreeWidget(this))
     , m_dns(new QTableWidget(this))
+    , m_compare(new QTableWidget(this))
+    , m_delegation(new QTableWidget(this))
+    , m_services(new QTableWidget(this))
+    , m_findings(new QTableWidget(this))
     , m_contacts(new QTableWidget(this))
     , m_rawSource(new QComboBox(this))
     , m_rawText(new QPlainTextEdit(this))
@@ -67,27 +122,20 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_overview->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_overview->header()->setSectionResizeMode(1, QHeaderView::Stretch);
 
-    m_dns->setColumnCount(4);
-    m_dns->setHorizontalHeaderLabels({tr("Type"), tr("Name"), tr("TTL"), tr("Value")});
-    m_dns->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_dns->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_dns->setSortingEnabled(true);
-    m_dns->setAlternatingRowColors(true);
+    configureTable(m_dns, {tr("Type"), tr("Name"), tr("TTL"), tr("Value")});
     m_dns->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_dns->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_dns->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_dns->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
 
-    m_contacts->setColumnCount(6);
-    m_contacts->setHorizontalHeaderLabels({tr("Role"), tr("Name"), tr("Handle"), tr("Email"), tr("Phone"), tr("Organization")});
-    m_contacts->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_contacts->setSortingEnabled(true);
-    m_contacts->setAlternatingRowColors(true);
-    m_contacts->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    m_contacts->horizontalHeader()->setStretchLastSection(true);
+    configureTable(m_compare, {tr("Resolver"), tr("Missing"), tr("Extra")});
+    configureTable(m_delegation, {tr("Hop"), tr("Zone"), tr("Server"), tr("Result"), tr("Nameservers"), tr("Addresses")});
+    configureTable(m_services, {tr("Category"), tr("Endpoint"), tr("Result"), tr("Details")});
+    configureTable(m_findings, {tr("Result"), tr("Check"), tr("Summary")});
+    configureTable(m_contacts, {tr("Role"), tr("Name"), tr("Handle"), tr("Email"), tr("Phone"), tr("Organization")});
 
-    auto *rawPage = new QWidget(this);
-    auto *rawLayout = new QVBoxLayout(rawPage);
+    m_rawPage = new QWidget(this);
+    auto *rawLayout = new QVBoxLayout(m_rawPage);
     rawLayout->setContentsMargins(0, 0, 0, 0);
     rawLayout->addWidget(m_rawSource);
     rawLayout->addWidget(m_rawText);
@@ -100,8 +148,12 @@ ResultWidget::ResultWidget(QWidget *parent)
 
     m_tabs->addTab(m_overview, tr("Overview"));
     m_tabs->addTab(m_dns, tr("DNS"));
+    m_tabs->addTab(m_compare, tr("Compare"));
+    m_tabs->addTab(m_delegation, tr("Delegation"));
+    m_tabs->addTab(m_services, tr("Services"));
+    m_tabs->addTab(m_findings, tr("Findings"));
     m_tabs->addTab(m_contacts, tr("Contacts"));
-    m_tabs->addTab(rawPage, tr("Raw"));
+    m_tabs->addTab(m_rawPage, tr("Raw"));
 
     auto *stack = new QStackedLayout(this);
     stack->addWidget(m_emptyLabel);
@@ -114,6 +166,10 @@ void ResultWidget::clearResult()
     m_item = {};
     m_overview->clear();
     m_dns->setRowCount(0);
+    m_compare->setRowCount(0);
+    m_delegation->setRowCount(0);
+    m_services->setRowCount(0);
+    m_findings->setRowCount(0);
     m_contacts->setRowCount(0);
     m_rawSource->clear();
     m_rawText->clear();
@@ -129,6 +185,55 @@ void ResultWidget::setItem(const QJsonObject &item)
     populateDNS(result);
     populateContacts(result);
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
+    m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_compare), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_delegation), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_services), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_findings), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_contacts), m_contacts->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_rawPage), m_rawSource->count() > 0);
+    if (auto *stack = qobject_cast<QStackedLayout *>(layout()))
+        stack->setCurrentWidget(m_tabs);
+}
+
+void ResultWidget::setReportItem(const QJsonObject &item)
+{
+    clearResult();
+    m_item = item;
+    const QJsonObject report = item.value(QStringLiteral("report")).toObject();
+    const QJsonObject registration = report.value(QStringLiteral("registration")).toObject();
+    if (!registration.isEmpty()) {
+        populateOverview(registration);
+        populateContacts(registration);
+    } else {
+        m_overview->clear();
+        auto *operation = addGroup(m_overview, tr("Operation"));
+        addValue(operation, tr("Target"), report.value(QStringLiteral("query")).toObject().value(QStringLiteral("canonical")).toString());
+        addValue(operation, tr("Action"), report.value(QStringLiteral("operation")).toString());
+        addValue(operation, tr("Retrieved"), report.value(QStringLiteral("retrieved_at")).toString());
+    }
+    populateReportDNS(report);
+    populateCompare(report);
+    populateDelegation(report);
+    populateServices(report);
+    populateFindings(report);
+    populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
+
+    m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_compare), m_compare->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_delegation), m_delegation->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_services), m_services->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_findings), m_findings->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_contacts), m_contacts->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_rawPage), m_rawSource->count() > 0);
+    if (m_findings->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_findings);
+    else if (m_dns->rowCount() > 0 && registration.isEmpty())
+        m_tabs->setCurrentWidget(m_dns);
+    else
+        m_tabs->setCurrentWidget(m_overview);
     if (auto *stack = qobject_cast<QStackedLayout *>(layout()))
         stack->setCurrentWidget(m_tabs);
 }
@@ -140,9 +245,12 @@ void ResultWidget::showDNSTab()
 
 QString ResultWidget::copyText() const
 {
-    if (m_tabs->currentIndex() == 3 && !m_rawText->toPlainText().isEmpty())
+    if (m_tabs->currentWidget() == m_rawPage && !m_rawText->toPlainText().isEmpty())
         return m_rawText->toPlainText();
-    return QString::fromUtf8(QJsonDocument(m_item.value(QStringLiteral("result")).toObject()).toJson(QJsonDocument::Indented));
+    const QJsonObject value = m_item.contains(QStringLiteral("report"))
+        ? m_item.value(QStringLiteral("report")).toObject()
+        : m_item.value(QStringLiteral("result")).toObject();
+    return QString::fromUtf8(QJsonDocument(value).toJson(QJsonDocument::Indented));
 }
 
 QString ResultWidget::currentTarget() const
@@ -227,6 +335,135 @@ void ResultWidget::populateDNS(const QJsonObject &result)
         m_dns->setItem(row, 3, new QTableWidgetItem(record.value(QStringLiteral("value")).toString()));
     }
     m_dns->setSortingEnabled(true);
+}
+
+void ResultWidget::populateReportDNS(const QJsonObject &report)
+{
+    m_dns->setSortingEnabled(false);
+    m_dns->setRowCount(0);
+    const QJsonArray records = operationRecords(reportDNS(report));
+    m_dns->setRowCount(records.size());
+    for (int row = 0; row < records.size(); ++row) {
+        const QJsonObject record = records.at(row).toObject();
+        m_dns->setItem(row, 0, new QTableWidgetItem(record.value(QStringLiteral("type")).toString()));
+        m_dns->setItem(row, 1, new QTableWidgetItem(record.value(QStringLiteral("name")).toString()));
+        auto *ttl = new QTableWidgetItem;
+        ttl->setData(Qt::DisplayRole, record.value(QStringLiteral("ttl")).toInt());
+        m_dns->setItem(row, 2, ttl);
+        m_dns->setItem(row, 3, new QTableWidgetItem(record.value(QStringLiteral("value")).toString()));
+    }
+    m_dns->setSortingEnabled(true);
+}
+
+void ResultWidget::populateCompare(const QJsonObject &report)
+{
+    m_compare->setSortingEnabled(false);
+    const QJsonArray differences = reportDNS(report).value(QStringLiteral("differences")).toArray();
+    m_compare->setRowCount(differences.size());
+    for (int row = 0; row < differences.size(); ++row) {
+        const QJsonObject difference = differences.at(row).toObject();
+        m_compare->setItem(row, 0, new QTableWidgetItem(difference.value(QStringLiteral("resolver")).toString()));
+        m_compare->setItem(row, 1, new QTableWidgetItem(joined(difference.value(QStringLiteral("missing")))));
+        m_compare->setItem(row, 2, new QTableWidgetItem(joined(difference.value(QStringLiteral("extra")))));
+    }
+    m_compare->setSortingEnabled(true);
+}
+
+void ResultWidget::populateDelegation(const QJsonObject &report)
+{
+    m_delegation->setSortingEnabled(false);
+    QJsonObject delegation = reportDNS(report);
+    const QJsonObject diagnosisDelegation = report.value(QStringLiteral("diagnosis")).toObject().value(QStringLiteral("delegation")).toObject();
+    if (!diagnosisDelegation.isEmpty())
+        delegation = diagnosisDelegation;
+    const QJsonArray trace = delegation.value(QStringLiteral("trace")).toArray();
+    m_delegation->setRowCount(trace.size());
+    for (int row = 0; row < trace.size(); ++row) {
+        const QJsonObject hop = trace.at(row).toObject();
+        m_delegation->setItem(row, 0, new QTableWidgetItem(QString::number(row + 1)));
+        m_delegation->setItem(row, 1, new QTableWidgetItem(hop.value(QStringLiteral("zone")).toString()));
+        m_delegation->setItem(row, 2, new QTableWidgetItem(hop.value(QStringLiteral("server")).toString()));
+        m_delegation->setItem(row, 3, new QTableWidgetItem(hop.value(QStringLiteral("error")).toString(hop.value(QStringLiteral("rcode")).toString())));
+        m_delegation->setItem(row, 4, new QTableWidgetItem(joined(hop.value(QStringLiteral("nameservers")))));
+        m_delegation->setItem(row, 5, new QTableWidgetItem(joined(hop.value(QStringLiteral("addresses")))));
+    }
+    m_delegation->setSortingEnabled(true);
+}
+
+void ResultWidget::populateServices(const QJsonObject &report)
+{
+    m_services->setSortingEnabled(false);
+    m_services->setRowCount(0);
+    const QJsonObject diagnosis = report.value(QStringLiteral("diagnosis")).toObject();
+    const auto addRow = [this](const QString &category, const QString &endpoint, const QString &result, const QString &details) {
+        const int row = m_services->rowCount();
+        m_services->insertRow(row);
+        m_services->setItem(row, 0, new QTableWidgetItem(category));
+        m_services->setItem(row, 1, new QTableWidgetItem(endpoint));
+        m_services->setItem(row, 2, new QTableWidgetItem(result));
+        m_services->setItem(row, 3, new QTableWidgetItem(details));
+    };
+    for (const QJsonValue &value : reportDNS(report).value(QStringLiteral("remote")).toArray()) {
+        const QJsonObject probe = value.toObject();
+        addRow(tr("Globalping"), probe.value(QStringLiteral("location")).toString(),
+               probe.value(QStringLiteral("error")).toString(probe.value(QStringLiteral("status")).toString()),
+               probe.value(QStringLiteral("resolver")).toString());
+    }
+    for (const QJsonValue &value : diagnosis.value(QStringLiteral("reachability")).toArray()) {
+        const QJsonObject probe = value.toObject();
+        addRow(tr("Network"), probe.value(QStringLiteral("address")).toString(),
+               probe.value(QStringLiteral("reachable")).toBool() ? tr("Reachable") : tr("Failed"),
+               probe.value(QStringLiteral("error")).toString());
+    }
+    for (const QJsonValue &value : diagnosis.value(QStringLiteral("http")).toArray()) {
+        const QJsonObject probe = value.toObject();
+        addRow(QStringLiteral("HTTP"), probe.value(QStringLiteral("url")).toString(),
+               probe.value(QStringLiteral("error")).toString(QString::number(probe.value(QStringLiteral("status")).toInt())),
+               probe.value(QStringLiteral("final_url")).toString());
+    }
+    for (const QJsonValue &value : diagnosis.value(QStringLiteral("tls")).toArray()) {
+        const QJsonObject probe = value.toObject();
+        addRow(QStringLiteral("TLS"), probe.value(QStringLiteral("server_name")).toString(),
+               probe.value(QStringLiteral("verified")).toBool() ? tr("Verified") : tr("Failed"),
+               probe.value(QStringLiteral("version")).toString() + QStringLiteral(" ") + probe.value(QStringLiteral("alpn")).toString());
+    }
+    for (const QJsonValue &value : diagnosis.value(QStringLiteral("mail")).toArray()) {
+        const QJsonObject probe = value.toObject();
+        addRow(QStringLiteral("SMTP"), probe.value(QStringLiteral("host")).toString(),
+               probe.value(QStringLiteral("reachable")).toBool() ? tr("Reachable") : tr("Failed"),
+               probe.value(QStringLiteral("starttls")).toBool() ? QStringLiteral("STARTTLS") : probe.value(QStringLiteral("error")).toString());
+    }
+    for (const QJsonValue &value : diagnosis.value(QStringLiteral("services")).toArray()) {
+        const QJsonObject probe = value.toObject();
+        addRow(probe.value(QStringLiteral("source")).toString(),
+               probe.value(QStringLiteral("target")).toString() + QStringLiteral(":") + QString::number(probe.value(QStringLiteral("port")).toInt()),
+               probe.value(QStringLiteral("reachable")).toBool() ? tr("Reachable") : tr("Failed"),
+               probe.value(QStringLiteral("name")).toString());
+    }
+    for (const QJsonValue &value : diagnosis.value(QStringLiteral("path")).toArray()) {
+        const QJsonObject hop = value.toObject();
+        addRow(tr("Path hop %1").arg(hop.value(QStringLiteral("hop")).toInt()),
+               hop.value(QStringLiteral("address")).toString(),
+               hop.value(QStringLiteral("reached")).toBool() ? tr("Destination") : tr("Transit"),
+               hop.value(QStringLiteral("error")).toString());
+    }
+    m_services->setSortingEnabled(true);
+}
+
+void ResultWidget::populateFindings(const QJsonObject &report)
+{
+    m_findings->setSortingEnabled(false);
+    QJsonArray findings = report.value(QStringLiteral("findings")).toArray();
+    if (findings.isEmpty())
+        findings = report.value(QStringLiteral("diagnosis")).toObject().value(QStringLiteral("findings")).toArray();
+    m_findings->setRowCount(findings.size());
+    for (int row = 0; row < findings.size(); ++row) {
+        const QJsonObject finding = findings.at(row).toObject();
+        m_findings->setItem(row, 0, new QTableWidgetItem(finding.value(QStringLiteral("severity")).toString().toUpper()));
+        m_findings->setItem(row, 1, new QTableWidgetItem(finding.value(QStringLiteral("title")).toString()));
+        m_findings->setItem(row, 2, new QTableWidgetItem(finding.value(QStringLiteral("summary")).toString()));
+    }
+    m_findings->setSortingEnabled(true);
 }
 
 void ResultWidget::populateContacts(const QJsonObject &result)

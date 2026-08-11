@@ -4,6 +4,7 @@ pkgbase = whodis-gui
 	pkgrel = 1
 	url = https://github.com/Alex9001/whodis
 	arch = x86_64
+	arch = aarch64
 	license = MIT
 	makedepends = cmake
 	makedepends = git

@@ -2,6 +2,10 @@ version: 2
 
 project_name: whodis
 
+before:
+  hooks:
+    - ./scripts/collect-go-licenses.sh .release-assets/go-licenses
+
 builds:
   - id: whodis
     main: ./cmd/whodis
@@ -16,6 +20,8 @@ builds:
       - linux
       - darwin
       - windows
+      - freebsd
+      - openbsd
     goarch:
       - amd64
       - arm64
@@ -34,6 +40,8 @@ archives:
     files:
       - README.md
       - LICENSE
+      - src: ./.release-assets/go-licenses/*
+        dst: Go-Licenses
 
 checksum:
   name_template: checksums.txt
@@ -42,6 +50,41 @@ checksum:
     - glob: ./scripts/install.sh
     - glob: ./scripts/install.ps1
     - glob: ./.release-assets/gui/*
+
+nfpms:
+  - id: whodis-packages
+    ids:
+      - whodis
+    package_name: whodis
+    vendor: Cyberbrand
+    homepage: https://cyberbrand.net/whodis/
+    maintainer: Aleksandr Oreshkin
+    description: Modern WHOIS alternative with RDAP, WHOIS, RWhois, DNS, and diagnostics.
+    license: MIT
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    formats:
+      - deb
+      - rpm
+      - apk
+      - archlinux
+    contents:
+      - src: ./LICENSE
+        dst: /usr/share/licenses/whodis/LICENSE
+      - src: ./README.md
+        dst: /usr/share/doc/whodis/README.md
+      - src: ./.release-assets/go-licenses
+        dst: /usr/share/licenses/whodis/third-party
+        type: tree
+
+sboms:
+  - id: archives
+    artifacts: archive
+    disable: false
+  - id: packages
+    artifacts: package
+    disable: false
 
 source:
   enabled: true

@@ -27,6 +27,10 @@ private slots:
     void validateTarget();
     void runLookup();
     void runDNSScan();
+    void runDNSQuery();
+    void runDNSCompare();
+    void runDNSTrace();
+    void runDiagnose();
     void runAXFR();
     void cancelLookup();
     void openBatch();
@@ -38,7 +42,7 @@ private slots:
     void handleProgress(const QJsonObject &progress);
 
 private:
-    void startLookup(const QString &mode);
+    void startOperation(const QString &operation);
     void setBusy(bool busy);
     void updateActionState();
 
@@ -47,6 +51,8 @@ private:
     QLineEdit *m_target;
     QPushButton *m_lookup;
     QPushButton *m_scan;
+    QPushButton *m_dns;
+    QPushButton *m_diagnose;
     QPushButton *m_batch;
     QPushButton *m_cancel;
     QProgressBar *m_progress;
@@ -55,6 +61,8 @@ private:
     QAction *m_saveAction;
     QAction *m_copyAction;
     QAction *m_axfrAction;
+    QAction *m_compareAction;
+    QAction *m_traceAction;
     QString m_parseRequest;
     QString m_lookupRequest;
     QString m_exportRequest;
@@ -62,4 +70,3 @@ private:
     QString m_resultToken;
     QString m_validKind;
 };
-

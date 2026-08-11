@@ -4,6 +4,13 @@
 as the `whodis` CLI. The desktop package includes `whodis-gui-engine` as a
 private helper; users do not need to install or run the CLI.
 
+The main window exposes Registration, DNS Inventory, DNS Query, and Diagnose
+actions. Resolver comparison, iterative delegation tracing, and explicit zone
+transfer live under Tools. Results open only the relevant Overview, DNS,
+Compare, Delegation, Services, Findings, Contacts, and Raw tabs. The separate
+batch workspace runs Registration, DNS Inventory, DNS Compare, or Diagnose
+through the same operation engine and exports CSV, TSV, or JSON.
+
 Qt Widgets deliberately uses the active platform style. Windows receives
 standard Windows controls, Plasma can use its configured Qt platform theme,
 and macOS receives the native macOS Qt style. Whodis does not replace those
@@ -37,15 +44,18 @@ engine build.
 
 The GUI starts `whodis-gui-engine` as a child process. Requests and responses
 are JSON-RPC 2.0 objects separated by newlines over standard input and output;
-diagnostics go only to standard error. Protocol version 1 provides `hello`,
-`parse`, `lookup`, `cancel`, and `export`, plus asynchronous progress
-notifications. The helper is private implementation detail rather than a
-second public command-line interface.
+diagnostics go only to standard error. Protocol version 2 provides `hello`,
+`parse`, schema-v3 `run`, `cancel`, and `export`, plus asynchronous progress
+notifications. The protocol-v1-style `lookup` method remains as a compatibility
+bridge for older frontends. The helper is a private implementation detail
+rather than a second public command-line interface.
 
 Full HTTP and HTTPS URLs are accepted by the desktop boundary and normalized to
-their hostname. Lookup results use the public Whodis normalized data types, and
-the helper retains a small in-memory result cache so the GUI can export without
-repeating network requests.
+their hostname. Operation results use public Whodis report schema v3, which
+keeps partial registration, DNS, diagnosis, findings, and scoped errors. The
+helper retains a small in-memory result cache so the GUI can export without
+repeating network requests. Globalping is off until the user explicitly checks
+the third-party remote-probe option.
 
 ## Release packages
 

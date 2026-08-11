@@ -93,6 +93,7 @@ jobs:
           windeployqt --release --no-translations "$PWD/stage/bin/whodis-gui.exe"
           Copy-Item README.md, LICENSE, desktop/packaging/THIRD_PARTY_NOTICES.md -Destination "$PWD/stage/bin"
           Copy-Item "$PWD/desktop/packaging/qt-licenses" -Destination "$PWD/stage/bin/Qt-Licenses" -Recurse
+          bash scripts/collect-go-licenses.sh stage/bin/Go-Licenses
           if (-not (Test-Path "$PWD/stage/bin/Qt-Licenses/LGPL-3.0-only.txt") -or
               -not (Test-Path "$PWD/stage/bin/Qt-Licenses/GPL-3.0-only.txt")) {
             throw "The deployed Windows package is missing Qt license texts."
@@ -135,6 +136,7 @@ jobs:
         run: |
           set -euo pipefail
           version=${GITHUB_REF_NAME#v}
+          bundle_version=${version%%-*}
           iconset="$RUNNER_TEMP/Whodis.iconset"
           mkdir -p "$iconset"
           sips -z 16 16 docs/whodis_logo.png --out "$iconset/icon_16x16.png" >/dev/null
@@ -153,6 +155,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES='x86_64;arm64' \
             -DWHODIS_MACOS_ICON="$RUNNER_TEMP/Whodis.icns" \
             -DWHODIS_VERSION="$version" \
+            -DWHODIS_BUNDLE_VERSION="$bundle_version" \
             -DBUILD_TESTING=OFF
           cmake --build build-gui --parallel
           app=$(find build-gui/bin -maxdepth 1 -name '*.app' -print -quit)
@@ -168,6 +171,7 @@ jobs:
             -output "$app/Contents/Helpers/whodis-gui-engine"
           cp LICENSE README.md desktop/packaging/THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
           scripts/collect-qt-licenses.sh "$app/Contents/Resources/Qt-Licenses"
+          scripts/collect-go-licenses.sh "$app/Contents/Resources/Go-Licenses"
           test -f "$app/Contents/Resources/Qt-Licenses/LGPL-3.0-only.txt"
           test -f "$app/Contents/Resources/Qt-Licenses/GPL-3.0-only.txt"
           macdeployqt "$app" -always-overwrite
@@ -189,6 +193,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -203,6 +209,14 @@ jobs:
           pattern: whodis-gui-*
           path: .release-assets/gui
           merge-multiple: true
+      - name: Install Syft for SBOM generation
+        uses: anchore/sbom-action/download-syft@v0
+      - name: Generate GUI SBOMs
+        shell: bash
+        run: |
+          for artifact in .release-assets/gui/*; do
+            syft "$artifact" --output "spdx-json=${artifact}.sbom.json"
+          done
       - name: Vet and test
         run: |
           go vet ./...
@@ -219,6 +233,21 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+            dist/**/*.deb
+            dist/**/*.rpm
+            dist/**/*.apk
+            dist/**/*.pkg.tar.zst
+            dist/**/*.sbom*
+            dist/checksums.txt
+            .release-assets/gui/*
+            scripts/install.sh
+            scripts/install.ps1
 
   publish-aur:
     name: Update AUR packages
@@ -260,3 +289,43 @@ jobs:
         run: |
           scripts/publish-aur.sh "$GITHUB_REF_NAME" dist/checksums.txt
           scripts/publish-aur-gui.sh "$GITHUB_REF_NAME" dist/checksums.txt
+
+  publish-container:
+    name: Publish OCI image
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate image metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/alex9001/whodis
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - name: Build and publish multi-architecture image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
+          provenance: mode=max
+          sbom: true

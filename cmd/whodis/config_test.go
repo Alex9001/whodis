@@ -184,24 +184,24 @@ func TestConfigAcceptsLegacyFormatAndDetailsAliases(t *testing.T) {
 
 func TestConfigWizardSavesAllPreferences(t *testing.T) {
 	directory := t.TempDir()
-	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "3\n2\n3\ny\n"), "config")
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "3\n2\n3\n2\n4\n2\ny\n"), "config")
 	if code != 0 || stderr != "" {
 		t.Fatalf("wizard = (%d, %q, %q), want success", code, stdout, stderr)
 	}
-	for _, text := range []string{"Whodis preferences", "1/3  Output format", "2/3  Color", "3/3  Registry notices", "Review", "Saved preferences to"} {
+	for _, text := range []string{"Whodis preferences", "1/6  Output format", "2/6  Color", "3/6  Registry notices", "4/6  Default DNS resolver", "5/6  Multiple resolver behavior", "6/6  DNSSEC requests", "Review", "Saved preferences to"} {
 		if !strings.Contains(stdout, text) {
 			t.Errorf("wizard output missing %q:\n%s", text, stdout)
 		}
 	}
 	config, exists, err := loadUserConfig(testRuntime(directory, nil, false))
-	if err != nil || !exists || config.Format != "tree" || config.Color != "always" || config.Details == nil || !*config.Details {
+	if err != nil || !exists || config.Format != "tree" || config.Color != "always" || config.Details == nil || !*config.Details || resolverPreset(config.DNSResolvers) != "cloudflare" || config.ResolverStrategy != "consensus" || config.DNSSEC == nil || !*config.DNSSEC {
 		t.Fatalf("wizard config = (%+v, %v, %v), want tree/always/expanded", config, exists, err)
 	}
 }
 
 func TestConfigWizardRetriesInvalidSelection(t *testing.T) {
 	directory := t.TempDir()
-	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "9\n2\n1\n2\ny\n"), "config")
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "9\n2\n1\n2\n1\n1\n1\ny\n"), "config")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "Please enter 1-5") {
 		t.Fatalf("wizard retry = (%d, %q, %q), want successful retry", code, stdout, stderr)
 	}
@@ -224,7 +224,7 @@ func TestConfigWizardCancellationAndNoChangeAreSafe(t *testing.T) {
 	}
 
 	for name, input := range map[string]string{
-		"declined confirmation": "\n\n\nn\n",
+		"declined confirmation": "\n\n\n\n\n\nn\n",
 		"quit at prompt":        "q\n",
 		"EOF":                   "",
 	} {
@@ -240,7 +240,7 @@ func TestConfigWizardCancellationAndNoChangeAreSafe(t *testing.T) {
 		})
 	}
 
-	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "\n\n\ny\n"), "config")
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "\n\n\n\n\n\ny\n"), "config")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "No changes needed") {
 		t.Fatalf("unchanged wizard = (%d, %q, %q), want no-op", code, stdout, stderr)
 	}

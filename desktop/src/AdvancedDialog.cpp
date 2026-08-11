@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -16,8 +17,12 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     , m_fallback(new QComboBox(this))
     , m_server(new QLineEdit(this))
     , m_resolver(new QLineEdit(this))
+    , m_strategy(new QComboBox(this))
     , m_timeout(new QSpinBox(this))
     , m_refresh(new QCheckBox(tr("Refresh IANA RDAP service data"), this))
+    , m_dnssec(new QCheckBox(tr("Request DNSSEC records"), this))
+    , m_globalping(new QCheckBox(tr("Remote DNS probes via Globalping (shares the target)"), this))
+    , m_trace(new QCheckBox(tr("Include a local network path trace in Diagnose"), this))
     , m_buttons(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this))
 {
     setWindowTitle(tr("Advanced Lookup"));
@@ -29,7 +34,13 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     m_fallback->addItem(tr("Strict — no fallback"), QStringLiteral("none"));
     m_fallback->addItem(tr("Try both after any error"), QStringLiteral("any-error"));
     m_server->setPlaceholderText(tr("Optional host or RDAP URL"));
-    m_resolver->setPlaceholderText(tr("System resolver"));
+    m_resolver->setPlaceholderText(tr("system, tls://dns.example, https://…"));
+    m_resolver->setToolTip(tr("Comma-separated resolver URIs. Leave empty to use the system resolver."));
+    m_strategy->addItem(tr("First successful"), QStringLiteral("first"));
+    m_strategy->addItem(tr("Query all"), QStringLiteral("all"));
+    m_strategy->addItem(tr("Fastest"), QStringLiteral("fastest"));
+    m_strategy->addItem(tr("Random"), QStringLiteral("random"));
+    m_strategy->addItem(tr("Consensus"), QStringLiteral("consensus"));
     m_timeout->setRange(1, 600);
     m_timeout->setValue(15);
     m_timeout->setSuffix(tr(" seconds"));
@@ -38,7 +49,11 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     form->addRow(tr("Protocol:"), m_protocol);
     form->addRow(tr("Direct server:"), m_server);
     form->addRow(tr("Fallback:"), m_fallback);
-    form->addRow(tr("DNS resolver:"), m_resolver);
+    form->addRow(tr("DNS resolvers:"), m_resolver);
+    form->addRow(tr("Resolver strategy:"), m_strategy);
+    form->addRow(QString(), m_dnssec);
+    form->addRow(QString(), m_globalping);
+    form->addRow(QString(), m_trace);
     form->addRow(tr("Timeout:"), m_timeout);
     form->addRow(QString(), m_refresh);
 
@@ -65,8 +80,23 @@ QJsonObject AdvancedDialog::options() const
     };
     if (!m_server->text().trimmed().isEmpty())
         result.insert(QStringLiteral("server"), m_server->text().trimmed());
-    if (!m_resolver->text().trimmed().isEmpty())
-        result.insert(QStringLiteral("resolver"), m_resolver->text().trimmed());
+    QJsonObject dns;
+    QJsonArray resolvers;
+    for (const QString &entry : m_resolver->text().split(',', Qt::SkipEmptyParts)) {
+        if (!entry.trimmed().isEmpty())
+            resolvers.append(entry.trimmed());
+    }
+    if (!resolvers.isEmpty())
+        dns.insert(QStringLiteral("resolvers"), resolvers);
+    dns.insert(QStringLiteral("strategy"), m_strategy->currentData().toString());
+    if (m_dnssec->isChecked())
+        dns.insert(QStringLiteral("edns"), QJsonObject{{QStringLiteral("dnssec"), true}});
+    if (m_globalping->isChecked())
+        dns.insert(QStringLiteral("globalping"), true);
+    result.insert(QStringLiteral("dns"), dns);
+    if (m_globalping->isChecked() || m_trace->isChecked())
+        result.insert(QStringLiteral("diagnose"), QJsonObject{{QStringLiteral("remote"), m_globalping->isChecked()},
+                                                               {QStringLiteral("trace"), m_trace->isChecked()}});
     if (m_refresh->isChecked())
         result.insert(QStringLiteral("refresh_bootstrap"), true);
     return result;
@@ -82,7 +112,18 @@ void AdvancedDialog::setOptions(const QJsonObject &options)
     selectValue(m_protocol, options.value(QStringLiteral("protocol")).toString(QStringLiteral("auto")));
     selectValue(m_fallback, options.value(QStringLiteral("fallback")).toString(QStringLiteral("unavailable")));
     m_server->setText(options.value(QStringLiteral("server")).toString());
-    m_resolver->setText(options.value(QStringLiteral("resolver")).toString());
+    const QJsonObject dns = options.value(QStringLiteral("dns")).toObject();
+    QStringList resolvers;
+    for (const QJsonValue &entry : dns.value(QStringLiteral("resolvers")).toArray())
+        resolvers.append(entry.toString());
+    if (resolvers.isEmpty() && options.contains(QStringLiteral("resolver")))
+        resolvers.append(options.value(QStringLiteral("resolver")).toString());
+    m_resolver->setText(resolvers.join(QStringLiteral(", ")));
+    selectValue(m_strategy, dns.value(QStringLiteral("strategy")).toString(QStringLiteral("first")));
+    m_dnssec->setChecked(dns.value(QStringLiteral("edns")).toObject().value(QStringLiteral("dnssec")).toBool());
+    m_globalping->setChecked(dns.value(QStringLiteral("globalping")).toBool()
+                             || options.value(QStringLiteral("diagnose")).toObject().value(QStringLiteral("remote")).toBool());
+    m_trace->setChecked(options.value(QStringLiteral("diagnose")).toObject().value(QStringLiteral("trace")).toBool());
     m_timeout->setValue(qMax(1, options.value(QStringLiteral("timeout_ms")).toInt(15000) / 1000));
     m_refresh->setChecked(options.value(QStringLiteral("refresh_bootstrap")).toBool());
     updateState();

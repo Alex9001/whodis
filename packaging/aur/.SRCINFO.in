@@ -1,9 +1,10 @@
 pkgbase = whodis
-	pkgdesc = Modern WHOIS alternative with automatic RDAP routing and structured output
+	pkgdesc = Domain workstation with RDAP, WHOIS, RWhois, DNS, and diagnostics
 	pkgver = @PKGVER@
 	pkgrel = 1
 	url = https://github.com/Alex9001/whodis
 	arch = x86_64
+	arch = aarch64
 	license = MIT
 	makedepends = git
 	makedepends = go

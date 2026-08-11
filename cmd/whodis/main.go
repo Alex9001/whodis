@@ -25,11 +25,16 @@ var version = "dev"
 type cliTask string
 
 const (
-	taskLookup  cliTask = "lookup"
-	taskScan    cliTask = "scan"
-	taskAXFR    cliTask = "axfr"
-	taskExpires cliTask = "expires"
-	taskGet     cliTask = "get"
+	taskLookup      cliTask = "lookup"
+	taskScan        cliTask = "scan"
+	taskAXFR        cliTask = "axfr"
+	taskExpires     cliTask = "expires"
+	taskGet         cliTask = "get"
+	taskDNSQuery    cliTask = "dns-query"
+	taskDNSCompare  cliTask = "dns-compare"
+	taskDNSTrace    cliTask = "dns-trace"
+	taskDNSTransfer cliTask = "dns-transfer"
+	taskDiagnose    cliTask = "diagnose"
 )
 
 type cliOptions struct {
@@ -50,6 +55,20 @@ type cliOptions struct {
 	timeout          time.Duration
 	refreshBootstrap bool
 	dnsResolver      string
+	dnsResolvers     []string
+	recordTypes      []string
+	dnsClass         string
+	resolverStrategy whodis.ResolverStrategy
+	edns             whodis.EDNSOptions
+	dnssecSet        bool
+	transfer         whodis.TransferOptions
+	noRecursion      bool
+	checkingDisabled bool
+	globalping       bool
+	globalpingFrom   []string
+	globalpingLimit  int
+	trace            bool
+	remote           bool
 	color            string
 	colorSet         bool
 	details          bool
@@ -76,6 +95,9 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 	}
 	if len(args) > 0 && args[0] == "help" {
 		return runHelp(args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "completion" {
+		return runCompletion(args[1:], stdout, stderr)
 	}
 	options, err := parseArgs(args)
 	if err != nil {
@@ -146,6 +168,9 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		}
 		return 2
 	}
+	if isEngineTask(options.task) {
+		return runEngineTask(inputs, options, format, color, details, stdout, stderr, runtime)
+	}
 
 	client := whodis.NewClient(whodis.ClientOptions{Timeout: options.timeout})
 	lookupOptions := whodis.LookupOptions{
@@ -201,6 +226,95 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 			return batchExitCode(batch.Items[0].Error)
 		}
 		fmt.Fprintf(stderr, "whodis: %d of %d lookups failed\n", failed, len(batch.Items))
+		return 1
+	}
+	return 0
+}
+
+func runEngineTask(inputs []string, options cliOptions, format whodis.Format, color string, details bool, stdout, stderr io.Writer, runtime cliRuntime) int {
+	operation := whodis.OperationDNSQuery
+	switch options.task {
+	case taskDNSCompare:
+		operation = whodis.OperationDNSCompare
+	case taskDNSTrace:
+		operation = whodis.OperationDNSTrace
+	case taskDNSTransfer:
+		operation = whodis.OperationDNSTransfer
+	case taskDiagnose:
+		operation = whodis.OperationDiagnose
+	}
+	recursive := !options.noRecursion
+	if config, exists, err := loadOptionalUserConfig(runtime); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	} else if exists {
+		if len(options.dnsResolvers) == 0 {
+			options.dnsResolvers = append([]string(nil), config.DNSResolvers...)
+		}
+		if options.resolverStrategy == "" && config.ResolverStrategy != "" {
+			options.resolverStrategy = whodis.ResolverStrategy(config.ResolverStrategy)
+		}
+		if !options.dnssecSet && config.DNSSEC != nil {
+			options.edns.DNSSEC = *config.DNSSEC
+		}
+	}
+	dnsOptions := whodis.DNSOptions{
+		Types: options.recordTypes, Class: options.dnsClass,
+		Resolvers: options.dnsResolvers, Strategy: options.resolverStrategy,
+		Recursive: &recursive, CheckingDisabled: options.checkingDisabled,
+		EDNS: options.edns, Transfer: options.transfer, Globalping: options.globalping,
+		GlobalpingLocations: options.globalpingFrom, GlobalpingLimit: options.globalpingLimit,
+		GlobalpingToken: runtime.getenv("GLOBALPING_TOKEN"),
+	}
+	if options.task == taskDNSTrace && len(dnsOptions.Types) == 0 {
+		dnsOptions.Types = []string{"A"}
+	}
+	registration := whodis.LookupOptions{
+		Protocol: options.protocol, Fallback: options.fallback, Server: options.server,
+		Timeout: options.timeout, RefreshBootstrap: options.refreshBootstrap,
+	}
+	requests := make([]whodis.Request, 0, len(inputs))
+	for _, input := range inputs {
+		requests = append(requests, whodis.Request{
+			Operation: operation, Target: input, Timeout: options.timeout,
+			Registration: registration, DNS: dnsOptions,
+			Diagnose: whodis.DiagnoseOptions{DNS: dnsOptions, Timeout: options.timeout, Trace: options.trace, Remote: options.remote},
+		})
+	}
+	engine := whodis.NewEngine(whodis.EngineOptions{Timeout: options.timeout})
+	batch, err := engine.RunBatch(context.Background(), whodis.BatchRequest{Requests: requests, Workers: options.jobs})
+	if err != nil {
+		printLookupError(stderr, err, format)
+		return exitCode(err)
+	}
+	writer, closeWriter, err := openOutput(options.output, options.force, stdout)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	}
+	defer closeWriter()
+	if err := whodis.RenderBatchReport(writer, batch, format, whodis.RenderOptions{Color: color, Details: details}); err != nil {
+		fmt.Fprintln(stderr, "whodis: could not render output:", err)
+		return 1
+	}
+	failures := 0
+	for _, report := range batch.Reports {
+		if len(report.Errors) > 0 {
+			failures++
+		}
+	}
+	if failures > 0 {
+		fmt.Fprintf(stderr, "whodis: %d of %d operations completed with errors\n", failures, len(batch.Reports))
+		if len(batch.Reports) == 1 && len(batch.Reports[0].Errors) > 0 {
+			switch batch.Reports[0].Errors[0].Kind {
+			case whodis.ErrorInvalidInput:
+				return 2
+			case whodis.ErrorNotFound:
+				return 3
+			case whodis.ErrorRateLimited:
+				return 4
+			}
+		}
 		return 1
 	}
 	return 0
@@ -331,7 +445,120 @@ func parseArgs(args []string) (cliOptions, error) {
 			if err != nil {
 				return options, err
 			}
-			options.dnsResolver = v
+			options.dnsResolvers = append(options.dnsResolvers, v)
+			if options.dnsResolver == "" {
+				options.dnsResolver = v
+			}
+		case "--class":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.dnsClass = v
+		case "--strategy":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.resolverStrategy = whodis.ResolverStrategy(strings.ToLower(v))
+		case "--bufsize":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			n, parseErr := strconv.ParseUint(v, 10, 16)
+			if parseErr != nil || n < 512 {
+				return options, fmt.Errorf("--bufsize must be between 512 and 65535")
+			}
+			options.edns.BufferSize = uint16(n)
+		case "--dnssec":
+			options.edns.DNSSEC = true
+			options.dnssecSet = true
+		case "--no-dnssec":
+			options.edns.DNSSEC = false
+			options.dnssecSet = true
+		case "--nsid":
+			options.edns.NSID = true
+		case "--ecs":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.edns.ECS = v
+		case "--cookie":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.edns.Cookie = v
+		case "--padding":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			n, parseErr := strconv.ParseUint(v, 10, 16)
+			if parseErr != nil {
+				return options, fmt.Errorf("--padding must be a whole number")
+			}
+			options.edns.Padding = uint16(n)
+		case "--no-recursion":
+			options.noRecursion = true
+		case "--checking-disabled":
+			options.checkingDisabled = true
+		case "--ixfr":
+			options.transfer.Type = "IXFR"
+		case "--serial":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			n, parseErr := strconv.ParseUint(v, 10, 32)
+			if parseErr != nil {
+				return options, fmt.Errorf("--serial must be a 32-bit unsigned integer")
+			}
+			options.transfer.Serial = uint32(n)
+		case "--tsig-name":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.transfer.TSIGName = v
+		case "--tsig-secret":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.transfer.TSIGSecret = v
+		case "--tsig-algorithm":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.transfer.TSIGAlgo = v
+		case "--tls":
+			options.transfer.TLS = true
+		case "--globalping":
+			options.globalping = true
+		case "--from":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.globalpingFrom = append(options.globalpingFrom, v)
+		case "--limit":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			n, parseErr := strconv.Atoi(v)
+			if parseErr != nil || n < 1 || n > 10 {
+				return options, fmt.Errorf("--limit must be between 1 and 10")
+			}
+			options.globalpingLimit = n
+		case "--trace":
+			options.trace = true
+		case "--remote":
+			options.remote = true
 		case "--details":
 			if options.detailsSet && !options.details {
 				return options, fmt.Errorf("--details conflicts with --summary")
@@ -366,7 +593,11 @@ func parseArgs(args []string) (cliOptions, error) {
 			if strings.HasPrefix(arg, "-") {
 				return options, fmt.Errorf("unknown option %s", arg)
 			}
-			appendTarget(arg)
+			if isSingleDNSOperation(options.task) && options.task != taskDNSTransfer && len(options.targets) > 0 {
+				options.recordTypes = append(options.recordTypes, arg)
+			} else {
+				appendTarget(arg)
+			}
 		}
 	}
 	if len(options.targets) > 0 {
@@ -392,6 +623,35 @@ func parseCommandPrefix(args []string, options *cliOptions, appendField func(who
 		return args[index:], nil
 	}
 	switch args[index] {
+	case "registration":
+		options.task = taskLookup
+		index++
+	case "dns":
+		index++
+		if index >= len(args) || args[index] == "--help" || args[index] == "-h" {
+			options.help = true
+			options.task = taskDNSQuery
+			if index < len(args) {
+				index++
+			}
+			return args[index:], nil
+		}
+		switch args[index] {
+		case "query":
+			options.task = taskDNSQuery
+		case "compare":
+			options.task = taskDNSCompare
+		case "trace":
+			options.task = taskDNSTrace
+		case "transfer":
+			options.task = taskDNSTransfer
+		default:
+			return nil, fmt.Errorf("dns requires query, compare, trace, or transfer")
+		}
+		index++
+	case "diagnose":
+		options.task = taskDiagnose
+		index++
 	case string(taskScan):
 		options.task = taskScan
 		index++
@@ -447,10 +707,55 @@ func validateCLIOptions(options cliOptions) error {
 	if options.refreshBootstrap && options.protocolSet && options.protocol != whodis.ProtocolRDAP {
 		return fmt.Errorf("--refresh is only available with automatic routing or rdap")
 	}
-	if options.dnsResolver != "" && options.task != taskScan && options.task != taskAXFR {
-		return fmt.Errorf("--resolver is only available with scan or axfr")
+	if options.dnsResolver != "" && options.task != taskScan && options.task != taskAXFR && !isEngineTask(options.task) {
+		return fmt.Errorf("--resolver is only available with DNS operations or diagnose")
+	}
+	if (options.dnsClass != "" || options.resolverStrategy != "" || options.edns != (whodis.EDNSOptions{}) || options.dnssecSet || options.noRecursion || options.checkingDisabled || options.globalping) && !isEngineTask(options.task) {
+		return fmt.Errorf("DNS query options require dns query, dns compare, dns trace, dns transfer, or diagnose")
+	}
+	if (len(options.globalpingFrom) > 0 || options.globalpingLimit > 0) && !options.globalping && !options.remote {
+		return fmt.Errorf("--from and --limit require --globalping or diagnose --remote")
+	}
+	if (options.trace || options.remote) && options.task != taskDiagnose {
+		return fmt.Errorf("--trace and --remote require diagnose")
+	}
+	if options.transfer != (whodis.TransferOptions{}) && options.task != taskDNSTransfer {
+		return fmt.Errorf("--ixfr, --serial, --tls, and --tsig-* require dns transfer")
+	}
+	if options.globalping && options.task != taskDNSQuery && options.task != taskDNSCompare && options.task != taskDiagnose {
+		return fmt.Errorf("--globalping requires dns query, dns compare, or diagnose")
+	}
+	if options.task == taskDNSTransfer && len(options.targets) > 1 {
+		return fmt.Errorf("dns transfer accepts one zone at a time")
+	}
+	if options.transfer.TSIGName != "" && options.transfer.TSIGSecret == "" {
+		return fmt.Errorf("--tsig-name requires --tsig-secret")
+	}
+	if options.transfer.TSIGSecret != "" && options.transfer.TSIGName == "" {
+		return fmt.Errorf("--tsig-secret requires --tsig-name")
+	}
+	if options.transfer.TSIGAlgo != "" && options.transfer.TSIGName == "" {
+		return fmt.Errorf("--tsig-algorithm requires --tsig-name and --tsig-secret")
 	}
 	return nil
+}
+
+func isEngineTask(task cliTask) bool {
+	switch task {
+	case taskDNSQuery, taskDNSCompare, taskDNSTrace, taskDNSTransfer, taskDiagnose:
+		return true
+	default:
+		return false
+	}
+}
+
+func isSingleDNSOperation(task cliTask) bool {
+	switch task {
+	case taskDNSQuery, taskDNSCompare, taskDNSTrace, taskDNSTransfer:
+		return true
+	default:
+		return false
+	}
 }
 
 func taskDNSMode(task cliTask) whodis.DNSMode {
@@ -465,7 +770,7 @@ func taskDNSMode(task cliTask) whodis.DNSMode {
 }
 
 func validateTaskTargets(inputs []string, task cliTask) error {
-	if task != taskScan && task != taskAXFR {
+	if task != taskScan && task != taskAXFR && !isEngineTask(task) {
 		return nil
 	}
 	for _, input := range inputs {
@@ -712,18 +1017,31 @@ func batchExitCode(err *whodis.BatchError) int {
 
 func printUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage:
-  whodis [rdap|whois|rwhois] [scan|axfr|expires|get <fields>] [target ...] [options]
+  whodis <target>
+  whodis registration <target...>
+  whodis scan <domain...>
+  whodis dns query <name> [TYPE...]
+  whodis dns compare <name> [TYPE...]
+  whodis dns trace <name> [TYPE]
+  whodis dns transfer <zone>
+  whodis diagnose <domain...>
+  whodis expires <target...>
+  whodis get <fields> <target...>
   whodis config
-  whodis help [scan|axfr|expires|get|protocols|formats|advanced]
+  whodis completion bash|zsh|fish|powershell
+  whodis help [dns|diagnose|scan|axfr|expires|get|protocols|formats|advanced]
 
 Targets: domain names, IPv4/IPv6 addresses or CIDRs, and ASNs (AS15169).
 
 Commands:
-  (none)                    full registration lookup (the default)
-  scan                      registration plus public DNS discovery
-  axfr                      registration plus an authoritative zone-transfer attempt
-  expires                   expiration only; useful for one or many domains
-  get <fields>              selected fields, comma-separated
+  (none), registration      automatic RDAP/WHOIS/RWhois registration lookup
+  scan                      registration plus public DNS inventory
+  dns query                 arbitrary DNS types/classes through selected resolvers
+  dns compare               normalized answers across multiple resolvers
+  dns trace                 iterative root-to-authority delegation trace
+  dns transfer              explicit AXFR/IXFR, with optional TSIG and TLS
+  diagnose                  bounded DNS, web, TLS, mail, and service checks
+  expires, get              compact registration projections for batch use
 
 Output shortcuts (choose one):
   --dashboard  --tree  --geekboys  --plain  --json  --yaml  --markdown  --raw
@@ -737,21 +1055,41 @@ Common options:
       --details             expand notices in visual output
       --summary             summarize notices in visual output
       --force               overwrite an existing output file
-	  -h, --help                show this help
-	      --version             show version
+  -h, --help                show this help
+      --version             show version
 
-Routing and DNS:
+Registration routing:
       --server <endpoint>   explicit endpoint; requires rdap, whois, or rwhois
       --strict              do not fall back to another registration protocol
       --try-both            fall back after any protocol error
       --refresh             refresh IANA RDAP service data
-      --resolver <address>  DNS resolver for scan or axfr
+
+DNS:
+      --resolver <URI>      repeatable: system, udp/tcp/tls/https/h3/doq or sdns stamp
+      --strategy <name>     first, all, fastest, random, or consensus
+      --class <CLASS>       named or numeric DNS class (default: IN)
+      --dnssec              request DNSSEC records
+      --no-dnssec           override a saved DNSSEC default for this command
+      --bufsize <bytes>     EDNS UDP payload size (default: 1232)
+      --nsid                request EDNS Name Server Identifier
+      --ecs <prefix>        send an explicit EDNS Client Subnet
+      --cookie <hex>        send an explicit EDNS cookie
+      --padding <bytes>     add EDNS padding
+      --no-recursion        clear the recursion-desired bit
+      --checking-disabled   set the DNSSEC checking-disabled bit
+      --globalping          explicitly opt in to remote Globalping DNS probes
+      --from <location>     repeatable Globalping location selector
+      --limit <count>       Globalping probe limit (1-10; default: 3)
 
 Environment:
   WHODIS_FORMAT             default output format when no shortcut or file inference applies
 
 Examples:
   whodis example.com
+  whodis dns query example.com A AAAA MX
+  whodis dns compare example.com A --resolver system --resolver https://1.1.1.1/dns-query
+  whodis dns trace example.com NS
+  whodis diagnose example.com --json
   whodis scan example.com --tree
   whodis expires google.com yahoo.com
   whodis get expiration,registrar -i domains.txt -o results.txt
@@ -761,6 +1099,63 @@ Examples:
   whodis -- config
   whodis config
 `)
+}
+
+func runCompletion(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "whodis: usage: whodis completion bash|zsh|fish|powershell")
+		return 2
+	}
+	commands := "registration scan dns diagnose expires get config help completion"
+	options := "--dashboard --tree --geekboys --plain --json --yaml --markdown --raw --output --input --jobs --timeout --color --details --summary --force --server --strict --try-both --refresh --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret --tsig-algorithm --globalping --from --limit --trace --remote --help --version"
+	switch strings.ToLower(args[0]) {
+	case "bash":
+		fmt.Fprintf(stdout, `_whodis_complete() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [[ "$prev" == "dns" ]]; then COMPREPLY=( $(compgen -W "query compare trace transfer" -- "$cur") ); return; fi
+  if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W %q -- "$cur") ); return; fi
+  COMPREPLY=( $(compgen -W %q -- "$cur") )
+}
+complete -F _whodis_complete whodis
+`, options, commands)
+	case "zsh":
+		fmt.Fprintf(stdout, `#compdef whodis
+_arguments '*:argument:->args'
+case $state in
+  args) _values 'command or option' %s %s ;;
+esac
+`, strings.ReplaceAll(commands, " ", " "), strings.ReplaceAll(options, " ", " "))
+	case "fish":
+		for _, command := range strings.Fields(commands) {
+			fmt.Fprintf(stdout, "complete -c whodis -f -a %s\n", command)
+		}
+		for _, option := range strings.Fields(options) {
+			fmt.Fprintf(stdout, "complete -c whodis -l %s\n", strings.TrimPrefix(option, "--"))
+		}
+	case "powershell":
+		fmt.Fprintf(stdout, `Register-ArgumentCompleter -Native -CommandName whodis -ScriptBlock {
+  param($wordToComplete)
+  @(%s) | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+  }
+}
+`, powershellCompletionValues(append(strings.Fields(commands), strings.Fields(options)...)))
+	default:
+		fmt.Fprintf(stderr, "whodis: unsupported completion shell %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+func powershellCompletionValues(values []string) string {
+	quoted := make([]string, len(values))
+	for index, value := range values {
+		quoted[index] = "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
+	return strings.Join(quoted, ",")
 }
 
 func printTaskUsage(writer io.Writer, task cliTask) {
@@ -797,9 +1192,49 @@ status, nameservers, dnssec, protocol.
 
 Example: whodis get expiration,registrar,status google.com yahoo.com --plain
 `)
+	case taskDNSQuery, taskDNSCompare, taskDNSTrace, taskDNSTransfer:
+		printDNSUsage(writer)
+	case taskDiagnose:
+		printDiagnoseUsage(writer)
 	default:
 		printUsage(writer)
 	}
+}
+
+func printDNSUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage:
+  whodis dns query <name> [TYPE...] [options]
+  whodis dns compare <name> [TYPE...] [options]
+  whodis dns trace <name> [TYPE] [options]
+  whodis dns transfer <zone> [options]
+
+Record types and classes may be mnemonics or numbers (for example HTTPS, TYPE65, IN, CLASS1).
+Resolver values may be system, a host/IP, udp://, tcp://, tls://, https://, h3://, doq://,
+or a DNSCrypt sdns:// stamp.
+Repeat --resolver and choose --strategy first|all|fastest|random|consensus.
+
+Transfer options: --ixfr --serial <number> --tls --tsig-name <name>
+                  --tsig-secret <base64> --tsig-algorithm <name>
+
+Examples:
+  whodis dns query example.com A AAAA MX
+  whodis dns compare example.com A --resolver 1.1.1.1 --resolver 8.8.8.8 --strategy consensus
+  whodis dns trace example.com A
+  whodis dns transfer example.com --json
+`)
+}
+
+func printDiagnoseUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage: whodis diagnose <domain> [<domain> ...] [options]
+
+Runs bounded checks derived from the domain's published configuration: registration, delegation and
+DNS records, representative IPv4/IPv6 HTTPS reachability, HTTP redirects/status, TLS identity and ALPN,
+MX SMTP/EHLO/STARTTLS, mail policies, and advertised SRV services. This is not a generic port scanner.
+
+--trace enables optional path work. --remote opts in to configured remote probes; neither is run by default.
+
+Example: whodis diagnose example.com --dashboard
+`)
 }
 
 func printProtocolsUsage(writer io.Writer) {
@@ -841,7 +1276,21 @@ func printAdvancedUsage(writer io.Writer) {
       --color <mode>        auto, always, or never
       --details             expand notices in dashboard, tree, and geekboys views
       --summary             summarize notices in those views
-      --resolver <address>  DNS resolver for scan or axfr
+      --resolver <URI>      repeatable DNS resolver selection
+      --strategy <name>     first, all, fastest, random, or consensus
+      --class <CLASS>       DNS query class
+      --dnssec              request DNSSEC records through EDNS
+      --no-dnssec           disable DNSSEC requests despite a saved default
+      --bufsize <bytes>     EDNS UDP payload size
+      --nsid                request EDNS NSID
+      --ecs <prefix>        explicit EDNS Client Subnet (never automatic)
+      --cookie <hex>        explicit EDNS cookie
+      --padding <bytes>     EDNS padding
+      --no-recursion        clear recursion desired
+      --checking-disabled   set the DNSSEC checking-disabled bit
+      --globalping          opt in to remote DNS probes (may consume Globalping quota)
+      --from <location>     repeatable Globalping location
+      --limit <count>       Globalping probe limit, 1-10
       --server <endpoint>   explicit server, with rdap/whois/rwhois
       --strict              do not fall back to another registration protocol
       --try-both            fall back after any protocol error
@@ -863,6 +1312,10 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case string(taskScan), string(taskAXFR), string(taskExpires), string(taskGet):
 		printTaskUsage(stdout, cliTask(args[0]))
+	case "dns":
+		printDNSUsage(stdout)
+	case "diagnose":
+		printDiagnoseUsage(stdout)
 	case "protocols":
 		printProtocolsUsage(stdout)
 	case "formats":

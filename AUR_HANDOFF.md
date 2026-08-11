@@ -19,13 +19,12 @@ only to the AUR packaging files.
 - Upstream: `https://github.com/Alex9001/whodis`
 - AUR repositories: `whodis.git` and `whodis-gui.git`
 - AUR branch: `master`
-- Architecture: `x86_64`
+- Architectures: `x86_64` and `aarch64`
 - CLI install: `/usr/bin/whodis`
 - GUI install: `/usr/bin/whodis-gui`, private engine under
   `/usr/libexec/whodis/`, desktop entry, and icon
 - GUI dependency: `qt6-base`
-- First GUI version: the first stable release that contains `desktop/`
-  (expected `0.6.0-1`; never publish `whodis-gui` from `v0.5.1`)
+- Minimum GUI version: `0.6.4-1`; use the newest stable release when publishing
 
 The workstation previously had a dedicated key:
 
@@ -63,12 +62,13 @@ Never commit, paste, or upload the private key. Only the `.pub` half is public.
 
 ## 2. Select a release
 
-Use the newest stable release containing the GUI source. `v0.6.0` is the
-expected first eligible release; replace it if a newer stable release exists
-when the account is ready.
+Use the newest stable release containing the GUI source. `v0.6.4` is the
+current minimum eligible release; replace it with `v1.0.0` or any newer stable
+release when the account is ready. Do not use a prerelease because automatic
+AUR publication deliberately ignores prerelease tags.
 
 ```bash
-release_tag=v0.6.0
+release_tag=v0.6.4
 release_version=${release_tag#v}
 gh release view "$release_tag" --repo Alex9001/whodis
 ```

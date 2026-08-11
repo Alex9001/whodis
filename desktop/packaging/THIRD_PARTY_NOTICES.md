@@ -15,3 +15,10 @@ Whodis source code and build instructions are available at
 <https://download.qt.io/archive/qt/>. The packaged Qt shared libraries may be
 replaced with an interface-compatible build for debugging modifications, as
 permitted by the LGPL.
+
+The Whodis engine also incorporates Go libraries under permissive
+licenses: miekg/dns and the Go extended libraries (BSD), quic-go and qpack
+(MIT), dnscrypt and dnsstamps (Unlicense), go-runewidth (MIT), and yaml.v3
+(MIT/Apache-style notice). Their exact license texts are bundled in the
+`Go-Licenses` directory; versions are recorded by `go.mod`, `go.sum`, and each
+release's generated SBOM.

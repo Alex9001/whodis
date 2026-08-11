@@ -30,6 +30,24 @@ func (fakeClient) LookupBatch(_ context.Context, targets []string, options whodi
 	return batch, nil
 }
 
+type fakeEngine struct{}
+
+func (fakeEngine) RunBatch(_ context.Context, request whodis.BatchRequest) (whodis.BatchReport, error) {
+	reports := make([]whodis.Report, len(request.Requests))
+	for index, item := range request.Requests {
+		reports[index] = whodis.Report{
+			SchemaVersion: whodis.ReportSchemaVersion,
+			Operation:     item.Operation,
+			Query:         whodis.Target{Original: item.Target, Canonical: item.Target, Kind: whodis.KindDomain},
+			DNS:           &whodis.DNSOperationResult{Mode: "query", Messages: []whodis.DNSMessage{{Name: item.Target, Type: "A", Rcode: "NOERROR"}}},
+		}
+		if request.OnProgress != nil {
+			request.OnProgress(whodis.ProgressEvent{Operation: item.Operation, Target: item.Target, Stage: "completed", Completed: index + 1, Total: len(request.Requests)})
+		}
+	}
+	return whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: reports}, nil
+}
+
 func TestServerHelloParseAndLookup(t *testing.T) {
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":"hello-1","method":"hello"}`,
@@ -53,5 +71,36 @@ func TestServerHelloParseAndLookup(t *testing.T) {
 	}
 	if lookup.Result.Token == "" || len(lookup.Result.Items) != 1 || len(lookup.Result.Items[0].RawSources) != 1 {
 		t.Fatalf("lookup result = %+v", lookup.Result)
+	}
+}
+
+func TestServerProtocolV2Run(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":"hello-1","method":"hello"}`,
+		`{"jsonrpc":"2.0","id":"run-1","method":"run","params":{"targets":["example.test"],"operation":"dns.query","dns":{"types":["A"]}}}`,
+	}, "\n") + "\n"
+	var output bytes.Buffer
+	server := NewServerWithEngine("1.0.0", fakeClient{}, fakeEngine{}, strings.NewReader(input), &output, &bytes.Buffer{})
+	if err := server.Serve(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("response lines = %d, want hello, progress, run:\n%s", len(lines), output.String())
+	}
+	var hello struct {
+		Result helloResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &hello); err != nil || hello.Result.ProtocolVersion != 2 {
+		t.Fatalf("hello = (%+v, %v)", hello, err)
+	}
+	var completed struct {
+		Result runResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[2]), &completed); err != nil {
+		t.Fatal(err)
+	}
+	if completed.Result.Token == "" || len(completed.Result.Items) != 1 || completed.Result.Items[0].Report.SchemaVersion != whodis.ReportSchemaVersion {
+		t.Fatalf("run result = %+v", completed.Result)
 	}
 }

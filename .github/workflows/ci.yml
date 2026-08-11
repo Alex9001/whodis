@@ -24,6 +24,7 @@ jobs:
           sh -n scripts/publish-aur-gui.sh
           sh -n scripts/package-gui-linux.sh
           sh -n scripts/collect-qt-licenses.sh
+          sh -n scripts/collect-go-licenses.sh
       - name: Validate AUR template rendering
         run: |
           aur_test_dir="$(mktemp -d)"
@@ -48,6 +49,12 @@ jobs:
           QT_LICENSE_DIR="$qt_license_fixture" scripts/collect-qt-licenses.sh "$qt_license_output"
           test -s "$qt_license_output/LGPL-3.0-only.txt"
           test -s "$qt_license_output/GPL-3.0-only.txt"
+      - name: Exercise Go module license collection
+        run: |
+          go_license_output="$(mktemp -d)"
+          trap 'rm -rf -- "$go_license_output"' EXIT
+          scripts/collect-go-licenses.sh "$go_license_output"
+          test -s "$go_license_output/MODULES.txt"
       - name: Exercise Unix installer with a local release
         run: |
           installer_test_dir="$(mktemp -d)"
@@ -75,6 +82,8 @@ jobs:
           fi
       - run: go vet ./...
       - run: go test -race ./...
+      - name: Scan Go dependencies and reachable code
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
   powershell-installer:
     name: Test Windows and PowerShell installer
@@ -147,13 +156,15 @@ jobs:
         run: |
           printf '%s\n' '{"jsonrpc":"2.0","id":"ci","method":"hello"}' |
             build-gui/bin/whodis-gui-engine |
-            grep '"protocol_version":1'
-      - name: Verify install layout and Qt notices
+            grep '"protocol_version":2'
+      - name: Verify install layout and dependency notices
         run: |
           cmake --install build-gui --prefix "$RUNNER_TEMP/whodis-gui-install"
           scripts/collect-qt-licenses.sh "$RUNNER_TEMP/whodis-gui-install/share/licenses/whodis-gui/Qt-Licenses"
+          scripts/collect-go-licenses.sh "$RUNNER_TEMP/whodis-gui-install/share/licenses/whodis-gui/Go-Licenses"
           test -x "$RUNNER_TEMP/whodis-gui-install/bin/whodis-gui"
           test -x "$RUNNER_TEMP/whodis-gui-install/libexec/whodis/whodis-gui-engine"
+          test -s "$RUNNER_TEMP/whodis-gui-install/share/licenses/whodis-gui/Go-Licenses/MODULES.txt"
           desktop-file-validate "$RUNNER_TEMP/whodis-gui-install/share/applications/net.cyberbrand.whodis.desktop"
 
   release-snapshot:
@@ -161,6 +172,8 @@ jobs:
       - test
       - powershell-installer
       - desktop-linux
+      - platform-builds
+      - container-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -175,7 +188,55 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           install-only: true
+      - name: Install Syft for SBOM generation
+        uses: anchore/sbom-action/download-syft@v0
       - name: Validate release configuration
         run: goreleaser check
       - name: Build release snapshot
         run: goreleaser release --snapshot --clean
+
+  platform-builds:
+    name: Build CLI (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: freebsd, goarch: amd64 }
+          - { goos: freebsd, goarch: arm64 }
+          - { goos: openbsd, goarch: amd64 }
+          - { goos: openbsd, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Cross-build pure-Go CLI
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath ./cmd/whodis
+
+  container-build:
+    name: Build OCI image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Build local image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: whodis:ci
+          build-args: VERSION=ci
+      - name: Smoke-test container entrypoint
+        run: docker run --rm whodis:ci --version | grep '^whodis ci$'

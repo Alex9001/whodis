@@ -26,7 +26,11 @@ private:
     QComboBox *m_fallback;
     QLineEdit *m_server;
     QLineEdit *m_resolver;
+    QComboBox *m_strategy;
     QSpinBox *m_timeout;
     QCheckBox *m_refresh;
+    QCheckBox *m_dnssec;
+    QCheckBox *m_globalping;
+    QCheckBox *m_trace;
     QDialogButtonBox *m_buttons;
 };
