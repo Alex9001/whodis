@@ -25,12 +25,12 @@
   <a href="https://github.com/Alex9001/whodis/issues">Issues</a>
 </p>
 
-Classic `whois` gives you a protocol-era text dump. Whodis accepts a domain,
-IP address, network, or ASN, discovers the right RDAP, WHOIS, or RWhois
-authority, and organizes the answer into a responsive terminal dashboard. When
-you need more than ownership data, the same application can inventory DNS,
-compare resolvers, trace delegation, diagnose web and mail service, or export a
-stable machine-readable report.
+Classic `whois` gives you a protocol-era text dump. Whodis 1.0 accepts a
+domain, IP address, network, or ASN, discovers the right RDAP, WHOIS, or RWhois
+authority, and organizes the answer into a responsive terminal dashboard. It
+also grows into a full domain workstation when you need it: inventory DNS,
+compare resolvers, verify DNSSEC, trace delegation, diagnose web and mail
+service, or export a stable machine-readable report.
 
 ## Output made for humans—and scripts
 
@@ -57,13 +57,17 @@ stable machine-readable report.
 <table>
   <tr>
     <th width="50%">Public DNS inventory</th>
-    <th width="50%">Concurrent batch lookup</th>
+    <th width="50%">Domain diagnosis</th>
   </tr>
   <tr>
     <td><img src="docs/whodis-gui-dns.png" alt="Whodis DNS scan showing public records for cyberbrand.net"></td>
-    <td><img src="docs/whodis-gui-batch.png" alt="Whodis batch lookup showing four completed domain checks"></td>
+    <td><img src="docs/whodis-gui-diagnose.png" alt="Whodis diagnosis showing DNS, web, TLS, mail, and policy findings for cyberbrand.net"></td>
   </tr>
 </table>
+
+<p align="center"><strong>Concurrent batch lookup</strong> · Check and export many domains in one run</p>
+
+![Whodis batch lookup showing four completed domain checks](docs/whodis-gui-batch.png)
 
 The terminal dashboard rearranges the same normalized data into a wide mosaic
 or a narrow single-column view. Long registry notices are deduplicated and
