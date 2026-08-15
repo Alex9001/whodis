@@ -334,6 +334,10 @@ jobs:
           pattern: whodis-gui-*
           path: .release-assets/gui
           merge-multiple: true
+      - name: Install pinned Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
       - name: Vet, test, and analyze release source
         run: |
           go vet ./...
