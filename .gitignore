@@ -1,3 +1,6 @@
 /dist/
 /build-gui/
 /.release-assets/
+
+# Private local release planning notes.
+/LAUNCH_PLAN.md
