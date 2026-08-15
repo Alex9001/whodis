@@ -15,8 +15,10 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ameshkov/dnscrypt/v2"
@@ -143,12 +145,43 @@ type DNSOperationResult struct {
 }
 
 type nativeDNSProvider struct {
-	httpClient   *http.Client
-	exchangeFunc func(context.Context, *mdns.Msg, resolverSpec) (*mdns.Msg, []byte, error)
+	httpClient     *http.Client
+	exchangeFunc   func(context.Context, *mdns.Msg, resolverSpec) (*mdns.Msg, []byte, error)
+	exchangeSlots  chan struct{}
+	transportMu    sync.Mutex
+	h3Transports   map[string]*http3.Transport
+	doqConnections map[string]*quic.Conn
+	dnscryptInfo   map[string]*dnscrypt.ResolverInfo
 }
 
 func newNativeDNSProvider() DNSProvider {
-	return &nativeDNSProvider{httpClient: &http.Client{Timeout: dnsQueryTimeout}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxConnsPerHost = 16
+	transport.MaxIdleConnsPerHost = 8
+	return &nativeDNSProvider{
+		httpClient: &http.Client{Timeout: dnsQueryTimeout, Transport: transport}, exchangeSlots: make(chan struct{}, 16),
+		h3Transports: make(map[string]*http3.Transport), doqConnections: make(map[string]*quic.Conn), dnscryptInfo: make(map[string]*dnscrypt.ResolverInfo),
+	}
+}
+
+func (provider *nativeDNSProvider) Close() error {
+	provider.transportMu.Lock()
+	defer provider.transportMu.Unlock()
+	for key, transport := range provider.h3Transports {
+		_ = transport.Close()
+		delete(provider.h3Transports, key)
+	}
+	for key, connection := range provider.doqConnections {
+		_ = connection.CloseWithError(0, "engine closed")
+		delete(provider.doqConnections, key)
+	}
+	clear(provider.dnscryptInfo)
+	if provider.httpClient != nil {
+		if transport, ok := provider.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+	return nil
 }
 
 type resolverSpec struct {
@@ -210,33 +243,42 @@ func (provider *nativeDNSProvider) Inventory(ctx context.Context, zone string, o
 	result := &DNSOperationResult{Mode: "inventory", Inventory: &DNSResult{Method: "inventory"}}
 	remoteOptions := options
 	options.Globalping = false
-	queries := dnsPatternQueries(zone)
-	for _, query := range queries {
-		queryOptions := options
-		queryOptions.Types = []string{mdns.TypeToString[query.typeID]}
-		answer, err := provider.Query(ctx, query.name, queryOptions)
-		if err != nil {
-			result.Warnings = appendDNSWarning(result.Warnings, err.Error())
+
+	wildcardQueries := make([]dnsQuery, 0, 5)
+	wildcardName := randomDNSLabel() + "." + zone
+	for _, typeID := range []uint16{mdns.TypeA, mdns.TypeAAAA, mdns.TypeTXT, mdns.TypeSRV, mdns.TypeHTTPS} {
+		wildcardQueries = append(wildcardQueries, dnsQuery{name: wildcardName, typeID: typeID, guessed: true})
+	}
+	wildcards := make(map[string]struct{})
+	for _, response := range provider.runInventoryQueries(ctx, wildcardQueries, options) {
+		if response.err != nil || response.answer == nil {
 			continue
 		}
-		result.Messages = append(result.Messages, answer.Messages...)
-		for _, message := range answer.Messages {
-			if message.Error != "" {
-				continue
-			}
+		for _, message := range response.answer.Messages {
 			for _, record := range message.Answer {
-				if inDNSZone(record.Name, zone) {
-					result.Inventory.Records = append(result.Inventory.Records, record)
-					if record.Type == "NS" && normalizeDNSName(record.Name) == normalizeDNSName(zone) {
-						result.Inventory.Nameservers = append(result.Inventory.Nameservers, normalizeDNSName(record.Value))
-					}
-				}
+				wildcards[dnsRecordSignature(record)] = struct{}{}
 			}
-		}
-		if ctx.Err() != nil {
-			break
 		}
 	}
+	if len(wildcards) > 0 {
+		result.Warnings = appendDNSWarning(result.Warnings, "wildcard DNS answers detected during discovery")
+	}
+
+	patternResponses := provider.runInventoryQueries(ctx, dnsPatternQueries(zone), options)
+	targets, suppressed, failedQueries := provider.collectInventoryResponses(result, zone, patternResponses, wildcards)
+	totalQueries := len(patternResponses)
+	if suppressed {
+		result.Warnings = appendDNSWarning(result.Warnings, "wildcard DNS answers were detected; matching guessed records were omitted")
+	}
+	follow := make([]dnsQuery, 0, len(targets)*2)
+	for _, target := range limitedDNSNames(targets, maximumDynamicDNSNames) {
+		follow = append(follow, dnsQuery{name: target, typeID: mdns.TypeA}, dnsQuery{name: target, typeID: mdns.TypeAAAA})
+	}
+	followResponses := provider.runInventoryQueries(ctx, follow, options)
+	_, _, followFailures := provider.collectInventoryResponses(result, zone, followResponses, nil)
+	failedQueries += followFailures
+	totalQueries += len(followResponses)
+
 	result.Inventory.Records = uniqueDNSRecords(result.Inventory.Records)
 	result.Inventory.Nameservers = uniqueDNSNames(result.Inventory.Nameservers)
 	result.Inventory.Warnings = append(result.Inventory.Warnings, result.Warnings...)
@@ -247,10 +289,118 @@ func (provider *nativeDNSProvider) Inventory(ctx context.Context, zone string, o
 			return result, remoteErr
 		}
 	}
-	if len(result.Inventory.Records) == 0 && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
+	if failedQueries > 0 {
+		return result, lookupError(ErrorUnavailable, fmt.Sprintf("%d of %d DNS inventory queries failed", failedQueries, totalQueries), nil)
+	}
 	return result, nil
+}
+
+type inventoryResponse struct {
+	query  dnsQuery
+	answer *DNSOperationResult
+	err    error
+}
+
+func (provider *nativeDNSProvider) runInventoryQueries(ctx context.Context, queries []dnsQuery, options DNSOptions) []inventoryResponse {
+	responses := make([]inventoryResponse, len(queries))
+	if len(queries) == 0 {
+		return responses
+	}
+	jobs := make(chan int)
+	workers := min(maximumDNSWorkers, len(queries))
+	var group sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for index := range jobs {
+				query := queries[index]
+				queryOptions := options
+				queryOptions.Types = []string{mdns.TypeToString[query.typeID]}
+				answer, err := provider.Query(ctx, query.name, queryOptions)
+				responses[index] = inventoryResponse{query: query, answer: answer, err: err}
+			}
+		}()
+	}
+	for index := range queries {
+		select {
+		case jobs <- index:
+		case <-ctx.Done():
+			close(jobs)
+			group.Wait()
+			return responses
+		}
+	}
+	close(jobs)
+	group.Wait()
+	return responses
+}
+
+func (provider *nativeDNSProvider) collectInventoryResponses(result *DNSOperationResult, zone string, responses []inventoryResponse, wildcards map[string]struct{}) ([]string, bool, int) {
+	var targets []string
+	suppressed := false
+	failed := 0
+	for _, response := range responses {
+		if response.err != nil {
+			failed++
+			if !errors.Is(response.err, context.Canceled) && !errors.Is(response.err, context.DeadlineExceeded) {
+				result.Warnings = appendDNSWarning(result.Warnings, response.err.Error())
+			}
+			continue
+		}
+		if response.answer == nil {
+			failed++
+			continue
+		}
+		result.Messages = append(result.Messages, response.answer.Messages...)
+		for _, message := range response.answer.Messages {
+			if message.Error != "" {
+				continue
+			}
+			for _, record := range message.Answer {
+				if !inDNSZone(record.Name, zone) {
+					continue
+				}
+				if response.query.guessed && wildcards != nil {
+					if _, matched := wildcards[dnsRecordSignature(record)]; matched {
+						suppressed = true
+						continue
+					}
+				}
+				result.Inventory.Records = append(result.Inventory.Records, record)
+				if record.Type == "NS" && normalizeDNSName(record.Name) == normalizeDNSName(zone) {
+					result.Inventory.Nameservers = append(result.Inventory.Nameservers, normalizeDNSName(record.Value))
+				}
+				if target := dnsRecordValueTarget(record); target != "" && inDNSZone(target, zone) {
+					targets = append(targets, target)
+				}
+			}
+		}
+	}
+	targets = uniqueDNSNames(targets)
+	sort.Strings(targets)
+	return targets, suppressed, failed
+}
+
+func dnsRecordValueTarget(record DNSRecord) string {
+	fields := strings.Fields(record.Value)
+	if len(fields) == 0 {
+		return ""
+	}
+	switch strings.ToUpper(record.Type) {
+	case "CNAME", "NS", "PTR":
+		return normalizeDNSName(fields[0])
+	case "MX", "SRV":
+		return normalizeDNSName(fields[len(fields)-1])
+	case "SVCB", "HTTPS":
+		if len(fields) > 1 {
+			return normalizeDNSName(fields[1])
+		}
+	}
+	return ""
 }
 
 func (provider *nativeDNSProvider) Compare(ctx context.Context, name string, options DNSOptions) (*DNSOperationResult, error) {
@@ -475,7 +625,7 @@ func normalizeDNSOperation(options DNSOptions) ([]uint16, uint16, []resolverSpec
 		}
 	}
 	if options.GlobalpingLimit < 0 || options.GlobalpingLimit > 10 {
-		return nil, 0, nil, "", fmt.Errorf("Globalping limit must be between 1 and 10")
+		return nil, 0, nil, "", fmt.Errorf("globalping limit must be between 1 and 10")
 	}
 	if (options.Transfer.TSIGName == "") != (options.Transfer.TSIGSecret == "") {
 		return nil, 0, nil, "", fmt.Errorf("TSIG name and secret must be supplied together")
@@ -483,6 +633,9 @@ func normalizeDNSOperation(options DNSOptions) ([]uint16, uint16, []resolverSpec
 	typeNames := options.Types
 	if len(typeNames) == 0 {
 		typeNames = []string{"A", "AAAA"}
+	}
+	if len(typeNames) > 32 {
+		return nil, 0, nil, "", fmt.Errorf("at most 32 DNS record types may be requested")
 	}
 	types := make([]uint16, 0, len(typeNames))
 	for _, name := range typeNames {
@@ -503,6 +656,9 @@ func normalizeDNSOperation(options DNSOptions) ([]uint16, uint16, []resolverSpec
 	resolvers, err := parseResolverSpecs(options.Resolvers)
 	if err != nil {
 		return nil, 0, nil, "", err
+	}
+	if len(resolvers) > 16 {
+		return nil, 0, nil, "", fmt.Errorf("at most 16 DNS resolvers may be used")
 	}
 	strategy := options.Strategy
 	if strategy == "" {
@@ -684,6 +840,14 @@ func (provider *nativeDNSProvider) exchange(ctx context.Context, name string, ty
 	query.CheckingDisabled = options.CheckingDisabled
 	applyEDNS(query, options.EDNS)
 	started := time.Now()
+	if provider.exchangeSlots != nil {
+		select {
+		case provider.exchangeSlots <- struct{}{}:
+			defer func() { <-provider.exchangeSlots }()
+		case <-ctx.Done():
+			return DNSMessage{Name: normalizeDNSName(name), Type: dnsTypeName(typeID), Class: dnsClassName(class), Resolver: resolver.original, Transport: resolver.transport, Server: resolver.address, DNSSEC: "indeterminate", Error: ctx.Err().Error()}
+		}
+	}
 	response, raw, err := provider.exchangeMessage(ctx, query, resolver)
 	duration := time.Since(started)
 	message := DNSMessage{Name: normalizeDNSName(name), Type: dnsTypeName(typeID), Class: dnsClassName(class), Resolver: resolver.original, Transport: resolver.transport, Server: resolver.address, Duration: duration}
@@ -737,17 +901,28 @@ func (provider *nativeDNSProvider) exchangeMessage(ctx context.Context, query *m
 	case "https", "http", "doh":
 		return exchangeDoH(ctx, query, resolver.url, provider.httpClient)
 	case "h3":
-		transport := &http3.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, ServerName: resolver.serverName}}
-		defer transport.Close()
+		transport := provider.h3Transport(resolver)
 		client := &http.Client{Transport: transport, Timeout: dnsExchangeTimeout(ctx)}
 		return exchangeDoH(ctx, query, resolver.url, client)
 	case "doq":
-		return exchangeDoQ(ctx, query, resolver)
+		return provider.exchangeDoQ(ctx, query, resolver)
 	case "dnscrypt":
-		return exchangeDNSCrypt(ctx, query, resolver)
+		return provider.exchangeDNSCrypt(ctx, query, resolver)
 	default:
 		return nil, nil, fmt.Errorf("unsupported transport %s", resolver.transport)
 	}
+}
+
+func (provider *nativeDNSProvider) h3Transport(resolver resolverSpec) *http3.Transport {
+	key := resolver.serverName + "|" + resolver.url
+	provider.transportMu.Lock()
+	defer provider.transportMu.Unlock()
+	if transport := provider.h3Transports[key]; transport != nil {
+		return transport
+	}
+	transport := &http3.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, ServerName: resolver.serverName}}
+	provider.h3Transports[key] = transport
+	return transport
 }
 
 func exchangeDoH(ctx context.Context, query *mdns.Msg, endpoint string, client *http.Client) (*mdns.Msg, []byte, error) {
@@ -780,13 +955,62 @@ func exchangeDoH(ctx context.Context, query *mdns.Msg, endpoint string, client *
 	return message, raw, nil
 }
 
-func exchangeDoQ(ctx context.Context, query *mdns.Msg, resolver resolverSpec) (*mdns.Msg, []byte, error) {
-	timeout := dnsExchangeTimeout(ctx)
-	connection, err := quic.DialAddr(ctx, resolver.address, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: resolver.serverName, NextProtos: []string{"doq"}}, &quic.Config{HandshakeIdleTimeout: timeout, MaxIdleTimeout: timeout})
-	if err != nil {
-		return nil, nil, err
+func (provider *nativeDNSProvider) exchangeDoQ(ctx context.Context, query *mdns.Msg, resolver resolverSpec) (*mdns.Msg, []byte, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		connection, err := provider.doqConnection(ctx, resolver)
+		if err != nil {
+			return nil, nil, err
+		}
+		response, raw, err := exchangeDoQStream(ctx, query, connection)
+		if err == nil {
+			return response, raw, nil
+		}
+		lastErr = err
+		provider.discardDoQConnection(resolver, connection)
 	}
-	defer connection.CloseWithError(0, "")
+	return nil, nil, lastErr
+}
+
+func (provider *nativeDNSProvider) doqConnection(ctx context.Context, resolver resolverSpec) (*quic.Conn, error) {
+	key := resolver.address + "|" + resolver.serverName
+	provider.transportMu.Lock()
+	connection := provider.doqConnections[key]
+	if connection != nil && connection.Context().Err() != nil {
+		delete(provider.doqConnections, key)
+		connection = nil
+	}
+	provider.transportMu.Unlock()
+	if connection != nil {
+		return connection, nil
+	}
+	timeout := dnsExchangeTimeout(ctx)
+	created, err := quic.DialAddr(ctx, resolver.address, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: resolver.serverName, NextProtos: []string{"doq"}}, &quic.Config{HandshakeIdleTimeout: timeout, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 15 * time.Second})
+	if err != nil {
+		return nil, err
+	}
+	provider.transportMu.Lock()
+	if existing := provider.doqConnections[key]; existing != nil && existing.Context().Err() == nil {
+		provider.transportMu.Unlock()
+		_ = created.CloseWithError(0, "duplicate pooled connection")
+		return existing, nil
+	}
+	provider.doqConnections[key] = created
+	provider.transportMu.Unlock()
+	return created, nil
+}
+
+func (provider *nativeDNSProvider) discardDoQConnection(resolver resolverSpec, connection *quic.Conn) {
+	key := resolver.address + "|" + resolver.serverName
+	provider.transportMu.Lock()
+	if provider.doqConnections[key] == connection {
+		delete(provider.doqConnections, key)
+	}
+	provider.transportMu.Unlock()
+	_ = connection.CloseWithError(0, "connection unusable")
+}
+
+func exchangeDoQStream(ctx context.Context, query *mdns.Msg, connection *quic.Conn) (*mdns.Msg, []byte, error) {
 	stream, err := connection.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -802,7 +1026,8 @@ func exchangeDoQ(ctx context.Context, query *mdns.Msg, resolver resolverSpec) (*
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
 	}
-	if err := binary.Write(stream, binary.BigEndian, uint16(len(packed))); err != nil {
+	frameLength := uint16(len(packed)) // #nosec G115 -- the immediately preceding bound proves the conversion fits.
+	if err := binary.Write(stream, binary.BigEndian, frameLength); err != nil {
 		return nil, nil, err
 	}
 	if _, err := stream.Write(packed); err != nil {
@@ -826,7 +1051,7 @@ func exchangeDoQ(ctx context.Context, query *mdns.Msg, resolver resolverSpec) (*
 	return response, raw, nil
 }
 
-func exchangeDNSCrypt(ctx context.Context, query *mdns.Msg, resolver resolverSpec) (*mdns.Msg, []byte, error) {
+func (provider *nativeDNSProvider) exchangeDNSCrypt(ctx context.Context, query *mdns.Msg, resolver resolverSpec) (*mdns.Msg, []byte, error) {
 	timeout := dnsExchangeTimeout(ctx)
 	if timeout <= 0 {
 		return nil, nil, context.DeadlineExceeded
@@ -838,7 +1063,7 @@ func exchangeDNSCrypt(ctx context.Context, query *mdns.Msg, resolver resolverSpe
 	}
 	completed := make(chan result, 1)
 	go func() {
-		info, err := client.Dial(resolver.url)
+		info, err := provider.dnscryptResolverInfo(client, resolver.url)
 		if err != nil {
 			completed <- result{err: err}
 			return
@@ -858,6 +1083,27 @@ func exchangeDNSCrypt(ctx context.Context, query *mdns.Msg, resolver resolverSpe
 	}
 }
 
+func (provider *nativeDNSProvider) dnscryptResolverInfo(client *dnscrypt.Client, stamp string) (*dnscrypt.ResolverInfo, error) {
+	provider.transportMu.Lock()
+	info := provider.dnscryptInfo[stamp]
+	provider.transportMu.Unlock()
+	if info != nil {
+		return info, nil
+	}
+	created, err := client.Dial(stamp)
+	if err != nil {
+		return nil, err
+	}
+	provider.transportMu.Lock()
+	if existing := provider.dnscryptInfo[stamp]; existing != nil {
+		provider.transportMu.Unlock()
+		return existing, nil
+	}
+	provider.dnscryptInfo[stamp] = created
+	provider.transportMu.Unlock()
+	return created, nil
+}
+
 func applyEDNS(message *mdns.Msg, options EDNSOptions) {
 	bufferSize := options.BufferSize
 	if bufferSize == 0 {
@@ -874,7 +1120,8 @@ func applyEDNS(message *mdns.Msg, options EDNSOptions) {
 			if prefix.Addr().Is6() {
 				family = 2
 			}
-			opt.Option = append(opt.Option, &mdns.EDNS0_SUBNET{Code: mdns.EDNS0SUBNET, Family: family, SourceNetmask: uint8(prefix.Bits()), Address: net.IP(prefix.Addr().AsSlice())})
+			mask := uint8(prefix.Bits()) // #nosec G115 -- netip prefixes are limited to 32 or 128 bits.
+			opt.Option = append(opt.Option, &mdns.EDNS0_SUBNET{Code: mdns.EDNS0SUBNET, Family: family, SourceNetmask: mask, Address: net.IP(prefix.Addr().AsSlice())})
 		}
 	}
 	if options.Cookie != "" {

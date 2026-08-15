@@ -25,12 +25,13 @@
   <a href="https://github.com/Alex9001/whodis/issues">Issues</a>
 </p>
 
-Classic `whois` gives you a protocol-era text dump. Whodis 1.0 accepts a
+Classic `whois` gives you a protocol-era text dump. Whodis accepts a
 domain, IP address, network, or ASN, discovers the right RDAP, WHOIS, or RWhois
 authority, and organizes the answer into a responsive terminal dashboard. It
 also grows into a full domain workstation when you need it: inventory DNS,
 compare resolvers, verify DNSSEC, trace delegation, diagnose web and mail
-service, or export a stable machine-readable report.
+service, save snapshots, detect changes, enforce health policy, or export a
+stable machine-readable report.
 
 ## Output made for humans—and scripts
 
@@ -38,8 +39,9 @@ service, or export a stable machine-readable report.
   the available width without repeating contacts, notices, or nameservers.
 - **Multiple personalities** — dashboard, semantic tree, retro GeekBoys ASCII,
   and portable plain text are one switch away.
-- **Structured output** — versioned JSON and YAML support automation, while
-  portable Markdown turns operation results into a readable report.
+- **Structured output** — versioned JSON/YAML, one-row-per-target CSV, and
+  streaming-friendly NDJSON support automation; Markdown makes a portable
+  report.
 - **Focused batch tables** — check many targets, select fields such as
   expiration and registrar, and write directly to a file.
 - **Raw source access** — preserve the original RDAP JSON, WHOIS, or RWhois
@@ -56,11 +58,11 @@ service, or export a stable machine-readable report.
 
 <table>
   <tr>
-    <th width="50%">Public DNS inventory</th>
+    <th width="50%">DNS query</th>
     <th width="50%">Domain diagnosis</th>
   </tr>
   <tr>
-    <td><img src="docs/whodis-gui-dns.png" alt="Whodis DNS scan showing public records for cyberbrand.net"></td>
+    <td><img src="docs/whodis-gui-dns.png" alt="Whodis DNS query showing A and AAAA records for cyberbrand.net"></td>
     <td><img src="docs/whodis-gui-diagnose.png" alt="Whodis diagnosis showing DNS, web, TLS, mail, and policy findings for cyberbrand.net"></td>
   </tr>
 </table>
@@ -105,7 +107,7 @@ adds the directory to the user `PATH`. Open a new terminal and type `whodis`.
 ### Go, archives, and Arch Linux
 
 ```bash
-go install github.com/Alex9001/whodis/cmd/whodis@latest
+go install github.com/Alex9001/whodis/v2/cmd/whodis@latest
 ```
 
 Prebuilt CLI archives are published for Linux, macOS, Windows, FreeBSD, and
@@ -113,13 +115,17 @@ OpenBSD on amd64 and supported arm64 targets. Source-built AUR definitions for
 `whodis` and `whodis-gui` are ready; the maintainer's one-time account and key
 steps are in [AUR_HANDOFF.md](AUR_HANDOFF.md).
 
-Each release also carries installable `.deb`, `.rpm`, `.apk`, and Arch Linux
-packages. An optional non-root multi-architecture container is published to
-GitHub Container Registry:
+Each release also carries installable `.deb`, `.rpm`, Alpine Linux `.apk`, and
+Arch Linux packages. An optional non-root multi-architecture container is
+published to GitHub Container Registry:
 
 ```bash
 docker run --rm ghcr.io/alex9001/whodis example.com
 ```
+
+Checksum-pinned Homebrew, Scoop, and Nix manifest generation is ready for
+package-channel publication; see [PACKAGING_HANDOFF.md](PACKAGING_HANDOFF.md).
+The README does not claim a channel is live until its upstream page exists.
 
 ### Desktop app
 
@@ -149,7 +155,10 @@ Ask for the operation you want when you need more:
 
 ```bash
 # Registration plus a practical public-DNS inventory, including MX
-whodis scan example.com
+whodis inspect example.com
+
+# DNS inventory without registration data
+whodis dns inventory example.com
 
 # Arbitrary DNS types or numeric TYPE values
 whodis dns query example.com A AAAA MX HTTPS TYPE257
@@ -162,6 +171,11 @@ whodis dns trace example.com NS
 
 # Bounded DNS, reachability, HTTP, TLS, SMTP, and mail-policy checks
 whodis diagnose example.com
+
+# Save a passive observation, compare it later, and enforce health policy
+whodis inspect example.com --save --label production
+whodis diff production --live
+whodis check example.com --scrutiny strict
 ```
 
 ## A full DNS client, not a decorative lookup
@@ -236,6 +250,48 @@ Findings are deterministic `pass`, `info`, `warning`, or `error` observations
 with evidence. There is deliberately no opaque overall score and no arbitrary
 port-range scanner.
 
+## Snapshots, change detection, and policy checks
+
+Passive registration and DNS observations can be saved locally. Dedicated API
+token and TSIG-secret fields, raw DNS packets, request IDs, and timings are
+removed before storage:
+
+```bash
+whodis inspect example.com --save --label production
+whodis snapshot list
+whodis snapshot show production
+whodis diff production --live
+```
+
+For safety, a live replay does not activate custom registry servers or DNS
+resolver endpoints stored in an imported snapshot. If you created and trust
+the snapshot, opt in explicitly with `whodis diff production --live
+--allow-snapshot-endpoints`.
+
+Diffs are semantic and deterministic: record ordering and TTL churn are ignored
+unless `--include-ttl` is requested. A provider failure makes its section
+uncertain instead of manufacturing a removal. Exit status `5` means material
+changes were found; `6` means the comparison was incomplete.
+
+`whodis check` turns the same reports into CI- and monitoring-friendly policy
+results:
+
+```bash
+whodis check example.com
+whodis check example.com --active --scrutiny strict
+whodis check example.com --against production --policy whodis-policy.yaml --json
+whodis check --snapshot production
+```
+
+The built-in `basic`, `standard`, and `strict` scrutiny levels cover
+registration expiry, nameservers, DNSSEC, diagnostic findings, and TLS expiry.
+Strict YAML/JSON policies can require registration states, DNS records,
+nameservers, MX values, DNSSEC state, certificate lifetime, or allowed diff
+paths. Optional webhooks are sent only for failed or unknown checks; their URL
+can be read from an environment variable or file to keep it out of shell
+history. Start with [examples/whodis-policy.yaml](examples/whodis-policy.yaml).
+Snapshots never run in the background.
+
 ## Batch checks and files
 
 Most registration and workstation commands accept several targets and preserve
@@ -244,14 +300,16 @@ input order while using bounded concurrency:
 ```bash
 whodis expires google.com yahoo.com
 whodis get expiration,registrar,status -i domains.txt -o results.txt
-whodis diagnose example.com example.net --json -o diagnosis.json
+whodis diagnose example.com example.net --ndjson -o diagnosis.ndjson
 printf 'google.com\nyahoo.com\n' | whodis expires
 ```
 
 Use `--jobs 1` through `--jobs 32` to control concurrency. Individual failures
 remain attributed to their input and do not erase successful results. Existing
-files are protected unless `--force` is supplied. `.json`, `.yaml`, `.md`, and
-`.txt` output names select their formats automatically.
+files are protected unless `--force` is supplied. `.json`, `.ndjson`, `.csv`,
+`.yaml`, `.md`, and `.txt` output names select their formats automatically.
+Use `-f/--format` when an extension should not decide. `check` and `diff`
+support plain text, JSON, YAML, and Markdown through the same file rules.
 
 ## Choose defaults once
 
@@ -261,16 +319,18 @@ Run the interactive wizard:
 whodis config
 ```
 
-It configures six preferences: output layout, color, notice detail, default DNS
-resolver, multi-resolver strategy, and DNSSEC requests. Press Enter to retain a
-choice or review everything before saving. Direct commands are available for
-automation:
+It configures output layout, color, notice detail, DNS resolver and DNSSEC
+defaults, plus the scrutiny and passive/active mode used by `whodis check`.
+Press Enter to retain a choice or review everything before saving. Direct
+commands are available for automation:
 
 ```bash
 whodis config set format tree
 whodis config set resolver 'https://cloudflare-dns.com/dns-query'
 whodis config set strategy consensus
 whodis config set dnssec on
+whodis config set scrutiny strict
+whodis config set check-mode passive
 whodis config get resolver
 whodis config reset
 ```
@@ -284,20 +344,25 @@ bash|zsh|fish|powershell`.
 ```text
 whodis <target>
 whodis registration <target...>
-whodis scan <domain...>
+whodis inspect <domain...>
 whodis dns query <name> [TYPE...]
+whodis dns inventory <domain...>
 whodis dns compare <name> [TYPE...]
 whodis dns trace <name> [TYPE]
 whodis dns transfer <zone>
 whodis diagnose <domain...>
+whodis check <target...>
+whodis snapshot <list|show|remove|export|import|path> ...
+whodis diff <snapshot> <snapshot>|--live
 whodis expires <target...>
 whodis get <fields> <target...>
 ```
 
-Add `--dashboard`, `--tree`, `--geekboys`, `--plain`, `--json`, `--yaml`, or
-`--markdown` to select output. `whodis help dns`, `whodis help diagnose`, and
-`whodis help advanced` document operation-specific controls. The older `scan`
-and `axfr` spellings remain available for compatibility.
+Add `-f dashboard|tree|geekboys|plain|json|yaml|csv|ndjson|markdown|raw` to
+select output (the equivalent long shortcuts also work). `whodis help dns`,
+`whodis help diagnose`, and `whodis help advanced` document operation-specific
+controls. The older `scan` and `axfr` spellings remain available for
+compatibility.
 
 ## How registration routing works
 
@@ -316,6 +381,12 @@ Automatic routing falls back only for an unavailable or unusable service.
 Authoritative not-found and rate-limit responses remain visible. `--try-both`
 widens diagnostic fallback and `--strict` disables it.
 
+Automatically discovered RDAP URLs require HTTPS, and automatic RDAP,
+WHOIS, and RWhois referrals to private, loopback, link-local, documentation, or
+other special-use addresses are blocked. Explicitly managed private registry
+infrastructure can opt in per run with `--allow-private`; automatic HTTP RDAP
+requires the separate `--allow-insecure-http` exception.
+
 ## Go SDK and report schema
 
 The supported public API is renderer-independent. The CLI and GUI both call the
@@ -331,17 +402,19 @@ report, err := engine.Run(ctx, whodis.Request{
 err = whodis.RenderReport(os.Stdout, report, whodis.FormatJSON, whodis.RenderOptions{})
 ```
 
-`Report` schema version 3 keeps registration, DNS, diagnosis, findings, and
-provider-scoped errors independent, so one failed registry or probe does not
-erase useful results. `Engine.RunBatch` preserves input order, accepts bounded
-workers, supports cancellation, and emits progress callbacks. Registration,
-DNS, and Diagnose providers are interfaces for embedding and deterministic
-tests.
+`Report` schema version 4 adds an operation-aware `Subject` and keeps
+registration, DNS, diagnosis, findings, and provider-scoped errors independent,
+so one failed registry or probe does not erase useful results.
+Diagnostic findings are aggregated once at report level instead of being
+duplicated inside the diagnosis payload.
+`Engine.RunBatch` preserves input order, while `Engine.RunStream` handles input
+incrementally with bounded work and progress callbacks. Registration, DNS, and
+Diagnose providers are interfaces for embedding and deterministic tests.
 
-The established `Client`, `LookupResult` schema v2, `Render`, and legacy batch
-API remain available for registration-focused integrations. The native GUI's
-private newline-delimited JSON-RPC protocol is version 2 and carries schema-v3
-reports, progress, cancel, in-memory result tokens, and exports.
+The native GUI's private newline-delimited JSON-RPC protocol is version 3 and
+carries schema-v4 reports through the same operation engine as the CLI, plus
+progress, cancellation, short-lived in-memory result tokens, and exports. See
+[MIGRATING_TO_V2.md](MIGRATING_TO_V2.md) when upgrading an embedded v1 client.
 
 ## Development and release integrity
 
@@ -359,12 +432,13 @@ and a C++17 compiler; source builds require Go 1.25 or newer. See
 fixtures and in-memory protocol sessions rather than consuming public registry
 or Globalping quota.
 
-Release automation cross-builds the pure-Go CLI, builds native desktop bundles,
-runs race and vulnerability checks, generates SHA-256 checksums and SBOMs, and
-attests release provenance. Releases remain split into CLI and GUI assets so a
-server never needs to install Qt.
+Release automation has a non-publishing preflight that cross-builds the pure-Go
+CLI and every native desktop bundle before a tag is created. It runs race and
+vulnerability checks, generates staged-content SBOMs and SHA-256 checksums,
+attests the exact release bytes, and only then publishes them. Releases remain
+split into CLI and GUI assets so a server never needs to install Qt.
 
-## Current limitations
+## Boundaries and honest limitations
 
 - RWhois has no global bootstrap registry. Automatic discovery needs a
   published RDAP `port43` hint or WHOIS `ReferralServer`; otherwise use an
@@ -380,13 +454,15 @@ server never needs to install Qt.
 - Diagnose samples bounded representative addresses, MX hosts, and advertised
   services. It is evidence collection, not continuous monitoring or an
   exhaustive security audit.
-- Raw source output is limited to registration responses. Multi-target and
+- Raw source output is limited to one registration response. Multi-target and
   workstation operations use human-readable or structured report formats.
+- Saved snapshots are local files, not a scheduler or hosted monitoring
+  service. Use cron, systemd timers, Task Scheduler, or CI to run checks.
 - Authenticated registry accounts, proprietary registry APIs, web scraping,
   generic port scanning, telemetry, mobile apps, and app-store distribution are
   intentionally out of scope.
 - Desktop packages are currently unsigned and distributed through GitHub
-  Releases.
+  Releases; SmartScreen and Gatekeeper may require a deliberate first launch.
 
 ## License
 

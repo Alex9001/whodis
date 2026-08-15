@@ -1,0 +1,33 @@
+policy_schema_version: 1
+name: production-domain
+rules:
+  - id: registration-lifetime
+    type: minimum_registration_days
+    severity: warning
+    config:
+      days: 30
+  - id: transfer-lock
+    type: required_status
+    severity: warning
+    config:
+      value: client transfer prohibited
+  - id: primary-nameserver
+    type: expected_nameserver
+    severity: error
+    config:
+      value: ns1.example.net
+  - id: mail-route
+    type: expected_mx
+    severity: warning
+    config:
+      value: mail.example.net
+  - id: tls-lifetime
+    type: minimum_tls_days
+    severity: warning
+    config:
+      days: 14
+  - id: ignore-routine-ttl-paths
+    type: allow_diff_path
+    severity: info
+    config:
+      path: /reports/example.com/inspect/dns/*

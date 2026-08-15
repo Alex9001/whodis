@@ -12,26 +12,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 )
-
-type batchClient interface {
-	LookupBatch(context.Context, []string, whodis.BatchLookupOptions) (whodis.BatchResult, error)
-}
 
 type engineRunner interface {
 	RunBatch(context.Context, whodis.BatchRequest) (whodis.BatchReport, error)
 }
 
 type storedResult struct {
-	batch       whodis.BatchResult
 	reportBatch *whodis.BatchReport
 }
 
 // Server exposes the Whodis engine to a desktop frontend over JSON-RPC.
 type Server struct {
 	version string
-	client  batchClient
 	engine  engineRunner
 	input   io.Reader
 	output  io.Writer
@@ -46,36 +40,24 @@ type Server struct {
 	group      sync.WaitGroup
 }
 
-// NewServer constructs a GUI engine server. The caller owns all streams.
-func NewServer(version string, client batchClient, input io.Reader, output, logs io.Writer) *Server {
-	server := &Server{
+// NewServerWithEngine constructs a protocol-v3 server with an explicitly
+// injected operation engine. The caller owns the engine and all streams.
+func NewServerWithEngine(version string, engine engineRunner, input io.Reader, output, logs io.Writer) *Server {
+	return &Server{
 		version: version,
-		client:  client,
+		engine:  engine,
 		input:   input,
 		output:  output,
 		logs:    logs,
 		cancels: make(map[string]context.CancelFunc),
 		results: make(map[string]storedResult),
 	}
-	if concrete, ok := client.(*whodis.Client); ok {
-		server.engine = whodis.NewEngine(whodis.EngineOptions{Client: concrete})
-	}
-	return server
-}
-
-// NewServerWithEngine constructs a protocol-v2 server with an explicitly
-// injected operation engine. It is primarily useful to native frontends and
-// deterministic contract tests.
-func NewServerWithEngine(version string, client batchClient, engine engineRunner, input io.Reader, output, logs io.Writer) *Server {
-	server := NewServer(version, client, input, output, logs)
-	server.engine = engine
-	return server
 }
 
 // Serve processes requests until input closes, then waits for active lookups.
 func (server *Server) Serve() error {
-	if server.client == nil || server.input == nil || server.output == nil {
-		return fmt.Errorf("GUI engine requires a client, input, and output")
+	if server.engine == nil || server.input == nil || server.output == nil {
+		return fmt.Errorf("GUI engine requires an operation engine, input, and output")
 	}
 	scanner := bufio.NewScanner(server.input)
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
@@ -102,7 +84,7 @@ func (server *Server) handle(rpcRequest request) {
 		server.writeResult(rpcRequest.ID, helloResult{
 			ProtocolVersion: ProtocolVersion,
 			EngineVersion:   server.version,
-			Capabilities:    []string{"registration", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "batch", "progress", "cancel", "raw", "export", "schema_v3"},
+			Capabilities:    []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "batch", "progress", "cancel", "raw", "export", "schema_v4"},
 		})
 	case "parse":
 		var params parseParams
@@ -116,22 +98,6 @@ func (server *Server) handle(rpcRequest request) {
 			return
 		}
 		server.writeResult(rpcRequest.ID, result)
-	case "lookup":
-		var params lookupParams
-		if err := decodeParams(rpcRequest.Params, &params); err != nil {
-			server.writeError(rpcRequest.ID, -32602, err.Error(), nil)
-			return
-		}
-		if len(rpcRequest.ID) == 0 || string(rpcRequest.ID) == "null" {
-			server.writeError(rpcRequest.ID, -32600, "lookup requires an id", nil)
-			return
-		}
-		options, err := parseLookupOptions(params)
-		if err != nil {
-			server.writeError(rpcRequest.ID, -32602, err.Error(), nil)
-			return
-		}
-		server.startLookup(rpcRequest.ID, params, options)
 	case "run":
 		var params runParams
 		if err := decodeParams(rpcRequest.Params, &params); err != nil {
@@ -168,11 +134,11 @@ func (server *Server) handle(rpcRequest request) {
 		}
 		var rendered exportResult
 		var err error
-		if stored.reportBatch != nil {
-			rendered, err = renderReportExport(*stored.reportBatch, params)
-		} else {
-			rendered, err = renderExport(stored.batch, params)
+		if stored.reportBatch == nil {
+			server.writeError(rpcRequest.ID, -32602, "result is unavailable", nil)
+			return
 		}
+		rendered, err = renderReportExport(*stored.reportBatch, params)
 		if err != nil {
 			server.writeError(rpcRequest.ID, -32602, err.Error(), nil)
 			return
@@ -193,75 +159,12 @@ func decodeParams(payload json.RawMessage, destination any) error {
 	return nil
 }
 
-func parseLookupOptions(params lookupParams) (whodis.BatchLookupOptions, error) {
-	if len(params.Targets) == 0 {
-		return whodis.BatchLookupOptions{}, fmt.Errorf("at least one target is required")
-	}
-	protocol := whodis.ProtocolAuto
-	if params.Protocol != "" {
-		protocol = whodis.Protocol(strings.ToLower(params.Protocol))
-	}
-	switch protocol {
-	case whodis.ProtocolAuto, whodis.ProtocolRDAP, whodis.ProtocolWHOIS, whodis.ProtocolRWHOIS:
-	default:
-		return whodis.BatchLookupOptions{}, fmt.Errorf("protocol must be auto, rdap, whois, or rwhois")
-	}
-	fallback := whodis.FallbackUnavailable
-	if params.Fallback != "" {
-		fallback = whodis.FallbackMode(strings.ToLower(params.Fallback))
-	}
-	switch fallback {
-	case whodis.FallbackUnavailable, whodis.FallbackNone, whodis.FallbackAnyError:
-	default:
-		return whodis.BatchLookupOptions{}, fmt.Errorf("fallback must be unavailable, none, or any-error")
-	}
-	mode := strings.ToLower(strings.TrimSpace(params.Mode))
-	dnsMode := whodis.DNSOff
-	switch mode {
-	case "", "registration":
-	case "scan":
-		dnsMode = whodis.DNSScan
-	case "axfr":
-		dnsMode = whodis.DNSAXFR
-	default:
-		return whodis.BatchLookupOptions{}, fmt.Errorf("mode must be registration, scan, or axfr")
-	}
-	timeout := 15 * time.Second
-	if params.TimeoutMS != 0 {
-		if params.TimeoutMS < 1 || params.TimeoutMS > int((10*time.Minute)/time.Millisecond) {
-			return whodis.BatchLookupOptions{}, fmt.Errorf("timeout_ms must be between 1 and 600000")
-		}
-		timeout = time.Duration(params.TimeoutMS) * time.Millisecond
-	}
-	if params.Workers < 0 || params.Workers > 32 {
-		return whodis.BatchLookupOptions{}, fmt.Errorf("workers must be between 1 and 32")
-	}
-	if protocol == whodis.ProtocolRWHOIS && strings.TrimSpace(params.Server) == "" {
-		return whodis.BatchLookupOptions{}, fmt.Errorf("rwhois requires a server")
-	}
-	if strings.TrimSpace(params.Server) != "" && protocol == whodis.ProtocolAuto {
-		return whodis.BatchLookupOptions{}, fmt.Errorf("a server requires an explicit protocol")
-	}
-	return whodis.BatchLookupOptions{
-		LookupOptions: whodis.LookupOptions{
-			Protocol:         protocol,
-			Fallback:         fallback,
-			Server:           strings.TrimSpace(params.Server),
-			Timeout:          timeout,
-			RefreshBootstrap: params.RefreshBootstrap,
-			DNSMode:          dnsMode,
-			DNSResolver:      strings.TrimSpace(params.Resolver),
-		},
-		Workers: params.Workers,
-	}, nil
-}
-
 func validateRunParams(params runParams) error {
 	if len(params.Targets) == 0 {
 		return fmt.Errorf("at least one target is required")
 	}
 	switch params.Operation {
-	case whodis.OperationRegistration, whodis.OperationDNSQuery, whodis.OperationDNSInventory,
+	case whodis.OperationRegistration, whodis.OperationInspect, whodis.OperationDNSQuery, whodis.OperationDNSInventory,
 		whodis.OperationDNSCompare, whodis.OperationDNSTrace, whodis.OperationDNSTransfer,
 		whodis.OperationDiagnose:
 	default:
@@ -373,75 +276,6 @@ func (server *Server) startRun(id json.RawMessage, params runParams) {
 	}()
 }
 
-func (server *Server) startLookup(id json.RawMessage, params lookupParams, options whodis.BatchLookupOptions) {
-	requestID, ok := stringID(id)
-	if !ok {
-		server.writeError(id, -32600, "lookup id must be a string", nil)
-		return
-	}
-	server.stateMutex.Lock()
-	if _, exists := server.cancels[requestID]; exists {
-		server.stateMutex.Unlock()
-		server.writeError(id, -32600, "lookup id is already active", nil)
-		return
-	}
-	contextForLookup, cancel := context.WithCancel(context.Background())
-	server.cancels[requestID] = cancel
-	server.stateMutex.Unlock()
-
-	originals := append([]string(nil), params.Targets...)
-	normalized := make([]string, len(originals))
-	for index, input := range originals {
-		value, err := normalizeTarget(input)
-		if err != nil {
-			normalized[index] = input
-		} else {
-			normalized[index] = value
-		}
-	}
-	options.OnProgress = func(update whodis.BatchProgress) {
-		server.writeNotification("progress", progressParams{
-			RequestID: requestID,
-			Index:     update.Index,
-			Completed: update.Completed,
-			Total:     update.Total,
-			Item:      makeItem(originals[update.Index], update.Item),
-		})
-	}
-
-	server.group.Add(1)
-	go func() {
-		defer server.group.Done()
-		defer server.removeCancel(requestID)
-		batch, err := server.client.LookupBatch(contextForLookup, normalized, options)
-		if err != nil {
-			server.writeLookupError(id, err)
-			return
-		}
-		for index := range batch.Items {
-			batch.Items[index].Input = originals[index]
-		}
-		token := server.storeResult(batch)
-		items := make([]item, len(batch.Items))
-		for index, batchItem := range batch.Items {
-			items[index] = makeItem(originals[index], batchItem)
-		}
-		server.writeResult(id, lookupResult{Token: token, Items: items, Canceled: contextForLookup.Err() != nil})
-	}()
-}
-
-func makeItem(input string, batchItem whodis.BatchItem) item {
-	result := item{Input: input, Result: batchItem.Result, Error: batchItem.Error}
-	if batchItem.Result != nil {
-		for _, source := range batchItem.Result.Sources {
-			result.RawSources = append(result.RawSources, rawSource{
-				Protocol: source.Protocol, Endpoint: source.Endpoint, Authority: source.Authority, Content: source.Raw,
-			})
-		}
-	}
-	return result
-}
-
 func (server *Server) writeLookupError(id json.RawMessage, err error) {
 	var lookupError *whodis.LookupError
 	if errors.As(err, &lookupError) {
@@ -485,20 +319,6 @@ func (server *Server) removeCancel(requestID string) {
 	server.stateMutex.Lock()
 	delete(server.cancels, requestID)
 	server.stateMutex.Unlock()
-}
-
-func (server *Server) storeResult(batch whodis.BatchResult) string {
-	token := fmt.Sprintf("result-%d", server.nextToken.Add(1))
-	server.stateMutex.Lock()
-	server.results[token] = storedResult{batch: batch}
-	server.resultIDs = append(server.resultIDs, token)
-	if len(server.resultIDs) > 20 {
-		oldest := server.resultIDs[0]
-		server.resultIDs = server.resultIDs[1:]
-		delete(server.results, oldest)
-	}
-	server.stateMutex.Unlock()
-	return token
 }
 
 func (server *Server) storeReportResult(batch whodis.BatchReport) string {

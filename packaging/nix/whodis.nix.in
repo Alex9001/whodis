@@ -1,0 +1,42 @@
+{ lib, stdenv, fetchurl }:
+
+let
+  sources = {
+    "x86_64-linux" = {
+      url = "https://github.com/Alex9001/whodis/releases/download/v@VERSION@/whodis_linux_amd64.tar.gz";
+      sha256 = "@LINUX_AMD64_SHA256@";
+    };
+    "aarch64-linux" = {
+      url = "https://github.com/Alex9001/whodis/releases/download/v@VERSION@/whodis_linux_arm64.tar.gz";
+      sha256 = "@LINUX_ARM64_SHA256@";
+    };
+    "x86_64-darwin" = {
+      url = "https://github.com/Alex9001/whodis/releases/download/v@VERSION@/whodis_darwin_amd64.tar.gz";
+      sha256 = "@DARWIN_AMD64_SHA256@";
+    };
+    "aarch64-darwin" = {
+      url = "https://github.com/Alex9001/whodis/releases/download/v@VERSION@/whodis_darwin_arm64.tar.gz";
+      sha256 = "@DARWIN_ARM64_SHA256@";
+    };
+  };
+  source = sources.${stdenv.hostPlatform.system}
+    or (throw "whodis is not packaged for ${stdenv.hostPlatform.system}");
+in
+stdenv.mkDerivation {
+  pname = "whodis";
+  version = "@VERSION@";
+  src = fetchurl source;
+  sourceRoot = ".";
+  installPhase = ''
+    runHook preInstall
+    install -Dm755 whodis "$out/bin/whodis"
+    runHook postInstall
+  '';
+  meta = {
+    description = "RDAP-first WHOIS, DNS, and domain diagnostics";
+    homepage = "https://cyberbrand.net/whodis/";
+    license = lib.licenses.mit;
+    mainProgram = "whodis";
+    platforms = builtins.attrNames sources;
+  };
+}

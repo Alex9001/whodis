@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 )
 
 var defaultBatchFields = []whodis.ProjectionField{
@@ -53,6 +53,8 @@ func renderReportExport(batch whodis.BatchReport, params exportParams) (exportRe
 		renderFormat, mime, extension = whodis.FormatJSON, "application/json", "json"
 	case "yaml", "yml":
 		renderFormat, mime, extension = whodis.FormatYAML, "application/yaml", "yaml"
+	case "ndjson", "jsonl":
+		renderFormat, mime, extension = whodis.FormatNDJSON, "application/x-ndjson", "ndjson"
 	case "markdown", "md":
 		renderFormat, mime, extension = whodis.FormatMarkdown, "text/markdown", "md"
 	case "plain", "txt":
@@ -87,17 +89,24 @@ func renderReportCSV(output *bytes.Buffer, batch whodis.BatchReport, comma rune)
 		if report.DNS != nil {
 			dnsRecords = reportDNSRecordCount(report.DNS)
 		}
+		findingIDs := make(map[string]bool)
+		for _, finding := range report.Findings {
+			findingIDs[finding.ID+"\x00"+string(finding.Severity)+"\x00"+finding.Title+"\x00"+finding.Summary] = true
+		}
 		if report.Diagnosis != nil {
-			findings = len(report.Diagnosis.Findings)
+			for _, finding := range report.Diagnosis.Findings {
+				findingIDs[finding.ID+"\x00"+string(finding.Severity)+"\x00"+finding.Title+"\x00"+finding.Summary] = true
+			}
 			if report.Diagnosis.DNS != nil {
 				dnsRecords = reportDNSRecordCount(report.Diagnosis.DNS)
 			}
 		}
+		findings = len(findingIDs)
 		errorValues := make([]string, 0, len(report.Errors))
 		for _, operationError := range report.Errors {
 			errorValues = append(errorValues, string(operationError.Kind)+": "+operationError.Message)
 		}
-		if err := writer.Write([]string{report.Query.Canonical, string(report.Operation), expiration, registrar, fmt.Sprint(dnsRecords), fmt.Sprint(findings), strings.Join(errorValues, "; ")}); err != nil {
+		if err := writer.Write([]string{report.Subject.Canonical, string(report.Operation), expiration, registrar, fmt.Sprint(dnsRecords), fmt.Sprint(findings), strings.Join(errorValues, "; ")}); err != nil {
 			return err
 		}
 	}

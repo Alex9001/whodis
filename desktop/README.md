@@ -4,7 +4,7 @@
 as the `whodis` CLI. The desktop package includes `whodis-gui-engine` as a
 private helper; users do not need to install or run the CLI.
 
-The main window exposes Registration, DNS Inventory, DNS Query, and Diagnose
+The main window exposes Registration, Inspect, selectable DNS Query, and Diagnose
 actions. Resolver comparison, iterative delegation tracing, and explicit zone
 transfer live under Tools. Results open only the relevant Overview, DNS,
 Compare, Delegation, Services, Findings, Contacts, and Raw tabs. The separate
@@ -44,14 +44,14 @@ engine build.
 
 The GUI starts `whodis-gui-engine` as a child process. Requests and responses
 are JSON-RPC 2.0 objects separated by newlines over standard input and output;
-diagnostics go only to standard error. Protocol version 2 provides `hello`,
-`parse`, schema-v3 `run`, `cancel`, and `export`, plus asynchronous progress
-notifications. The protocol-v1-style `lookup` method remains as a compatibility
-bridge for older frontends. The helper is a private implementation detail
-rather than a second public command-line interface.
+diagnostics go only to standard error. Protocol version 3 provides `hello`,
+`parse`, schema-v4 `run`, `cancel`, and `export`, plus asynchronous progress
+notifications. All operations use `run`; the old registration-only bridge was
+removed. The helper is a private implementation detail rather than a second
+public command-line interface.
 
 Full HTTP and HTTPS URLs are accepted by the desktop boundary and normalized to
-their hostname. Operation results use public Whodis report schema v3, which
+their hostname. Operation results use public Whodis report schema v4, which
 keeps partial registration, DNS, diagnosis, findings, and scoped errors. The
 helper retains a small in-memory result cache so the GUI can export without
 repeating network requests. Globalping is off until the user explicitly checks

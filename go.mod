@@ -1,4 +1,4 @@
-module github.com/Alex9001/whodis
+module github.com/Alex9001/whodis/v2
 
 go 1.25.0
 

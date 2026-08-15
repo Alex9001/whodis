@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 )
 
 func TestParseArgsDetails(t *testing.T) {
@@ -136,10 +136,19 @@ func TestParseNoDNSSECOverride(t *testing.T) {
 	}
 }
 
+func TestParseExplicitCSVAndNDJSONFormats(t *testing.T) {
+	for _, format := range []string{"csv", "ndjson"} {
+		options, err := parseArgs([]string{"example.com", "--format", format})
+		if err != nil || !options.formatSet || options.format != format {
+			t.Fatalf("--format %s = (%+v, %v)", format, options, err)
+		}
+	}
+}
+
 func TestUsageIncludesDetailsAndDNS(t *testing.T) {
 	var output bytes.Buffer
 	printUsage(&output)
-	for _, value := range []string{"scan", "axfr", "expires", "get <fields>", "--details", "--summary", "--resolver", "whodis config"} {
+	for _, value := range []string{"inspect", "dns transfer", "expires", "get <fields>", "--details", "--summary", "--resolver", "whodis config", "snapshot", "--format"} {
 		if !strings.Contains(output.String(), value) {
 			t.Fatalf("printUsage() output does not document %q:\n%s", value, output.String())
 		}
@@ -221,7 +230,7 @@ func TestRunVersionUsesInjectedVersion(t *testing.T) {
 func TestGeneratedShellCompletions(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
 		var stdout, stderr bytes.Buffer
-		if code := run([]string{"completion", shell}, &stdout, &stderr); code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "diagnose") || !strings.Contains(stdout.String(), "resolver") {
+		if code := run([]string{"completion", shell}, &stdout, &stderr); code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "diagnose") || !strings.Contains(stdout.String(), "resolver") || !strings.Contains(stdout.String(), "allow-snapshot-endpoints") {
 			t.Fatalf("completion %s = (code %d, stdout %q, stderr %q)", shell, code, stdout.String(), stderr.String())
 		}
 	}
@@ -264,7 +273,7 @@ func TestParseArgsProtocolTaskGrammar(t *testing.T) {
 }
 
 func TestParseArgsRejectsLegacyFlagsWithoutHints(t *testing.T) {
-	for _, arg := range []string{"--dns", "--axfr", "--expiration", "--fields", "--format", "--protocol", "--fallback", "--refresh-bootstrap", "--no-details"} {
+	for _, arg := range []string{"--dns", "--axfr", "--expiration", "--fields", "--protocol", "--fallback", "--refresh-bootstrap", "--no-details"} {
 		_, err := parseArgs([]string{"example.com", arg})
 		if err == nil || !strings.Contains(err.Error(), "unknown option "+arg) || strings.Contains(strings.ToLower(err.Error()), "instead") {
 			t.Fatalf("parseArgs legacy %q error = %v, want generic unknown-option error", arg, err)
@@ -303,6 +312,28 @@ func TestCommandHelp(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		if got := runWithRuntime(args, &stdout, &stderr, testRuntime(t.TempDir(), nil, false)); got != 0 || stdout.Len() == 0 || stderr.Len() != 0 {
 			t.Fatalf("run(%q) = (%d, %q, %q), want command help", args, got, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestAuditCommandHelp(t *testing.T) {
+	tests := []struct {
+		args []string
+		want []string
+	}{
+		{args: []string{"snapshot", "list", "--help"}, want: []string{"snapshot list", "--json"}},
+		{args: []string{"diff", "--help"}, want: []string{"--allow-snapshot-endpoints", "--markdown", "-o file"}},
+		{args: []string{"check", "--help"}, want: []string{"--scrutiny", "--markdown", "-o file"}},
+	}
+	for _, test := range tests {
+		var stdout, stderr bytes.Buffer
+		if code := runWithRuntime(test.args, &stdout, &stderr, testRuntime(t.TempDir(), nil, false)); code != 0 || stderr.Len() != 0 {
+			t.Fatalf("run(%q) = (%d, %q, %q), want command help", test.args, code, stdout.String(), stderr.String())
+		}
+		for _, value := range test.want {
+			if !strings.Contains(stdout.String(), value) {
+				t.Fatalf("run(%q) help does not include %q: %s", test.args, value, stdout.String())
+			}
 		}
 	}
 }

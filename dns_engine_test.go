@@ -2,6 +2,7 @@ package whodis
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -105,5 +106,32 @@ func TestValidateDNSOptionsRejectsMalformedEDNS(t *testing.T) {
 		if err := ValidateDNSOptions(options); err == nil {
 			t.Fatalf("ValidateDNSOptions(%#v) succeeded", options)
 		}
+	}
+}
+
+func TestDNSInventoryReportsTotalResolverFailure(t *testing.T) {
+	provider := &nativeDNSProvider{exchangeFunc: func(context.Context, *mdns.Msg, resolverSpec) (*mdns.Msg, []byte, error) {
+		return nil, nil, errors.New("resolver offline")
+	}}
+	result, err := provider.Inventory(context.Background(), "example.test", DNSOptions{Resolvers: []string{"192.0.2.53"}})
+	if err == nil || result == nil || !strings.Contains(err.Error(), "DNS inventory queries failed") {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+}
+
+func TestDNSInventoryPreservesPartialDataAndReportsIncomplete(t *testing.T) {
+	provider := &nativeDNSProvider{exchangeFunc: func(_ context.Context, request *mdns.Msg, _ resolverSpec) (*mdns.Msg, []byte, error) {
+		question := request.Question[0]
+		if question.Name != "example.test." || question.Qtype != mdns.TypeNS {
+			return nil, nil, errors.New("resolver timeout")
+		}
+		response := new(mdns.Msg)
+		response.SetReply(request)
+		response.Answer = []mdns.RR{testNS("example.test.", "ns1.example.test.")}
+		return response, nil, nil
+	}}
+	result, err := provider.Inventory(context.Background(), "example.test", DNSOptions{Resolvers: []string{"192.0.2.53"}})
+	if err == nil || result == nil || result.Inventory == nil || len(result.Inventory.Records) == 0 {
+		t.Fatalf("partial result = %#v, error = %v", result, err)
 	}
 }

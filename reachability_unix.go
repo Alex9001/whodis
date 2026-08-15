@@ -5,15 +5,21 @@ package whodis
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
+
+var icmpSequence atomic.Uint32
+
+func nextICMPSequence() int {
+	return int(icmpSequence.Add(1) % 65535)
+}
 
 func probeReachability(ctx context.Context, address string) AddressProbe {
 	probe := AddressProbe{Address: address, Method: "icmp"}
@@ -39,7 +45,7 @@ func probeReachability(ctx context.Context, address string) AddressProbe {
 			deadline = contextDeadline
 		}
 		_ = connection.SetDeadline(deadline)
-		message := icmp.Message{Type: messageType, Code: 0, Body: &icmp.Echo{ID: os.Getpid() & 0xffff, Seq: rand.IntN(65535), Data: []byte("whodis")}}
+		message := icmp.Message{Type: messageType, Code: 0, Body: &icmp.Echo{ID: os.Getpid() & 0xffff, Seq: nextICMPSequence(), Data: []byte("whodis")}}
 		wire, marshalErr := message.Marshal(nil)
 		if marshalErr == nil {
 			started := time.Now()

@@ -34,7 +34,7 @@ while IFS="$tab" read -r module module_dir; do
         "$module_dir"/NOTICE "$module_dir"/NOTICE.*; do
         [ -f "$source" ] || continue
         destination="${safe_module}-$(basename "$source")"
-        cp "$source" "$output_dir/$destination"
+        cp -f "$source" "$output_dir/$destination"
         copied="${copied} ${destination}"
         found=true
     done

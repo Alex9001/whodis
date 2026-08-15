@@ -66,7 +66,7 @@ set(WHODIS_ENGINE_OUTPUT "${CMAKE_BINARY_DIR}/bin/${WHODIS_ENGINE_FILENAME}")
 add_custom_command(
     OUTPUT "${WHODIS_ENGINE_OUTPUT}"
     COMMAND "${GO_EXECUTABLE}" build -trimpath
-            "-ldflags=-s -w -X main.version=${WHODIS_VERSION} -X github.com/Alex9001/whodis.version=${WHODIS_VERSION}"
+            "-ldflags=-s -w -X main.version=${WHODIS_VERSION} -X github.com/Alex9001/whodis/v2.version=${WHODIS_VERSION}"
             -o "${WHODIS_ENGINE_OUTPUT}"
             ./cmd/whodis-gui-engine
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
@@ -89,6 +89,7 @@ if(NOT APPLE)
     else()
         install(PROGRAMS "${WHODIS_ENGINE_OUTPUT}" DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/whodis")
         install(FILES packaging/net.cyberbrand.whodis.desktop DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+        install(FILES packaging/net.cyberbrand.whodis.metainfo.xml DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
         install(FILES resources/whodis-512.png
             DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps"
             RENAME net.cyberbrand.whodis.png)

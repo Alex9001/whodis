@@ -1,6 +1,7 @@
 package whodis
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -64,6 +65,16 @@ func renderCompleteBatch(writer io.Writer, batch BatchResult, format Format, opt
 		}
 		_, err = writer.Write(payload)
 		return err
+	case FormatNDJSON:
+		encoder := json.NewEncoder(writer)
+		for _, item := range batch.Items {
+			if err := encoder.Encode(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	case FormatCSV:
+		return renderLegacyBatchCSV(writer, batch)
 	case FormatRaw:
 		return fmt.Errorf("raw output requires exactly one target")
 	}
@@ -182,6 +193,26 @@ func renderProjectedBatch(writer io.Writer, batch BatchResult, format Format, op
 	case FormatPlain:
 		_, err := io.WriteString(writer, renderProjectedTSV(projected))
 		return err
+	case FormatCSV:
+		csvWriter := csv.NewWriter(writer)
+		if err := csvWriter.Write(projectionHeaders(projected.Fields)); err != nil {
+			return err
+		}
+		for _, item := range projected.Items {
+			if err := csvWriter.Write(projectedCells(item, projected.Fields)); err != nil {
+				return err
+			}
+		}
+		csvWriter.Flush()
+		return csvWriter.Error()
+	case FormatNDJSON:
+		encoder := json.NewEncoder(writer)
+		for _, item := range projected.Items {
+			if err := encoder.Encode(item); err != nil {
+				return err
+			}
+		}
+		return nil
 	case FormatTree:
 		_, err := io.WriteString(writer, renderProjectedTree(projected))
 		return err
@@ -196,6 +227,31 @@ func renderProjectedBatch(writer io.Writer, batch BatchResult, format Format, op
 	default:
 		return fmt.Errorf("unsupported format %q", format)
 	}
+}
+
+func renderLegacyBatchCSV(writer io.Writer, batch BatchResult) error {
+	csvWriter := csv.NewWriter(writer)
+	if err := csvWriter.Write([]string{"TARGET", "PROTOCOL", "REGISTRAR", "EXPIRATION", "STATUS", "NAMESERVERS", "ERROR"}); err != nil {
+		return err
+	}
+	for _, item := range batch.Items {
+		row := []string{item.Input, "", "", "", "", "", ""}
+		if item.Result != nil {
+			row[1] = string(item.Result.Route.Protocol)
+			row[2] = item.Result.Object.Registrar
+			row[3] = strings.Join(eventValues(item.Result.Object.Events, "expiration", "expiry", "expires"), "; ")
+			row[4] = strings.Join(item.Result.Object.Status, "; ")
+			row[5] = strings.Join(item.Result.Object.Nameservers, "; ")
+		}
+		if item.Error != nil {
+			row[6] = string(item.Error.Kind) + ": " + item.Error.Message
+		}
+		if err := csvWriter.Write(row); err != nil {
+			return err
+		}
+	}
+	csvWriter.Flush()
+	return csvWriter.Error()
 }
 
 func projectField(result LookupResult, field ProjectionField) []string {
@@ -346,11 +402,25 @@ func renderProjectedGrid(batch projectedBatch, preferredWidth int) string {
 		return left + strings.Join(parts, middle) + right + "\n"
 	}
 	row := func(cells []string) string {
-		parts := make([]string, len(cells))
+		wrapped := make([][]string, len(cells))
+		height := 1
 		for index, cell := range cells {
-			parts[index] = " " + padGridCell(safeText(cell), widths[index]) + " "
+			wrapped[index] = wrapReportCell(safeText(cell), widths[index])
+			height = max(height, len(wrapped[index]))
 		}
-		return "│" + strings.Join(parts, "│") + "│\n"
+		var output strings.Builder
+		for line := 0; line < height; line++ {
+			parts := make([]string, len(cells))
+			for index := range cells {
+				value := ""
+				if line < len(wrapped[index]) {
+					value = wrapped[index][line]
+				}
+				parts[index] = " " + padGridCell(value, widths[index]) + " "
+			}
+			output.WriteString("│" + strings.Join(parts, "│") + "│\n")
+		}
+		return output.String()
 	}
 	var builder strings.Builder
 	builder.WriteString(border("╭", "┬", "╮", "─"))
@@ -412,11 +482,5 @@ func gridWidth(widths []int) int {
 }
 
 func padGridCell(value string, width int) string {
-	if runewidth.StringWidth(value) > width {
-		if width <= 1 {
-			return "…"
-		}
-		value = runewidth.Truncate(value, width-1, "") + "…"
-	}
 	return value + strings.Repeat(" ", max(0, width-runewidth.StringWidth(value)))
 }

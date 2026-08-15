@@ -22,6 +22,8 @@ const (
 	FormatPlain    Format = "plain"
 	FormatJSON     Format = "json"
 	FormatYAML     Format = "yaml"
+	FormatCSV      Format = "csv"
+	FormatNDJSON   Format = "ndjson"
 	FormatMarkdown Format = "markdown"
 	FormatRaw      Format = "raw"
 )
@@ -49,6 +51,10 @@ func ParseFormat(value string) (Format, error) {
 		return FormatJSON, nil
 	case "yaml", "yml":
 		return FormatYAML, nil
+	case "csv":
+		return FormatCSV, nil
+	case "ndjson", "jsonl", "json-lines":
+		return FormatNDJSON, nil
 	case "markdown", "md":
 		return FormatMarkdown, nil
 	case "raw":
@@ -72,6 +78,8 @@ func Render(writer io.Writer, result LookupResult, format Format, options Render
 		}
 		_, err = writer.Write(payload)
 		return err
+	case FormatNDJSON:
+		return json.NewEncoder(writer).Encode(result)
 	case FormatMarkdown:
 		_, err := io.WriteString(writer, renderMarkdown(result))
 		return err

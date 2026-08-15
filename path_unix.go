@@ -5,7 +5,6 @@ package whodis
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"net"
 	"os"
 	"time"
@@ -47,7 +46,7 @@ func traceNetworkPath(ctx context.Context, address string, maximum int) ([]PathH
 		if err != nil {
 			return hops, err
 		}
-		message := icmp.Message{Type: echoType, Body: &icmp.Echo{ID: os.Getpid() & 0xffff, Seq: rand.IntN(65535), Data: []byte("whodis-path")}}
+		message := icmp.Message{Type: echoType, Body: &icmp.Echo{ID: os.Getpid() & 0xffff, Seq: nextICMPSequence(), Data: []byte("whodis-path")}}
 		wire, marshalErr := message.Marshal(nil)
 		if marshalErr != nil {
 			return hops, marshalErr

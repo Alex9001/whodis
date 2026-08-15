@@ -1,7 +1,7 @@
 // Package whodis provides protocol-aware registration-data lookups.
 //
 // Its public API intentionally has no terminal or GUI dependency, so the same
-// Client can power the command-line tool, native desktop app, and other clients.
+// Engine can power command-line, native desktop, and embedded clients.
 package whodis
 
 import (
@@ -250,6 +250,7 @@ type ClientOptions struct {
 	Timeout        time.Duration
 	CacheDirectory string
 	Adapters       []ProtocolAdapter
+	NetworkPolicy  NetworkPolicy
 }
 
 // ProtocolAdapter is the extension point for registration-data protocols.

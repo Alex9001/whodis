@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 )
 
 func TestRenderExportCSVUsesNormalizedFieldsAndEscapesValues(t *testing.T) {
@@ -45,11 +45,11 @@ func TestRenderExportRejectsUnknownField(t *testing.T) {
 	}
 }
 
-func TestRenderReportExportCSVFlattensSchemaV3(t *testing.T) {
+func TestRenderReportExportCSVFlattensSchemaV4(t *testing.T) {
 	batch := whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: []whodis.Report{{
 		Operation: whodis.OperationDiagnose,
-		Query:     whodis.Target{Canonical: "example.com"},
-		Registration: &whodis.LookupResult{Object: whodis.Object{
+		Subject:   whodis.Subject{Canonical: "example.com"},
+		Registration: &whodis.RegistrationResult{Object: whodis.Object{
 			Registrar: "Example, Inc.", Events: []whodis.Event{{Action: "expiration", Date: "2030-01-02T03:04:05Z"}},
 		}},
 		Diagnosis: &whodis.DiagnosisReport{Findings: []whodis.Finding{{ID: "dns.inventory"}}, DNS: &whodis.DNSOperationResult{

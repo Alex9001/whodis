@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -25,57 +25,64 @@ var version = "dev"
 type cliTask string
 
 const (
-	taskLookup      cliTask = "lookup"
-	taskScan        cliTask = "scan"
-	taskAXFR        cliTask = "axfr"
-	taskExpires     cliTask = "expires"
-	taskGet         cliTask = "get"
-	taskDNSQuery    cliTask = "dns-query"
-	taskDNSCompare  cliTask = "dns-compare"
-	taskDNSTrace    cliTask = "dns-trace"
-	taskDNSTransfer cliTask = "dns-transfer"
-	taskDiagnose    cliTask = "diagnose"
+	taskLookup       cliTask = "lookup"
+	taskScan         cliTask = "scan"
+	taskAXFR         cliTask = "axfr"
+	taskExpires      cliTask = "expires"
+	taskGet          cliTask = "get"
+	taskDNSQuery     cliTask = "dns-query"
+	taskDNSInventory cliTask = "dns-inventory"
+	taskDNSCompare   cliTask = "dns-compare"
+	taskDNSTrace     cliTask = "dns-trace"
+	taskDNSTransfer  cliTask = "dns-transfer"
+	taskDiagnose     cliTask = "diagnose"
 )
 
 type cliOptions struct {
-	target           string // retained for single-target compatibility in callers/tests
-	targets          []string
-	inputSources     []cliInputSource
-	fields           []whodis.ProjectionField
-	jobs             int
-	format           string
-	formatSet        bool
-	output           string
-	task             cliTask
-	protocol         whodis.Protocol
-	protocolSet      bool
-	fallback         whodis.FallbackMode
-	fallbackSet      bool
-	server           string
-	timeout          time.Duration
-	refreshBootstrap bool
-	dnsResolver      string
-	dnsResolvers     []string
-	recordTypes      []string
-	dnsClass         string
-	resolverStrategy whodis.ResolverStrategy
-	edns             whodis.EDNSOptions
-	dnssecSet        bool
-	transfer         whodis.TransferOptions
-	noRecursion      bool
-	checkingDisabled bool
-	globalping       bool
-	globalpingFrom   []string
-	globalpingLimit  int
-	trace            bool
-	remote           bool
-	color            string
-	colorSet         bool
-	details          bool
-	detailsSet       bool
-	force            bool
-	help             bool
-	showVersion      bool
+	target            string // retained for single-target compatibility in callers/tests
+	targets           []string
+	inputSources      []cliInputSource
+	fields            []whodis.ProjectionField
+	jobs              int
+	format            string
+	formatSet         bool
+	output            string
+	task              cliTask
+	protocol          whodis.Protocol
+	protocolSet       bool
+	fallback          whodis.FallbackMode
+	fallbackSet       bool
+	server            string
+	timeout           time.Duration
+	refreshBootstrap  bool
+	dnsResolver       string
+	dnsResolvers      []string
+	recordTypes       []string
+	dnsClass          string
+	resolverStrategy  whodis.ResolverStrategy
+	edns              whodis.EDNSOptions
+	dnssecSet         bool
+	transfer          whodis.TransferOptions
+	tsigSecretEnv     string
+	tsigSecretFile    string
+	allowPrivate      bool
+	allowInsecureHTTP bool
+	noRecursion       bool
+	checkingDisabled  bool
+	globalping        bool
+	globalpingFrom    []string
+	globalpingLimit   int
+	trace             bool
+	remote            bool
+	color             string
+	colorSet          bool
+	details           bool
+	detailsSet        bool
+	force             bool
+	saveSnapshot      bool
+	snapshotLabel     string
+	help              bool
+	showVersion       bool
 }
 
 type cliInputSource struct {
@@ -90,6 +97,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime) int {
+	if code, handled := runAuditCommand(args, stdout, stderr, runtime); handled {
+		return code
+	}
 	if len(args) > 0 && args[0] == "config" {
 		return runConfig(args[1:], stdout, stderr, runtime)
 	}
@@ -168,82 +178,47 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime cliRuntime)
 		}
 		return 2
 	}
-	if isEngineTask(options.task) {
-		return runEngineTask(inputs, options, format, color, details, stdout, stderr, runtime)
-	}
-
-	client := whodis.NewClient(whodis.ClientOptions{Timeout: options.timeout})
-	lookupOptions := whodis.LookupOptions{
-		Protocol: options.protocol, Fallback: options.fallback, Server: options.server,
-		Timeout: options.timeout, RefreshBootstrap: options.refreshBootstrap,
-		DNSMode: taskDNSMode(options.task), DNSResolver: options.dnsResolver,
-	}
-	if options.task == taskLookup && len(inputs) == 1 && len(options.fields) == 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
-		defer cancel()
-		result, err := client.Lookup(ctx, inputs[0], lookupOptions)
-		if err != nil {
-			printLookupError(stderr, err, format)
-			return exitCode(err)
-		}
-		writer, closeWriter, err := openOutput(options.output, options.force, stdout)
-		if err != nil {
-			fmt.Fprintln(stderr, "whodis:", err)
-			return 1
-		}
-		defer closeWriter()
-		if err := whodis.Render(writer, result, format, whodis.RenderOptions{Color: color, Details: details}); err != nil {
-			fmt.Fprintln(stderr, "whodis: could not render output:", err)
-			return 1
-		}
-		return 0
-	}
-
-	batch, err := client.LookupBatch(context.Background(), inputs, whodis.BatchLookupOptions{LookupOptions: lookupOptions, Workers: options.jobs})
-	if err != nil {
-		printLookupError(stderr, err, format)
-		return exitCode(err)
-	}
-
-	writer, closeWriter, err := openOutput(options.output, options.force, stdout)
-	if err != nil {
-		fmt.Fprintln(stderr, "whodis:", err)
-		return 1
-	}
-	defer closeWriter()
-	if err := whodis.RenderBatch(writer, batch, format, whodis.BatchRenderOptions{RenderOptions: whodis.RenderOptions{Color: color, Details: details}, Fields: options.fields}); err != nil {
-		fmt.Fprintln(stderr, "whodis: could not render output:", err)
-		return 1
-	}
-	if batch.HasErrors() {
-		failed := 0
-		for _, item := range batch.Items {
-			if item.Error != nil {
-				failed++
-			}
-		}
-		if len(batch.Items) == 1 {
-			return batchExitCode(batch.Items[0].Error)
-		}
-		fmt.Fprintf(stderr, "whodis: %d of %d lookups failed\n", failed, len(batch.Items))
-		return 1
-	}
-	return 0
+	return runEngineTask(inputs, options, format, color, details, stdout, stderr, runtime)
 }
 
 func runEngineTask(inputs []string, options cliOptions, format whodis.Format, color string, details bool, stdout, stderr io.Writer, runtime cliRuntime) int {
-	operation := whodis.OperationDNSQuery
+	operation := whodis.OperationRegistration
 	switch options.task {
+	case taskScan:
+		operation = whodis.OperationInspect
+	case taskAXFR, taskDNSTransfer:
+		operation = whodis.OperationDNSTransfer
+	case taskDNSQuery:
+		operation = whodis.OperationDNSQuery
+	case taskDNSInventory:
+		operation = whodis.OperationDNSInventory
 	case taskDNSCompare:
 		operation = whodis.OperationDNSCompare
 	case taskDNSTrace:
 		operation = whodis.OperationDNSTrace
-	case taskDNSTransfer:
-		operation = whodis.OperationDNSTransfer
 	case taskDiagnose:
 		operation = whodis.OperationDiagnose
 	}
 	recursive := !options.noRecursion
+	if options.tsigSecretEnv != "" {
+		options.transfer.TSIGSecret = strings.TrimSpace(runtime.getenv(options.tsigSecretEnv))
+		if options.transfer.TSIGSecret == "" {
+			fmt.Fprintf(stderr, "whodis: environment variable %s is empty\n", options.tsigSecretEnv)
+			return 2
+		}
+	}
+	if options.tsigSecretFile != "" {
+		payload, err := os.ReadFile(options.tsigSecretFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "whodis: could not read TSIG secret file: %v\n", err)
+			return 2
+		}
+		options.transfer.TSIGSecret = strings.TrimSpace(string(payload))
+		if options.transfer.TSIGSecret == "" {
+			fmt.Fprintln(stderr, "whodis: TSIG secret file is empty")
+			return 2
+		}
+	}
 	if config, exists, err := loadOptionalUserConfig(runtime); err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
@@ -281,7 +256,8 @@ func runEngineTask(inputs []string, options cliOptions, format whodis.Format, co
 			Diagnose: whodis.DiagnoseOptions{DNS: dnsOptions, Timeout: options.timeout, Trace: options.trace, Remote: options.remote},
 		})
 	}
-	engine := whodis.NewEngine(whodis.EngineOptions{Timeout: options.timeout})
+	engine := whodis.NewEngine(whodis.EngineOptions{Timeout: options.timeout, NetworkPolicy: whodis.NetworkPolicy{AllowPrivate: options.allowPrivate, AllowInsecureHTTP: options.allowInsecureHTTP}})
+	defer engine.Close()
 	batch, err := engine.RunBatch(context.Background(), whodis.BatchRequest{Requests: requests, Workers: options.jobs})
 	if err != nil {
 		printLookupError(stderr, err, format)
@@ -292,10 +268,39 @@ func runEngineTask(inputs []string, options cliOptions, format whodis.Format, co
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
-	defer closeWriter()
-	if err := whodis.RenderBatchReport(writer, batch, format, whodis.RenderOptions{Color: color, Details: details}); err != nil {
-		fmt.Fprintln(stderr, "whodis: could not render output:", err)
+	var renderErr error
+	if len(options.fields) > 0 {
+		legacy := whodis.BatchResult{SchemaVersion: 1, Items: make([]whodis.BatchItem, len(batch.Reports))}
+		for index := range batch.Reports {
+			report := &batch.Reports[index]
+			legacy.Items[index].Input = inputs[index]
+			if report.Registration != nil {
+				result := report.Registration.AsLookupResult(report.Subject, report.ObservedAt)
+				legacy.Items[index].Result = &result
+			} else if len(report.Errors) > 0 {
+				legacy.Items[index].Error = &whodis.BatchError{Kind: report.Errors[0].Kind, Message: report.Errors[0].Message}
+			}
+		}
+		renderErr = whodis.RenderBatch(writer, legacy, format, whodis.BatchRenderOptions{RenderOptions: whodis.RenderOptions{Color: color, Details: details, Width: cliOutputWidth(writer)}, Fields: options.fields})
+	} else {
+		renderErr = whodis.RenderBatchReport(writer, batch, format, whodis.RenderOptions{Color: color, Details: details, Width: cliOutputWidth(writer)})
+	}
+	if renderErr != nil {
+		abortOutput(writer)
+		fmt.Fprintln(stderr, "whodis: could not render output:", renderErr)
 		return 1
+	}
+	if err := closeWriter(); err != nil {
+		fmt.Fprintln(stderr, "whodis: could not finalize output:", err)
+		return 1
+	}
+	if options.saveSnapshot {
+		if id, saveErr := saveBatchSnapshot(requests, batch, options.snapshotLabel); saveErr != nil {
+			fmt.Fprintln(stderr, "whodis: could not save snapshot:", saveErr)
+			return 1
+		} else {
+			fmt.Fprintln(stderr, "whodis: saved snapshot", id)
+		}
 	}
 	failures := 0
 	for _, report := range batch.Reports {
@@ -397,6 +402,18 @@ func parseArgs(args []string) (cliOptions, error) {
 				return options, err
 			}
 			options.output = v
+		case "-f", "--format":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			if options.formatSet {
+				return options, fmt.Errorf("only one output format may be selected")
+			}
+			if _, err := whodis.ParseFormat(v); err != nil {
+				return options, err
+			}
+			options.format, options.formatSet = v, true
 		case "-i", "--input":
 			v, err := value()
 			if err != nil {
@@ -529,6 +546,18 @@ func parseArgs(args []string) (cliOptions, error) {
 				return options, err
 			}
 			options.transfer.TSIGSecret = v
+		case "--tsig-secret-env":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.tsigSecretEnv = v
+		case "--tsig-secret-file":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.tsigSecretFile = v
 		case "--tsig-algorithm":
 			v, err := value()
 			if err != nil {
@@ -537,6 +566,10 @@ func parseArgs(args []string) (cliOptions, error) {
 			options.transfer.TSIGAlgo = v
 		case "--tls":
 			options.transfer.TLS = true
+		case "--allow-private":
+			options.allowPrivate = true
+		case "--allow-insecure-http":
+			options.allowInsecureHTTP = true
 		case "--globalping":
 			options.globalping = true
 		case "--from":
@@ -579,7 +612,7 @@ func parseArgs(args []string) (cliOptions, error) {
 				return options, fmt.Errorf("--try-both conflicts with --strict")
 			}
 			options.fallback, options.fallbackSet = whodis.FallbackAnyError, true
-		case "--dashboard", "--tree", "--geekboys", "--plain", "--json", "--yaml", "--markdown", "--raw":
+		case "--dashboard", "--tree", "--geekboys", "--plain", "--json", "--yaml", "--csv", "--ndjson", "--markdown", "--raw":
 			if hasInline {
 				return options, fmt.Errorf("%s does not take a value", name)
 			}
@@ -589,6 +622,14 @@ func parseArgs(args []string) (cliOptions, error) {
 			options.format, options.formatSet = strings.TrimPrefix(name, "--"), true
 		case "--force":
 			options.force = true
+		case "--save":
+			options.saveSnapshot = true
+		case "--label":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.snapshotLabel = strings.TrimSpace(v)
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return options, fmt.Errorf("unknown option %s", arg)
@@ -623,6 +664,12 @@ func parseCommandPrefix(args []string, options *cliOptions, appendField func(who
 		return args[index:], nil
 	}
 	switch args[index] {
+	case "lookup":
+		options.task = taskLookup
+		index++
+	case "inspect":
+		options.task = taskScan
+		index++
 	case "registration":
 		options.task = taskLookup
 		index++
@@ -639,6 +686,8 @@ func parseCommandPrefix(args []string, options *cliOptions, appendField func(who
 		switch args[index] {
 		case "query":
 			options.task = taskDNSQuery
+		case "inventory":
+			options.task = taskDNSInventory
 		case "compare":
 			options.task = taskDNSCompare
 		case "trace":
@@ -646,7 +695,7 @@ func parseCommandPrefix(args []string, options *cliOptions, appendField func(who
 		case "transfer":
 			options.task = taskDNSTransfer
 		default:
-			return nil, fmt.Errorf("dns requires query, compare, trace, or transfer")
+			return nil, fmt.Errorf("dns requires query, inventory, compare, trace, or transfer")
 		}
 		index++
 	case "diagnose":
@@ -707,10 +756,10 @@ func validateCLIOptions(options cliOptions) error {
 	if options.refreshBootstrap && options.protocolSet && options.protocol != whodis.ProtocolRDAP {
 		return fmt.Errorf("--refresh is only available with automatic routing or rdap")
 	}
-	if options.dnsResolver != "" && options.task != taskScan && options.task != taskAXFR && !isEngineTask(options.task) {
+	if options.dnsResolver != "" && !supportsDNSOptions(options.task) {
 		return fmt.Errorf("--resolver is only available with DNS operations or diagnose")
 	}
-	if (options.dnsClass != "" || options.resolverStrategy != "" || options.edns != (whodis.EDNSOptions{}) || options.dnssecSet || options.noRecursion || options.checkingDisabled || options.globalping) && !isEngineTask(options.task) {
+	if (options.dnsClass != "" || options.resolverStrategy != "" || options.edns != (whodis.EDNSOptions{}) || options.dnssecSet || options.noRecursion || options.checkingDisabled || options.globalping) && !supportsDNSOptions(options.task) {
 		return fmt.Errorf("DNS query options require dns query, dns compare, dns trace, dns transfer, or diagnose")
 	}
 	if (len(options.globalpingFrom) > 0 || options.globalpingLimit > 0) && !options.globalping && !options.remote {
@@ -729,20 +778,44 @@ func validateCLIOptions(options cliOptions) error {
 		return fmt.Errorf("dns transfer accepts one zone at a time")
 	}
 	if options.transfer.TSIGName != "" && options.transfer.TSIGSecret == "" {
-		return fmt.Errorf("--tsig-name requires --tsig-secret")
+		if options.tsigSecretEnv == "" && options.tsigSecretFile == "" {
+			return fmt.Errorf("--tsig-name requires --tsig-secret-env, --tsig-secret-file, or --tsig-secret")
+		}
 	}
 	if options.transfer.TSIGSecret != "" && options.transfer.TSIGName == "" {
 		return fmt.Errorf("--tsig-secret requires --tsig-name")
 	}
+	if (options.tsigSecretEnv != "" || options.tsigSecretFile != "") && options.transfer.TSIGName == "" {
+		return fmt.Errorf("TSIG secret sources require --tsig-name")
+	}
 	if options.transfer.TSIGAlgo != "" && options.transfer.TSIGName == "" {
 		return fmt.Errorf("--tsig-algorithm requires --tsig-name and --tsig-secret")
+	}
+	secretSources := 0
+	if options.transfer.TSIGSecret != "" {
+		secretSources++
+	}
+	if options.tsigSecretEnv != "" {
+		secretSources++
+	}
+	if options.tsigSecretFile != "" {
+		secretSources++
+	}
+	if secretSources > 1 {
+		return fmt.Errorf("choose only one TSIG secret source")
+	}
+	if options.snapshotLabel != "" && !options.saveSnapshot {
+		return fmt.Errorf("--label requires --save")
+	}
+	if options.saveSnapshot && (options.task == taskAXFR || options.task == taskDNSTransfer || options.remote || options.trace) {
+		return fmt.Errorf("zone transfers and remote/path diagnoses cannot be snapshotted")
 	}
 	return nil
 }
 
-func isEngineTask(task cliTask) bool {
+func supportsDNSOptions(task cliTask) bool {
 	switch task {
-	case taskDNSQuery, taskDNSCompare, taskDNSTrace, taskDNSTransfer, taskDiagnose:
+	case taskScan, taskAXFR, taskDNSQuery, taskDNSInventory, taskDNSCompare, taskDNSTrace, taskDNSTransfer, taskDiagnose:
 		return true
 	default:
 		return false
@@ -770,13 +843,26 @@ func taskDNSMode(task cliTask) whodis.DNSMode {
 }
 
 func validateTaskTargets(inputs []string, task cliTask) error {
-	if task != taskScan && task != taskAXFR && !isEngineTask(task) {
-		return nil
+	operation := whodis.OperationRegistration
+	switch task {
+	case taskScan:
+		operation = whodis.OperationInspect
+	case taskAXFR, taskDNSTransfer:
+		operation = whodis.OperationDNSTransfer
+	case taskDNSQuery:
+		operation = whodis.OperationDNSQuery
+	case taskDNSInventory:
+		operation = whodis.OperationDNSInventory
+	case taskDNSCompare:
+		operation = whodis.OperationDNSCompare
+	case taskDNSTrace:
+		operation = whodis.OperationDNSTrace
+	case taskDiagnose:
+		operation = whodis.OperationDiagnose
 	}
 	for _, input := range inputs {
-		target, err := whodis.ParseTarget(input)
-		if err == nil && target.Kind != whodis.KindDomain {
-			return fmt.Errorf("%s requires domain targets; %q is an %s", task, input, target.Kind)
+		if _, err := whodis.ParseSubject(input, operation); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -945,23 +1031,96 @@ func writerIsTerminal(writer io.Writer) bool {
 	return ok && term.IsTerminal(int(output.Fd()))
 }
 
+func cliOutputWidth(writer io.Writer) int {
+	type fileDescriptor interface {
+		Fd() uintptr
+	}
+	output, ok := writer.(fileDescriptor)
+	if !ok || !term.IsTerminal(int(output.Fd())) {
+		return 0
+	}
+	width, _, err := term.GetSize(int(output.Fd()))
+	if err != nil {
+		return 0
+	}
+	return width
+}
+
 func standardInputIsTerminal() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
-func openOutput(path string, force bool, stdout io.Writer) (io.Writer, func(), error) {
+func openOutput(path string, force bool, stdout io.Writer) (io.Writer, func() error, error) {
 	if path == "" || path == "-" {
-		return stdout, func() {}, nil
+		return stdout, func() error { return nil }, nil
 	}
-	flags := os.O_WRONLY | os.O_CREATE
-	if force {
-		flags |= os.O_TRUNC
-	} else {
-		flags |= os.O_EXCL
+	if !force {
+		if _, err := os.Stat(path); err == nil {
+			return nil, func() error { return nil }, fmt.Errorf("could not open %s: file exists (use --force to replace it)", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, func() error { return nil }, fmt.Errorf("could not inspect %s: %w", path, err)
+		}
 	}
-	file, err := os.OpenFile(path, flags, 0o644)
+	directory := filepath.Dir(path)
+	file, err := os.CreateTemp(directory, ".whodis-output-*.tmp")
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("could not open %s: %w", path, err)
+		return nil, func() error { return nil }, fmt.Errorf("could not create temporary output beside %s: %w", path, err)
 	}
-	return file, func() { _ = file.Close() }, nil
+	if err := file.Chmod(0o644); err != nil {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		return nil, func() error { return nil }, fmt.Errorf("could not set output permissions: %w", err)
+	}
+	output := &atomicOutput{file: file, temporary: file.Name(), destination: path}
+	return output, output.commit, nil
+}
+
+type atomicOutput struct {
+	file        *os.File
+	temporary   string
+	destination string
+	finished    bool
+}
+
+func (output *atomicOutput) Write(payload []byte) (int, error) {
+	if output == nil || output.file == nil || output.finished {
+		return 0, os.ErrClosed
+	}
+	return output.file.Write(payload)
+}
+
+func (output *atomicOutput) commit() error {
+	if output == nil || output.finished {
+		return nil
+	}
+	output.finished = true
+	if err := output.file.Sync(); err != nil {
+		_ = output.file.Close()
+		_ = os.Remove(output.temporary)
+		return err
+	}
+	if err := output.file.Close(); err != nil {
+		_ = os.Remove(output.temporary)
+		return err
+	}
+	if err := replaceConfigFile(output.temporary, output.destination); err != nil {
+		_ = os.Remove(output.temporary)
+		return err
+	}
+	return nil
+}
+
+func (output *atomicOutput) abort() {
+	if output == nil || output.finished {
+		return
+	}
+	output.finished = true
+	_ = output.file.Close()
+	_ = os.Remove(output.temporary)
+}
+
+func abortOutput(writer io.Writer) {
+	if output, ok := writer.(*atomicOutput); ok {
+		output.abort()
+	}
 }
 
 func printLookupError(writer io.Writer, err error, format whodis.Format) {
@@ -999,62 +1158,59 @@ func exitCode(err error) int {
 	}
 }
 
-func batchExitCode(err *whodis.BatchError) int {
-	if err == nil {
-		return 0
-	}
-	switch err.Kind {
-	case whodis.ErrorInvalidInput:
-		return 2
-	case whodis.ErrorNotFound:
-		return 3
-	case whodis.ErrorRateLimited:
-		return 4
-	default:
-		return 1
-	}
-}
-
 func printUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage:
   whodis <target>
   whodis registration <target...>
-  whodis scan <domain...>
+  whodis inspect <domain...>
   whodis dns query <name> [TYPE...]
+  whodis dns inventory <domain...>
   whodis dns compare <name> [TYPE...]
   whodis dns trace <name> [TYPE]
   whodis dns transfer <zone>
   whodis diagnose <domain...>
+  whodis check <target...> [--scrutiny basic|standard|strict]
+  whodis snapshot <list|show|remove|export|import|path> ...
+  whodis diff <snapshot-a> <snapshot-b>|--live
   whodis expires <target...>
   whodis get <fields> <target...>
   whodis config
   whodis completion bash|zsh|fish|powershell
-  whodis help [dns|diagnose|scan|axfr|expires|get|protocols|formats|advanced]
+  whodis help [dns|diagnose|inspect|expires|get|protocols|formats|advanced]
 
 Targets: domain names, IPv4/IPv6 addresses or CIDRs, and ASNs (AS15169).
 
 Commands:
   (none), registration      automatic RDAP/WHOIS/RWhois registration lookup
-  scan                      registration plus public DNS inventory
+  inspect                   registration plus public DNS inventory
   dns query                 arbitrary DNS types/classes through selected resolvers
+  dns inventory             practical public record discovery for one or more domains
   dns compare               normalized answers across multiple resolvers
   dns trace                 iterative root-to-authority delegation trace
   dns transfer              explicit AXFR/IXFR, with optional TSIG and TLS
   diagnose                  bounded DNS, web, TLS, mail, and service checks
+  check                     evaluate live or saved state against health policy
+  snapshot                  save and manage secret-free observations
+  diff                      compare snapshots or a snapshot with live state
   expires, get              compact registration projections for batch use
 
-Output shortcuts (choose one):
-  --dashboard  --tree  --geekboys  --plain  --json  --yaml  --markdown  --raw
+Output (use -f/--format or one shortcut):
+  dashboard  tree  geekboys  plain  json  yaml  csv  ndjson  markdown  raw
 
 Common options:
   -i, --input <file|->      add newline-delimited targets; - reads standard input
   -o, --output <file|->     write to a file; format is inferred from its extension
+  -f, --format <name>       select output format explicitly
   -j, --jobs <count>        concurrent batch lookups (default: 4; range: 1-32)
       --timeout <duration>  request timeout (default: 15s)
       --color <mode>        auto (default), always, or never
       --details             expand notices in visual output
       --summary             summarize notices in visual output
       --force               overwrite an existing output file
+      --save                save a reusable, secret-free snapshot
+      --label <name>        label a snapshot saved with --save (requires --save)
+      --allow-private       allow automatic referrals to private addresses
+      --allow-insecure-http allow automatic RDAP over HTTP
   -h, --help                show this help
       --version             show version
 
@@ -1090,7 +1246,10 @@ Examples:
   whodis dns compare example.com A --resolver system --resolver https://1.1.1.1/dns-query
   whodis dns trace example.com NS
   whodis diagnose example.com --json
-  whodis scan example.com --tree
+  whodis inspect example.com --tree
+  whodis inspect example.com --save --label production
+  whodis diff production --live
+  whodis check example.com --scrutiny strict
   whodis expires google.com yahoo.com
   whodis get expiration,registrar -i domains.txt -o results.txt
   printf 'google.com\nyahoo.com\n' | whodis expires
@@ -1106,8 +1265,8 @@ func runCompletion(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "whodis: usage: whodis completion bash|zsh|fish|powershell")
 		return 2
 	}
-	commands := "registration scan dns diagnose expires get config help completion"
-	options := "--dashboard --tree --geekboys --plain --json --yaml --markdown --raw --output --input --jobs --timeout --color --details --summary --force --server --strict --try-both --refresh --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret --tsig-algorithm --globalping --from --limit --trace --remote --help --version"
+	commands := "lookup registration inspect dns diagnose check snapshot diff expires get config help completion"
+	options := "--format --dashboard --tree --geekboys --plain --json --yaml --csv --ndjson --markdown --raw --output --input --jobs --timeout --color --details --summary --force --save --label --active --passive --against --snapshot --scrutiny --policy --webhook-env --webhook-file --live --allow-snapshot-endpoints --include-ttl --server --strict --try-both --refresh --allow-private --allow-insecure-http --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret-env --tsig-secret-file --tsig-algorithm --globalping --from --limit --trace --remote --help --version"
 	switch strings.ToLower(args[0]) {
 	case "bash":
 		fmt.Fprintf(stdout, `_whodis_complete() {
@@ -1115,7 +1274,7 @@ func runCompletion(args []string, stdout, stderr io.Writer) int {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  if [[ "$prev" == "dns" ]]; then COMPREPLY=( $(compgen -W "query compare trace transfer" -- "$cur") ); return; fi
+  if [[ "$prev" == "dns" ]]; then COMPREPLY=( $(compgen -W "query inventory compare trace transfer" -- "$cur") ); return; fi
   if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W %q -- "$cur") ); return; fi
   COMPREPLY=( $(compgen -W %q -- "$cur") )
 }
@@ -1161,12 +1320,12 @@ func powershellCompletionValues(values []string) string {
 func printTaskUsage(writer io.Writer, task cliTask) {
 	switch task {
 	case taskScan:
-		fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] scan <domain> [<domain> ...] [options]
+		fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] inspect <domain> [<domain> ...] [options]
 
 Looks up registration data and public DNS records (A, AAAA, CNAME, MX, NS, TXT, CAA, and more).
 Only domain targets are accepted. Use --resolver <host[:port]> to choose the DNS resolver.
 
-Example: whodis scan example.com --tree
+Example: whodis inspect example.com --tree
 `)
 	case taskAXFR:
 		fmt.Fprint(writer, `Usage: whodis [rdap|whois|rwhois] axfr <domain> [<domain> ...] [options]
@@ -1204,6 +1363,7 @@ Example: whodis get expiration,registrar,status google.com yahoo.com --plain
 func printDNSUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage:
   whodis dns query <name> [TYPE...] [options]
+  whodis dns inventory <name> [<name> ...] [options]
   whodis dns compare <name> [TYPE...] [options]
   whodis dns trace <name> [TYPE] [options]
   whodis dns transfer <zone> [options]
@@ -1214,7 +1374,7 @@ or a DNSCrypt sdns:// stamp.
 Repeat --resolver and choose --strategy first|all|fastest|random|consensus.
 
 Transfer options: --ixfr --serial <number> --tls --tsig-name <name>
-                  --tsig-secret <base64> --tsig-algorithm <name>
+                  --tsig-secret-env <name>|--tsig-secret-file <path> --tsig-algorithm <name>
 
 Examples:
   whodis dns query example.com A AAAA MX
@@ -1242,7 +1402,7 @@ func printProtocolsUsage(writer io.Writer) {
 
 Routing defaults to automatic selection. Put a protocol before the command to force it:
   whodis rdap example.com
-  whodis whois scan example.com --strict
+  whodis whois inspect example.com --strict
   whodis rwhois get status 192.0.2.1 --server rwhois.example.net
 
 --server requires an explicit protocol. RWhois always requires --server.
@@ -1259,10 +1419,12 @@ func printFormatsUsage(writer io.Writer) {
   --plain      portable text
   --json       JSON
   --yaml       YAML
+  --csv        CSV with one row per target
+  --ndjson     newline-delimited JSON with one report per line
   --markdown   Markdown
   --raw        unmodified source response; one ordinary lookup only
 
-Use exactly one shortcut. Without one, Whodis infers a format from --output, WHODIS_FORMAT,
+Use -f/--format or exactly one shortcut. Without one, Whodis infers a format from --output, WHODIS_FORMAT,
 saved preferences, and whether output is a terminal.
 `)
 }
@@ -1271,6 +1433,7 @@ func printAdvancedUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Advanced options:
   -i, --input <file|->      add newline-delimited targets; - reads standard input
   -o, --output <file|->     write to a file; refuses to overwrite unless --force is used
+  -f, --format <name>       dashboard, tree, geekboys, plain, json, yaml, csv, ndjson, markdown, or raw
   -j, --jobs <count>        batch concurrency, from 1 through 32
       --timeout <duration>  per-lookup timeout
       --color <mode>        auto, always, or never
@@ -1295,6 +1458,10 @@ func printAdvancedUsage(writer io.Writer) {
       --strict              do not fall back to another registration protocol
       --try-both            fall back after any protocol error
       --refresh             refresh IANA RDAP service data
+      --allow-private       allow automatic protocol referrals to private network addresses
+      --allow-insecure-http allow automatic RDAP endpoints that use HTTP
+      --save                save this passive result as a secret-free snapshot
+      --label <name>        assign a unique label to a saved snapshot
       --force               overwrite --output's existing file
 `)
 }
@@ -1310,6 +1477,8 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "inspect":
+		printTaskUsage(stdout, taskScan)
 	case string(taskScan), string(taskAXFR), string(taskExpires), string(taskGet):
 		printTaskUsage(stdout, cliTask(args[0]))
 	case "dns":

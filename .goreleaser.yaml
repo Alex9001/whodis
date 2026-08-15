@@ -15,7 +15,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{ .Version }} -X github.com/Alex9001/whodis.version={{ .Version }}
+      - -s -w -X main.version={{ .Version }} -X github.com/Alex9001/whodis/v2.version={{ .Version }}
     goos:
       - linux
       - darwin
@@ -39,6 +39,7 @@ archives:
           - zip
     files:
       - README.md
+      - MIGRATING_TO_V2.md
       - LICENSE
       - src: ./.release-assets/go-licenses/*
         dst: Go-Licenses
@@ -74,6 +75,8 @@ nfpms:
         dst: /usr/share/licenses/whodis/LICENSE
       - src: ./README.md
         dst: /usr/share/doc/whodis/README.md
+      - src: ./MIGRATING_TO_V2.md
+        dst: /usr/share/doc/whodis/MIGRATING_TO_V2.md
       - src: ./.release-assets/go-licenses
         dst: /usr/share/licenses/whodis/third-party
         type: tree

@@ -1,0 +1,17 @@
+{
+  "version": "@VERSION@",
+  "description": "RDAP-first WHOIS, DNS, and domain diagnostics",
+  "homepage": "https://cyberbrand.net/whodis/",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/Alex9001/whodis/releases/download/v@VERSION@/whodis_windows_amd64.zip",
+      "hash": "@WINDOWS_AMD64_SHA256@"
+    },
+    "arm64": {
+      "url": "https://github.com/Alex9001/whodis/releases/download/v@VERSION@/whodis_windows_arm64.zip",
+      "hash": "@WINDOWS_ARM64_SHA256@"
+    }
+  },
+  "bin": "whodis.exe"
+}

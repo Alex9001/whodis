@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+env:
+  GO_VERSION: 1.26.5
+  GORELEASER_VERSION: v2.17.1
+  SYFT_VERSION: v1.51.0
+
 jobs:
   aur-metadata:
     name: Validate rendered AUR metadata
@@ -15,7 +20,7 @@ jobs:
     steps:
       - name: Install checkout dependency
         run: pacman -Syu --noconfirm git
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Compare templates with makepkg output
         shell: bash
         run: |
@@ -24,13 +29,13 @@ jobs:
           checksum=0000000000000000000000000000000000000000000000000000000000000000
 
           cli_dir=$(mktemp -d)
-          scripts/render-aur.sh 1.0.1 "$checksum" "$cli_dir"
+          scripts/render-aur.sh 2.0.0 "$checksum" "$cli_dir"
           chown -R aur-builder:aur-builder "$cli_dir"
           runuser -u aur-builder -- makepkg -D "$cli_dir" --printsrcinfo |
             diff -u "$cli_dir/.SRCINFO" -
 
           gui_dir=$(mktemp -d)
-          scripts/render-aur-gui.sh 1.0.1 "$checksum" "$gui_dir"
+          scripts/render-aur-gui.sh 2.0.0 "$checksum" "$gui_dir"
           chown -R aur-builder:aur-builder "$gui_dir"
           runuser -u aur-builder -- makepkg -D "$gui_dir" --printsrcinfo |
             diff -u "$gui_dir/.SRCINFO" -
@@ -38,10 +43,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
       - name: Validate Unix installer syntax
         run: |
           sh -n scripts/install.sh
@@ -50,6 +55,7 @@ jobs:
           sh -n scripts/render-aur-gui.sh
           sh -n scripts/publish-aur-gui.sh
           sh -n scripts/package-gui-linux.sh
+          sh -n scripts/render-community-packages.sh
           sh -n scripts/collect-qt-licenses.sh
           sh -n scripts/collect-go-licenses.sh
       - name: Validate AUR template rendering
@@ -66,6 +72,22 @@ jobs:
             "$aur_test_dir"
           ! grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"
           cmp packaging/aur-gui/LICENSE "$aur_test_dir/LICENSE"
+      - name: Validate community package rendering
+        run: |
+          package_test_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$package_test_dir"' EXIT
+          checksum=0000000000000000000000000000000000000000000000000000000000000000
+          for asset in \
+            whodis_darwin_amd64.tar.gz whodis_darwin_arm64.tar.gz \
+            whodis_linux_amd64.tar.gz whodis_linux_arm64.tar.gz \
+            whodis_windows_amd64.zip whodis_windows_arm64.zip; do
+            printf '%s  %s\n' "$checksum" "$asset" >> "$package_test_dir/checksums.txt"
+          done
+          scripts/render-community-packages.sh v2.0.0 \
+            "$package_test_dir/checksums.txt" "$package_test_dir/rendered"
+          ! grep -R '@[A-Z0-9_]*@' "$package_test_dir/rendered"
+          ruby -c "$package_test_dir/rendered/homebrew/whodis.rb"
+          jq --exit-status '.version == "2.0.0"' "$package_test_dir/rendered/scoop/whodis.json"
       - name: Exercise Qt SDK license collection
         run: |
           qt_license_fixture="$(mktemp -d)"
@@ -74,12 +96,14 @@ jobs:
           cp /usr/share/common-licenses/LGPL-3 "$qt_license_fixture/LGPL-3.0-only.txt"
           cp /usr/share/common-licenses/GPL-3 "$qt_license_fixture/GPL-3.0-only.txt"
           QT_LICENSE_DIR="$qt_license_fixture" scripts/collect-qt-licenses.sh "$qt_license_output"
+          QT_LICENSE_DIR="$qt_license_fixture" scripts/collect-qt-licenses.sh "$qt_license_output"
           test -s "$qt_license_output/LGPL-3.0-only.txt"
           test -s "$qt_license_output/GPL-3.0-only.txt"
       - name: Exercise Go module license collection
         run: |
           go_license_output="$(mktemp -d)"
           trap 'rm -rf -- "$go_license_output"' EXIT
+          scripts/collect-go-licenses.sh "$go_license_output"
           scripts/collect-go-licenses.sh "$go_license_output"
           test -s "$go_license_output/MODULES.txt"
       - name: Exercise Unix installer with a local release
@@ -108,7 +132,13 @@ jobs:
             exit 1
           fi
       - run: go vet ./...
+      - name: Validate GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -config-file .github/actionlint.yaml .github/workflows/*.yml
+      - name: Run staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
       - run: go test -race ./...
+      - name: Run Go security static analysis
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.22.10 -exclude-generated -quiet ./...
       - name: Scan Go dependencies and reachable code
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
@@ -116,10 +146,10 @@ jobs:
     name: Test Windows and PowerShell installer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
       - name: Test Windows build
         run: go test ./...
       - name: Parse installer
@@ -164,14 +194,14 @@ jobs:
     name: Test Qt desktop application
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
       - name: Install Qt build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake desktop-file-utils ninja-build qt6-base-dev qt6-tools-dev-tools
+          sudo apt-get install -y appstream cmake desktop-file-utils ninja-build qt6-base-dev qt6-tools-dev-tools
       - name: Configure and build
         run: cmake -S desktop -B build-gui -G Ninja -DWHODIS_VERSION=ci -DBUILD_TESTING=ON
       - run: cmake --build build-gui --parallel
@@ -183,7 +213,7 @@ jobs:
         run: |
           printf '%s\n' '{"jsonrpc":"2.0","id":"ci","method":"hello"}' |
             build-gui/bin/whodis-gui-engine |
-            grep '"protocol_version":2'
+            grep '"protocol_version":3'
       - name: Verify install layout and dependency notices
         run: |
           cmake --install build-gui --prefix "$RUNNER_TEMP/whodis-gui-install"
@@ -193,6 +223,7 @@ jobs:
           test -x "$RUNNER_TEMP/whodis-gui-install/libexec/whodis/whodis-gui-engine"
           test -s "$RUNNER_TEMP/whodis-gui-install/share/licenses/whodis-gui/Go-Licenses/MODULES.txt"
           desktop-file-validate "$RUNNER_TEMP/whodis-gui-install/share/applications/net.cyberbrand.whodis.desktop"
+          appstreamcli validate --no-net "$RUNNER_TEMP/whodis-gui-install/share/metainfo/net.cyberbrand.whodis.metainfo.xml"
 
   release-snapshot:
     needs:
@@ -203,20 +234,22 @@ jobs:
       - container-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
       - name: Install GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: ${{ env.GORELEASER_VERSION }}
           install-only: true
       - name: Install Syft for SBOM generation
-        uses: anchore/sbom-action/download-syft@v0
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
       - name: Validate release configuration
         run: goreleaser check
       - name: Build release snapshot
@@ -240,10 +273,10 @@ jobs:
           - { goos: openbsd, goarch: amd64 }
           - { goos: openbsd, goarch: arm64 }
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
       - name: Cross-build pure-Go CLI
         env:
           CGO_ENABLED: 0
@@ -255,10 +288,10 @@ jobs:
     name: Build OCI image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build local image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           load: true

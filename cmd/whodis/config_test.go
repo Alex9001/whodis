@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 )
 
 func testRuntime(directory string, environment map[string]string, terminal bool) cliRuntime {
@@ -184,24 +184,24 @@ func TestConfigAcceptsLegacyFormatAndDetailsAliases(t *testing.T) {
 
 func TestConfigWizardSavesAllPreferences(t *testing.T) {
 	directory := t.TempDir()
-	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "3\n2\n3\n2\n4\n2\ny\n"), "config")
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "3\n2\n3\n2\n4\n2\n3\n2\ny\n"), "config")
 	if code != 0 || stderr != "" {
 		t.Fatalf("wizard = (%d, %q, %q), want success", code, stdout, stderr)
 	}
-	for _, text := range []string{"Whodis preferences", "1/6  Output format", "2/6  Color", "3/6  Registry notices", "4/6  Default DNS resolver", "5/6  Multiple resolver behavior", "6/6  DNSSEC requests", "Review", "Saved preferences to"} {
+	for _, text := range []string{"Whodis preferences", "1/8  Output format", "2/8  Color", "3/8  Registry notices", "4/8  Default DNS resolver", "5/8  Multiple resolver behavior", "6/8  DNSSEC requests", "7/8  Check scrutiny", "8/8  Default check mode", "Review", "Saved preferences to"} {
 		if !strings.Contains(stdout, text) {
 			t.Errorf("wizard output missing %q:\n%s", text, stdout)
 		}
 	}
 	config, exists, err := loadUserConfig(testRuntime(directory, nil, false))
-	if err != nil || !exists || config.Format != "tree" || config.Color != "always" || config.Details == nil || !*config.Details || resolverPreset(config.DNSResolvers) != "cloudflare" || config.ResolverStrategy != "consensus" || config.DNSSEC == nil || !*config.DNSSEC {
+	if err != nil || !exists || config.Format != "tree" || config.Color != "always" || config.Details == nil || !*config.Details || resolverPreset(config.DNSResolvers) != "cloudflare" || config.ResolverStrategy != "consensus" || config.DNSSEC == nil || !*config.DNSSEC || config.Scrutiny != "strict" || config.CheckActive == nil || !*config.CheckActive {
 		t.Fatalf("wizard config = (%+v, %v, %v), want tree/always/expanded", config, exists, err)
 	}
 }
 
 func TestConfigWizardRetriesInvalidSelection(t *testing.T) {
 	directory := t.TempDir()
-	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "9\n2\n1\n2\n1\n1\n1\ny\n"), "config")
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "9\n2\n1\n2\n1\n1\n1\n2\n1\ny\n"), "config")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "Please enter 1-5") {
 		t.Fatalf("wizard retry = (%d, %q, %q), want successful retry", code, stdout, stderr)
 	}
@@ -224,7 +224,7 @@ func TestConfigWizardCancellationAndNoChangeAreSafe(t *testing.T) {
 	}
 
 	for name, input := range map[string]string{
-		"declined confirmation": "\n\n\n\n\n\nn\n",
+		"declined confirmation": "\n\n\n\n\n\n\n\nn\n",
 		"quit at prompt":        "q\n",
 		"EOF":                   "",
 	} {
@@ -240,7 +240,7 @@ func TestConfigWizardCancellationAndNoChangeAreSafe(t *testing.T) {
 		})
 	}
 
-	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "\n\n\n\n\n\ny\n"), "config")
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "\n\n\n\n\n\n\n\ny\n"), "config")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "No changes needed") {
 		t.Fatalf("unchanged wizard = (%d, %q, %q), want no-op", code, stdout, stderr)
 	}
@@ -327,8 +327,21 @@ func TestConfigSetCanonicalizesHumanAliases(t *testing.T) {
 	}
 }
 
+func TestConfigStoresCheckDefaults(t *testing.T) {
+	runtime := testRuntime(t.TempDir(), nil, false)
+	for _, command := range [][]string{{"config", "set", "scrutiny", "strict"}, {"config", "set", "check-mode", "active"}} {
+		if code, _, stderr := runCLIForTest(t, runtime, command...); code != 0 || stderr != "" {
+			t.Fatalf("run(%v) = (%d, %q)", command, code, stderr)
+		}
+	}
+	config, exists, err := loadUserConfig(runtime)
+	if err != nil || !exists || config.Scrutiny != "strict" || config.CheckActive == nil || !*config.CheckActive {
+		t.Fatalf("check defaults = (%+v, %v, %v)", config, exists, err)
+	}
+}
+
 func TestConfigSetRejectsMachineFormats(t *testing.T) {
-	for _, format := range []string{"json", "yaml", "markdown", "raw", ""} {
+	for _, format := range []string{"json", "yaml", "csv", "ndjson", "markdown", "raw", ""} {
 		t.Run(format, func(t *testing.T) {
 			runtime := testRuntime(t.TempDir(), nil, false)
 			code, stdout, stderr := runCLIForTest(t, runtime, "config", "set", "format", format)
@@ -499,6 +512,9 @@ func TestEnvironmentAcceptsEveryFormatAndAlias(t *testing.T) {
 		"json":      whodis.FormatJSON,
 		"yaml":      whodis.FormatYAML,
 		"yml":       whodis.FormatYAML,
+		"csv":       whodis.FormatCSV,
+		"ndjson":    whodis.FormatNDJSON,
+		"jsonl":     whodis.FormatNDJSON,
 		"markdown":  whodis.FormatMarkdown,
 		"md":        whodis.FormatMarkdown,
 		"raw":       whodis.FormatRaw,

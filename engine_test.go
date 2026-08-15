@@ -8,15 +8,34 @@ import (
 )
 
 type engineRegistrationFixture struct {
-	result LookupResult
+	result RegistrationResult
 	err    error
 }
 
 type blockingRegistrationFixture struct{}
 
-func (blockingRegistrationFixture) Lookup(ctx context.Context, _ string, _ LookupOptions) (LookupResult, error) {
+func (blockingRegistrationFixture) Lookup(ctx context.Context, _ Subject, _ LookupOptions) (RegistrationResult, error) {
 	<-ctx.Done()
-	return LookupResult{}, ctx.Err()
+	return RegistrationResult{}, ctx.Err()
+}
+
+type gatedRegistrationFixture struct {
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (fixture gatedRegistrationFixture) Lookup(ctx context.Context, _ Subject, _ LookupOptions) (RegistrationResult, error) {
+	select {
+	case fixture.started <- struct{}{}:
+	case <-ctx.Done():
+		return RegistrationResult{}, ctx.Err()
+	}
+	select {
+	case <-fixture.release:
+		return RegistrationResult{}, nil
+	case <-ctx.Done():
+		return RegistrationResult{}, ctx.Err()
+	}
 }
 
 func TestEngineCanceledBatchPreservesEveryInputSlot(t *testing.T) {
@@ -39,25 +58,113 @@ func TestEngineCanceledBatchPreservesEveryInputSlot(t *testing.T) {
 		t.Fatalf("reports = %d, want 3", len(batch.Reports))
 	}
 	for index, report := range batch.Reports {
-		if report.SchemaVersion != ReportSchemaVersion || report.Query.Canonical == "" || len(report.Errors) != 1 {
+		if report.SchemaVersion != ReportSchemaVersion || report.Subject.Canonical == "" || len(report.Errors) != 1 {
 			t.Fatalf("report %d = %#v", index, report)
 		}
 	}
 }
 
-func (fixture engineRegistrationFixture) Lookup(context.Context, string, LookupOptions) (LookupResult, error) {
+func TestNilEngineBatchReturnsError(t *testing.T) {
+	var engine *Engine
+	if _, err := engine.RunBatch(context.Background(), BatchRequest{Requests: []Request{{Target: "example.test"}}}); err == nil {
+		t.Fatal("nil Engine.RunBatch did not return an error")
+	}
+}
+
+func TestRegistrationCoalescingKeepsDifferentRequestTimeoutsIndependent(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	engine := NewEngine(EngineOptions{
+		Registration: gatedRegistrationFixture{started: started, release: release},
+		DNS:          engineDNSFixture{},
+		Diagnose:     engineDiagnoseFixture{},
+	})
+	defer engine.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.RunBatch(context.Background(), BatchRequest{Workers: 2, Requests: []Request{
+			{Operation: OperationRegistration, Target: "example.test", Timeout: time.Second},
+			{Operation: OperationRegistration, Target: "example.test", Timeout: 2 * time.Second},
+		}})
+		done <- err
+	}()
+	for count := 0; count < 2; count++ {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			close(release)
+			t.Fatal("requests with different deadlines were incorrectly coalesced")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegistrationCancellationDoesNotPoisonIndependentCaller(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	engine := NewEngine(EngineOptions{
+		Registration: gatedRegistrationFixture{started: started, release: release},
+		DNS:          engineDNSFixture{},
+		Diagnose:     engineDiagnoseFixture{},
+	})
+	defer engine.Close()
+
+	firstContext, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(firstContext, Request{Operation: OperationRegistration, Target: "example.test", Timeout: time.Second})
+		firstDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("first registration lookup did not start")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), Request{Operation: OperationRegistration, Target: "example.test", Timeout: time.Second})
+		secondDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+		cancelFirst()
+		close(release)
+		t.Fatal("second registration lookup was coupled to the first")
+	}
+
+	cancelFirst()
+	if err := <-firstDone; err == nil {
+		t.Fatal("canceled registration lookup unexpectedly succeeded")
+	}
+	close(release)
+	if err := <-secondDone; err != nil {
+		t.Fatalf("independent registration lookup failed: %v", err)
+	}
+}
+
+func (fixture engineRegistrationFixture) Lookup(context.Context, Subject, LookupOptions) (RegistrationResult, error) {
 	return fixture.result, fixture.err
 }
 
 type engineDNSFixture struct {
 	result *DNSOperationResult
 	err    error
+	target chan<- string
 }
 
 func (fixture engineDNSFixture) Query(context.Context, string, DNSOptions) (*DNSOperationResult, error) {
 	return fixture.result, fixture.err
 }
-func (fixture engineDNSFixture) Inventory(context.Context, string, DNSOptions) (*DNSOperationResult, error) {
+func (fixture engineDNSFixture) Inventory(_ context.Context, target string, _ DNSOptions) (*DNSOperationResult, error) {
+	if fixture.target != nil {
+		fixture.target <- target
+	}
 	return fixture.result, fixture.err
 }
 func (fixture engineDNSFixture) Compare(context.Context, string, DNSOptions) (*DNSOperationResult, error) {
@@ -66,7 +173,10 @@ func (fixture engineDNSFixture) Compare(context.Context, string, DNSOptions) (*D
 func (fixture engineDNSFixture) Trace(context.Context, string, DNSOptions) (*DNSOperationResult, error) {
 	return fixture.result, fixture.err
 }
-func (fixture engineDNSFixture) Transfer(context.Context, string, DNSOptions) (*DNSOperationResult, error) {
+func (fixture engineDNSFixture) Transfer(_ context.Context, target string, _ DNSOptions) (*DNSOperationResult, error) {
+	if fixture.target != nil {
+		fixture.target <- target
+	}
 	return fixture.result, fixture.err
 }
 
@@ -79,14 +189,14 @@ func (fixture engineDiagnoseFixture) Diagnose(context.Context, string, DiagnoseO
 	return fixture.result, fixture.err
 }
 
-func TestEngineInventoryPreservesDNSWhenRegistrationFails(t *testing.T) {
+func TestEngineInspectPreservesDNSWhenRegistrationFails(t *testing.T) {
 	dnsResult := &DNSOperationResult{Mode: "inventory", Inventory: &DNSResult{Records: []DNSRecord{{Name: "example.test", Type: "A", Value: "192.0.2.1"}}}}
 	engine := NewEngine(EngineOptions{
 		Registration: engineRegistrationFixture{err: lookupError(ErrorUnavailable, "registry offline", nil)},
 		DNS:          engineDNSFixture{result: dnsResult},
 		Diagnose:     engineDiagnoseFixture{},
 	})
-	report, err := engine.Run(context.Background(), Request{Operation: OperationDNSInventory, Target: "example.test"})
+	report, err := engine.Run(context.Background(), Request{Operation: OperationInspect, Target: "example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +209,7 @@ func TestEngineInventoryPreservesDNSWhenRegistrationFails(t *testing.T) {
 }
 
 func TestEngineDiagnosePreservesRegistrationWhenChecksFail(t *testing.T) {
-	registration := LookupResult{SchemaVersion: 2, Object: Object{Name: "example.test"}}
+	registration := RegistrationResult{Object: Object{Name: "example.test"}}
 	diagnosis := &DiagnosisReport{Domain: "example.test", Findings: []Finding{{ID: "dns.inventory", Severity: SeverityError}}}
 	engine := NewEngine(EngineOptions{
 		Registration: engineRegistrationFixture{result: registration},
@@ -110,7 +220,7 @@ func TestEngineDiagnosePreservesRegistrationWhenChecksFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Registration == nil || report.Diagnosis != diagnosis || len(report.Findings) != 1 {
+	if report.Registration == nil || report.Diagnosis == nil || len(report.Diagnosis.Findings) != 0 || len(report.Findings) != 1 {
 		t.Fatalf("unexpected diagnosis report: %#v", report)
 	}
 	if len(report.Errors) != 1 || report.Errors[0].Operation != OperationDiagnose {
@@ -118,12 +228,27 @@ func TestEngineDiagnosePreservesRegistrationWhenChecksFail(t *testing.T) {
 	}
 }
 
-func TestEngineRejectsDNSForNonDomain(t *testing.T) {
+func TestEngineTurnsIPAddressIntoReverseDNSQuery(t *testing.T) {
 	engine := NewEngine(EngineOptions{Registration: engineRegistrationFixture{}, DNS: engineDNSFixture{}, Diagnose: engineDiagnoseFixture{}})
-	_, err := engine.Run(context.Background(), Request{Operation: OperationDNSQuery, Target: "192.0.2.1"})
-	var typed *LookupError
-	if !errors.As(err, &typed) || typed.Kind != ErrorInvalidInput {
-		t.Fatalf("error = %v, want invalid input", err)
+	report, err := engine.Run(context.Background(), Request{Operation: OperationDNSQuery, Target: "192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Subject.Canonical != "1.2.0.192.in-addr.arpa." {
+		t.Fatalf("reverse subject = %q", report.Subject.Canonical)
+	}
+}
+
+func TestEnginePreservesExactDelegatedDNSZone(t *testing.T) {
+	targets := make(chan string, 2)
+	engine := NewEngine(EngineOptions{Registration: engineRegistrationFixture{}, DNS: engineDNSFixture{result: &DNSOperationResult{Mode: "inventory"}, target: targets}, Diagnose: engineDiagnoseFixture{}})
+	for _, operation := range []Operation{OperationDNSInventory, OperationDNSTransfer} {
+		if _, err := engine.Run(context.Background(), Request{Operation: operation, Target: "delegated.sub.example.com"}); err != nil {
+			t.Fatal(err)
+		}
+		if target := <-targets; target != "delegated.sub.example.com" {
+			t.Fatalf("%s target = %q", operation, target)
+		}
 	}
 }
 
@@ -133,7 +258,7 @@ func TestEngineBatchAttributesInvalidDefaultRegistrationInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(batch.Reports) != 1 || batch.Reports[0].Operation != OperationRegistration || batch.Reports[0].Query.Original != "not a target /" || len(batch.Reports[0].Errors) != 1 || batch.Reports[0].Errors[0].Provider != "registration" {
+	if len(batch.Reports) != 1 || batch.Reports[0].Operation != OperationRegistration || batch.Reports[0].Subject.Original != "not a target /" || len(batch.Reports[0].Errors) != 1 || batch.Reports[0].Errors[0].Provider != "registration" {
 		t.Fatalf("batch report = %#v", batch)
 	}
 }

@@ -33,6 +33,7 @@ private:
     void populateDelegation(const QJsonObject &report);
     void populateServices(const QJsonObject &report);
     void populateFindings(const QJsonObject &report);
+    void populateErrors(const QJsonObject &report);
     void populateContacts(const QJsonObject &result);
     void populateRaw(const QJsonArray &sources);
 
@@ -43,6 +44,7 @@ private:
     QTableWidget *m_delegation;
     QTableWidget *m_services;
     QTableWidget *m_findings;
+    QTableWidget *m_errors;
     QTableWidget *m_contacts;
     QComboBox *m_rawSource;
     QPlainTextEdit *m_rawText;

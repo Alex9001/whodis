@@ -13,7 +13,7 @@ class ResultWidgetTest final : public QObject
 
 private slots:
     void displaysTargetAndDNS();
-    void displaysSchemaV3WorkbenchTabs();
+    void displaysSchemaV4WorkbenchTabs();
     void deduplicatesEquivalentTimelineAndDNSRows();
 };
 
@@ -45,7 +45,7 @@ void ResultWidgetTest::displaysTargetAndDNS()
     QCOMPARE(raw->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
 }
 
-void ResultWidgetTest::displaysSchemaV3WorkbenchTabs()
+void ResultWidgetTest::displaysSchemaV4WorkbenchTabs()
 {
     ResultWidget widget;
     const QJsonObject record{{QStringLiteral("type"), QStringLiteral("MX")},
@@ -61,9 +61,10 @@ void ResultWidgetTest::displaysSchemaV3WorkbenchTabs()
                               {QStringLiteral("title"), QStringLiteral("DNS inventory")},
                               {QStringLiteral("summary"), QStringLiteral("Collected public DNS records.")}};
     const QJsonObject report{
-        {QStringLiteral("schema_version"), 3},
+        {QStringLiteral("schema_version"), 4},
         {QStringLiteral("operation"), QStringLiteral("diagnose")},
-        {QStringLiteral("query"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")}}},
+        {QStringLiteral("subject"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")},
+                                                  {QStringLiteral("kind"), QStringLiteral("registrable_domain")}}},
         {QStringLiteral("dns"), QJsonObject{{QStringLiteral("messages"), QJsonArray{QJsonObject{{QStringLiteral("answer"), QJsonArray{record}}}}},
                                              {QStringLiteral("differences"), QJsonArray{difference}}}},
         {QStringLiteral("diagnosis"), QJsonObject{{QStringLiteral("delegation"), QJsonObject{{QStringLiteral("trace"), QJsonArray{hop}}}},
@@ -132,18 +133,17 @@ void ResultWidgetTest::deduplicatesEquivalentTimelineAndDNSRows()
         }
     }
     QVERIFY(timeline);
-    QCOMPARE(timeline->childCount(), 6);
+    QCOMPARE(timeline->childCount(), 5);
     int databaseRows = 0;
     int transferRows = 0;
     for (int row = 0; row < timeline->childCount(); ++row) {
         const QTreeWidgetItem *event = timeline->child(row);
-        if (event->text(0) == QStringLiteral("last update of RDAP database")) {
+        if (event->text(0) == QStringLiteral("RDAP database updated")) {
             ++databaseRows;
-            QVERIFY(event->text(1).contains(QStringLiteral(" · ")));
+            QCOMPARE(event->text(1), QStringLiteral("2026-08-11T03:19:33Z"));
         }
         if (event->text(0) == QStringLiteral("transfer")) {
             ++transferRows;
-            QVERIFY(event->text(1).contains(QStringLiteral(".123400Z")));
             QVERIFY(event->text(1).contains(QStringLiteral(".123499Z")));
         }
     }

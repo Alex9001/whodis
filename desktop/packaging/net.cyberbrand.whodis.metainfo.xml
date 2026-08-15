@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>net.cyberbrand.whodis</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Whodis</name>
+  <summary>Inspect domain registration, DNS, and published services</summary>
+  <description>
+    <p>
+      Whodis is a readable WHOIS alternative for the RDAP era. It discovers
+      the appropriate RDAP, WHOIS, or RWhois authority and combines that data
+      with optional DNS inventory and bounded domain diagnostics.
+    </p>
+    <p>
+      The native desktop application provides registration, DNS query,
+      resolver comparison, delegation, web, TLS, mail, findings, batch, and
+      raw-source views without requiring the command-line application.
+    </p>
+  </description>
+  <launchable type="desktop-id">net.cyberbrand.whodis.desktop</launchable>
+  <developer id="net.cyberbrand">
+    <name>Aleksandr Oreshkin</name>
+  </developer>
+  <url type="homepage">https://cyberbrand.net/whodis/</url>
+  <url type="bugtracker">https://github.com/Alex9001/whodis/issues</url>
+  <url type="vcs-browser">https://github.com/Alex9001/whodis</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Alex9001/whodis/main/docs/whodis-gui-registration.png</image>
+      <caption>Registration overview</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Alex9001/whodis/main/docs/whodis-gui-dns.png</image>
+      <caption>Public DNS inventory</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+</component>

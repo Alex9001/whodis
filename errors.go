@@ -13,6 +13,8 @@ const (
 	ErrorDiscovery    ErrorKind = "discovery"
 	ErrorUnavailable  ErrorKind = "unavailable"
 	ErrorProtocol     ErrorKind = "protocol"
+	ErrorCanceled     ErrorKind = "canceled"
+	ErrorTimeout      ErrorKind = "timeout"
 )
 
 // LookupError wraps a failure with an actionable classification.

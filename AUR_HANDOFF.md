@@ -7,8 +7,11 @@ packages:
 - `whodis-gui` installs the Qt desktop app and its private engine. It does not
   depend on the CLI package.
 
-An AUR account with its SSH key registered is the only missing requirement for
-the first pushes. Both packages build from the same stable GitHub source
+New AUR registrations were paused during the malware response when this handoff
+was last updated. Do not work around that restriction: wait for registrations
+to reopen, then create the maintainer account normally. An AUR account with its
+SSH key registered is the only missing requirement for the first pushes. Both
+packages build from the same stable GitHub source
 archive, but live in separate AUR Git repositories. The application is MIT
 licensed; `packaging/aur/LICENSE` and `packaging/aur-gui/LICENSE` apply 0BSD
 only to the AUR packaging files.
@@ -24,7 +27,7 @@ only to the AUR packaging files.
 - GUI install: `/usr/bin/whodis-gui`, private engine under
   `/usr/libexec/whodis/`, desktop entry, and icon
 - GUI dependency: `qt6-base`
-- Current package target: `1.0.1-1`; use the newest stable release when publishing
+- Next package target: `2.0.0-1`; use the newest stable release when publishing
 
 The workstation previously had a dedicated key:
 
@@ -63,12 +66,12 @@ Never commit, paste, or upload the private key. Only the `.pub` half is public.
 ## 2. Select a release
 
 Use the newest stable release containing the GUI source. The current package
-target is `v1.0.1`; replace it with a newer stable release if one exists when
+target is `v2.0.0`; replace it with a newer stable release if one exists when
 the account is ready. Do not use a prerelease because automatic AUR publication
 deliberately ignores prerelease tags.
 
 ```bash
-release_tag=v1.0.1
+release_tag=v2.0.0
 release_version=${release_tag#v}
 gh release view "$release_tag" --repo Alex9001/whodis
 ```

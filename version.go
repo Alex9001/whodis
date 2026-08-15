@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const modulePath = "github.com/Alex9001/whodis"
+const modulePath = "github.com/Alex9001/whodis/v2"
 
 // version is populated by release builds. Tagged `go install` builds fall back
 // to the module version recorded by the Go toolchain.

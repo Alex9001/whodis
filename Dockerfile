@@ -6,7 +6,7 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath \
-    -ldflags="-s -w -X main.version=${VERSION} -X github.com/Alex9001/whodis.version=${VERSION}" \
+    -ldflags="-s -w -X main.version=${VERSION} -X github.com/Alex9001/whodis/v2.version=${VERSION}" \
     -o /out/whodis ./cmd/whodis
 RUN ./scripts/collect-go-licenses.sh /out/licenses/third-party && cp LICENSE /out/licenses/LICENSE
 

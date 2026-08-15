@@ -31,13 +31,14 @@ func (a rwhoisAdapter) Lookup(ctx context.Context, target Target, route RouteDec
 	var sources []Source
 	var response rwhoisResponse
 	for hop := 0; hop < 4; hop++ {
+		automatic := route.DiscoverySource != "command line" || hop > 0
 		key := strings.ToLower(endpoint)
 		if seen[key] {
 			return Object{}, sources, lookupError(ErrorProtocol, "RWhois referral loop detected", nil)
 		}
 		seen[key] = true
 		var err error
-		response, err = a.query(ctx, endpoint, target.Canonical)
+		response, err = a.query(ctx, endpoint, target.Canonical, automatic)
 		if err != nil {
 			if len(mirrors) > 0 {
 				endpoint, mirrors = mirrors[0], mirrors[1:]
@@ -61,14 +62,22 @@ func (a rwhoisAdapter) Lookup(ctx context.Context, target Target, route RouteDec
 	return normalizeRWHOIS(target, response), sources, nil
 }
 
-func (a rwhoisAdapter) query(ctx context.Context, endpoint, query string) (rwhoisResponse, error) {
+func (a rwhoisAdapter) query(ctx context.Context, endpoint, query string, automatic bool) (rwhoisResponse, error) {
 	address, err := rwhoisAddress(endpoint)
 	if err != nil {
 		return rwhoisResponse{}, err
 	}
-	dialer := net.Dialer{Timeout: a.client.timeout}
-	connection, err := dialer.DialContext(ctx, "tcp", address)
+	var connection net.Conn
+	if automatic {
+		connection, err = dialAutomaticContext(ctx, "tcp", address, a.client.timeout, a.client.networkPolicy)
+	} else {
+		connection, err = (&net.Dialer{Timeout: a.client.timeout}).DialContext(ctx, "tcp", address)
+	}
 	if err != nil {
+		var typed *LookupError
+		if errors.As(err, &typed) {
+			return rwhoisResponse{}, typed
+		}
 		return rwhoisResponse{}, lookupError(ErrorUnavailable, "RWhois service is unavailable at "+endpoint, err)
 	}
 	defer connection.Close()
@@ -81,10 +90,18 @@ func (a rwhoisAdapter) queryConnection(ctx context.Context, connection net.Conn,
 		deadline = contextDeadline
 	}
 	_ = connection.SetDeadline(deadline)
+	stopCancelWatch := context.AfterFunc(ctx, func() {
+		_ = connection.SetDeadline(time.Now())
+		_ = connection.Close()
+	})
+	defer stopCancelWatch()
 
 	reader := bufio.NewReaderSize(connection, 32<<10)
 	banner, err := readRWHOISLine(reader)
 	if err != nil {
+		if ctx.Err() != nil {
+			return rwhoisResponse{}, contextLookupError("RWhois query", ctx.Err())
+		}
 		return rwhoisResponse{}, rwhoisReadError("could not read RWhois banner", err)
 	}
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(banner)), "%rwhois") {
@@ -102,6 +119,9 @@ func (a rwhoisAdapter) queryConnection(ctx context.Context, connection net.Conn,
 	for raw.Len() <= maximumRWHOISData {
 		line, readErr := readRWHOISLine(reader)
 		if readErr != nil {
+			if ctx.Err() != nil {
+				return rwhoisResponse{}, contextLookupError("RWhois query", ctx.Err())
+			}
 			if errors.Is(readErr, io.EOF) {
 				return rwhoisResponse{}, lookupError(ErrorProtocol, "RWhois service closed before a completion status", nil)
 			}

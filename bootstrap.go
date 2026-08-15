@@ -44,8 +44,11 @@ type bootstrapCacheEntry struct {
 }
 
 type bootstrapCache struct {
-	dir string
-	mu  sync.Mutex
+	dir        string
+	mu         sync.Mutex
+	locks      map[bootstrapKind]*sync.Mutex
+	memory     map[bootstrapKind]bootstrapCacheEntry
+	httpClient *http.Client
 }
 
 func newBootstrapCache(dir string) *bootstrapCache {
@@ -54,14 +57,18 @@ func newBootstrapCache(dir string) *bootstrapCache {
 			dir = filepath.Join(root, "whodis", "bootstrap")
 		}
 	}
-	return &bootstrapCache{dir: dir}
+	return &bootstrapCache{
+		dir: dir, locks: make(map[bootstrapKind]*sync.Mutex), memory: make(map[bootstrapKind]bootstrapCacheEntry),
+		httpClient: &http.Client{},
+	}
 }
 
 func (c *bootstrapCache) registry(ctx context.Context, kind bootstrapKind, refresh bool, timeout time.Duration) (bootstrapRegistry, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	lock := c.kindLock(kind)
+	lock.Lock()
+	defer lock.Unlock()
 
-	entry, haveEntry := c.read(kind)
+	entry, haveEntry := c.cachedEntry(kind)
 	if haveEntry && !refresh && time.Now().Before(entry.Expires) {
 		registry, err := decodeBootstrap(entry.Payload)
 		if err == nil {
@@ -77,8 +84,14 @@ func (c *bootstrapCache) registry(ctx context.Context, kind bootstrapKind, refre
 	if haveEntry && entry.ETag != "" {
 		req.Header.Set("If-None-Match", entry.ETag)
 	}
-	hc := &http.Client{Timeout: timeout}
-	response, err := hc.Do(req)
+	requestContext := ctx
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		requestContext, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+		req = req.WithContext(requestContext)
+	}
+	response, err := c.httpClient.Do(req)
 	if err != nil {
 		if haveEntry {
 			if registry, cachedErr := decodeBootstrap(entry.Payload); cachedErr == nil {
@@ -99,6 +112,11 @@ func (c *bootstrapCache) registry(ctx context.Context, kind bootstrapKind, refre
 		return registry, nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if haveEntry {
+			if registry, cachedErr := decodeBootstrap(entry.Payload); cachedErr == nil {
+				return registry, nil
+			}
+		}
 		return bootstrapRegistry{}, lookupError(ErrorUnavailable, "IANA RDAP bootstrap request returned "+response.Status, nil)
 	}
 	payload, err := io.ReadAll(io.LimitReader(response.Body, 5<<20))
@@ -113,6 +131,33 @@ func (c *bootstrapCache) registry(ctx context.Context, kind bootstrapKind, refre
 	return registry, nil
 }
 
+func (c *bootstrapCache) kindLock(kind bootstrapKind) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	lock := c.locks[kind]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		c.locks[kind] = lock
+	}
+	return lock
+}
+
+func (c *bootstrapCache) cachedEntry(kind bootstrapKind) (bootstrapCacheEntry, bool) {
+	c.mu.Lock()
+	entry, ok := c.memory[kind]
+	c.mu.Unlock()
+	if ok {
+		return entry, true
+	}
+	entry, ok = c.read(kind)
+	if ok {
+		c.mu.Lock()
+		c.memory[kind] = entry
+		c.mu.Unlock()
+	}
+	return entry, ok
+}
+
 func (c *bootstrapCache) path(kind bootstrapKind) string {
 	if c.dir == "" {
 		return ""
@@ -125,7 +170,7 @@ func (c *bootstrapCache) read(kind bootstrapKind) (bootstrapCacheEntry, bool) {
 	if path == "" {
 		return bootstrapCacheEntry{}, false
 	}
-	payload, err := os.ReadFile(path)
+	payload, err := os.ReadFile(path) // #nosec G304 -- path is a fixed bootstrap filename below the configured cache directory.
 	if err != nil {
 		return bootstrapCacheEntry{}, false
 	}
@@ -137,17 +182,33 @@ func (c *bootstrapCache) read(kind bootstrapKind) (bootstrapCacheEntry, bool) {
 }
 
 func (c *bootstrapCache) write(kind bootstrapKind, entry bootstrapCacheEntry) {
+	c.mu.Lock()
+	c.memory[kind] = entry
+	c.mu.Unlock()
 	path := c.path(kind)
 	if path == "" {
 		return
 	}
-	payload, err := json.Marshal(entry)
-	if err != nil || os.MkdirAll(filepath.Dir(path), 0o755) != nil {
+	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
 		return
 	}
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, payload, 0o600) == nil {
-		_ = os.Rename(tmp, path)
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".bootstrap-*.tmp")
+	if err != nil {
+		return
+	}
+	temporaryPath := temporary.Name()
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if temporary.Chmod(0o600) != nil || json.NewEncoder(temporary).Encode(entry) != nil || temporary.Sync() != nil || temporary.Close() != nil {
+		_ = temporary.Close()
+		return
+	}
+	if os.Rename(temporaryPath, path) == nil {
+		removeTemporary = false
 	}
 }
 

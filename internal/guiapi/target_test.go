@@ -7,7 +7,7 @@ func TestParseTargetExtractsHTTPHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseTarget() error = %v", err)
 	}
-	if parsed.Normalized != "Example.COM" || parsed.Target.Canonical != "example.com" {
+	if parsed.Normalized != "example.com" || parsed.Subject.Canonical != "example.com" || parsed.Subject.Kind != "registrable_domain" {
 		t.Fatalf("parseTarget() = %+v", parsed)
 	}
 }

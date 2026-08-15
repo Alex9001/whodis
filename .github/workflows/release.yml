@@ -1,12 +1,24 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version identity used by non-publishing preflight packages
+        required: true
+        default: 2.0.0
   push:
     tags:
       - "v*"
 
 permissions:
   contents: read
+
+env:
+  GO_VERSION: 1.26.5
+  GORELEASER_VERSION: v2.17.1
+  SYFT_VERSION: v1.51.0
+  WHODIS_BUILD_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
 
 jobs:
   gui-linux:
@@ -18,33 +30,59 @@ jobs:
           - runner: ubuntu-22.04
             arch: amd64
             tool_arch: x86_64
+            linuxdeploy_asset: 497463883
+            linuxdeploy_sha256: 421ca71d5c69ea97c6309276232990d43df1dcece0edfaa26bbf926ff96ed12e
+            qt_plugin_asset: 421996681
+            qt_plugin_sha256: be1b7e166bf9975cfb694ebe6759ba40502ffc6196440d3e64aa90c4dbd67e9f
           - runner: ubuntu-22.04-arm
             arch: arm64
             tool_arch: aarch64
+            linuxdeploy_asset: 497463664
+            linuxdeploy_sha256: 9f04c4c2a8b69c392c4bbcc1a88bdd4d0a8ac03f587cf5242814cb7ae47b78e5
+            qt_plugin_asset: 421996594
+            qt_plugin_sha256: 5525e6c49c3c774c02b8864d2acc2ae4c5c0ccc3327f7dce626deaa36348e5c6
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libgl1-mesa-dev libfuse2 file weston xauth xvfb
       - name: Install linuxdeploy
         env:
-          TOOL_ARCH: ${{ matrix.tool_arch }}
+          GH_TOKEN: ${{ github.token }}
+          LINUXDEPLOY_ASSET: ${{ matrix.linuxdeploy_asset }}
+          LINUXDEPLOY_SHA256: ${{ matrix.linuxdeploy_sha256 }}
+          QT_PLUGIN_ASSET: ${{ matrix.qt_plugin_asset }}
+          QT_PLUGIN_SHA256: ${{ matrix.qt_plugin_sha256 }}
         run: |
-          curl -fLso linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${TOOL_ARCH}.AppImage"
-          curl -fLso linuxdeploy-plugin-qt "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${TOOL_ARCH}.AppImage"
+          gh api -H 'Accept: application/octet-stream' \
+            "repos/linuxdeploy/linuxdeploy/releases/assets/$LINUXDEPLOY_ASSET" > linuxdeploy
+          gh api -H 'Accept: application/octet-stream' \
+            "repos/linuxdeploy/linuxdeploy-plugin-qt/releases/assets/$QT_PLUGIN_ASSET" > linuxdeploy-plugin-qt
+          printf '%s  %s\n' "$LINUXDEPLOY_SHA256" linuxdeploy | sha256sum --check --strict
+          printf '%s  %s\n' "$QT_PLUGIN_SHA256" linuxdeploy-plugin-qt | sha256sum --check --strict
           chmod +x linuxdeploy linuxdeploy-plugin-qt
+      - name: Install pinned Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
       - name: Build AppImage
         env:
           LINUXDEPLOY: ${{ github.workspace }}/linuxdeploy
           QMAKE: qmake6
         run: |
           mkdir -p release-assets
-          scripts/package-gui-linux.sh "$GITHUB_REF_NAME" build-gui release-assets
+          scripts/package-gui-linux.sh "$WHODIS_BUILD_VERSION" build-gui release-assets
+          syft dir:build-gui/AppDir \
+            --output "spdx-json=release-assets/whodis-gui_linux_${{ matrix.arch }}.sbom.json"
+          jq --exit-status '.packages | length >= 10' \
+            "release-assets/whodis-gui_linux_${{ matrix.arch }}.sbom.json"
+          grep -qi whodis "release-assets/whodis-gui_linux_${{ matrix.arch }}.sbom.json"
+          find build-gui/AppDir -type f -iname '*Qt6Core*' -print -quit | grep -q .
       - name: Smoke-test packaged AppImage on X11 and Wayland
         shell: bash
         run: |
@@ -109,7 +147,7 @@ jobs:
 
           cleanup_weston
           trap - EXIT
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: whodis-gui-linux-${{ matrix.arch }}
           path: release-assets/*
@@ -131,22 +169,26 @@ jobs:
             msvc_arch: amd64_arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
-      - uses: ilammy/msvc-dev-cmd@v1
+          go-version: ${{ env.GO_VERSION }}
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: ${{ matrix.msvc_arch }}
-      - uses: jurplel/install-qt-action@v4
+      - uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
           version: '6.10.2'
           arch: ${{ matrix.qt_arch }}
           cache: true
+      - name: Install pinned Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
       - name: Build and deploy
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:WHODIS_BUILD_VERSION.TrimStart('v')
           cmake -S desktop -B build-gui -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$PWD/stage" `
@@ -163,6 +205,15 @@ jobs:
             throw "The deployed Windows package is missing Qt license texts."
           }
           New-Item -ItemType Directory -Path release-assets | Out-Null
+          $sbomPath = "$PWD/release-assets/whodis-gui_windows_${{ matrix.arch }}.sbom.json"
+          syft "dir:$PWD/stage/bin" --output "spdx-json=$sbomPath"
+          $sbom = Get-Content -Raw -LiteralPath $sbomPath | ConvertFrom-Json
+          if ($sbom.packages.Count -lt 10 -or -not (Select-String -Quiet -Pattern 'whodis' -LiteralPath $sbomPath)) {
+            throw "The Windows staged-content SBOM is unexpectedly incomplete."
+          }
+          if (-not (Get-ChildItem "$PWD/stage/bin" -Recurse -Filter Qt6Core.dll)) {
+            throw "The Windows deployment is missing Qt6Core.dll."
+          }
           Compress-Archive -Path "$PWD/stage/bin/*" `
             -DestinationPath "release-assets/whodis-gui_windows_${{ matrix.arch }}_portable.zip"
           choco install nsis -y --no-progress
@@ -176,7 +227,7 @@ jobs:
             "/DVERSION=$version" `
             "/DOUTPUT_FILE=$PWD\release-assets\whodis-gui_windows_${{ matrix.arch }}_setup.exe" `
             desktop/packaging/windows/installer.nsi
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: whodis-gui-windows-${{ matrix.arch }}
           path: release-assets/*
@@ -186,20 +237,24 @@ jobs:
     name: Build universal macOS GUI
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
-      - uses: jurplel/install-qt-action@v4
+          go-version: ${{ env.GO_VERSION }}
+      - uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
           version: '6.10.2'
           arch: clang_64
           cache: true
+      - name: Install pinned Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
       - name: Build universal app and DMG
         shell: bash
         run: |
           set -euo pipefail
-          version=${GITHUB_REF_NAME#v}
+          version=${WHODIS_BUILD_VERSION#v}
           bundle_version=${version%%-*}
           iconset="$RUNNER_TEMP/Whodis.iconset"
           mkdir -p "$iconset"
@@ -228,9 +283,9 @@ jobs:
           app=build-gui/bin/Whodis.app
           mkdir -p "$app/Contents/Helpers" "$app/Contents/Resources"
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath \
-            -ldflags="-s -w -X main.version=$version -X github.com/Alex9001/whodis.version=$version" -o /tmp/whodis-engine-amd64 ./cmd/whodis-gui-engine
+            -ldflags="-s -w -X main.version=$version -X github.com/Alex9001/whodis/v2.version=$version" -o /tmp/whodis-engine-amd64 ./cmd/whodis-gui-engine
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
-            -ldflags="-s -w -X main.version=$version -X github.com/Alex9001/whodis.version=$version" -o /tmp/whodis-engine-arm64 ./cmd/whodis-gui-engine
+            -ldflags="-s -w -X main.version=$version -X github.com/Alex9001/whodis/v2.version=$version" -o /tmp/whodis-engine-arm64 ./cmd/whodis-gui-engine
           lipo -create /tmp/whodis-engine-amd64 /tmp/whodis-engine-arm64 \
             -output "$app/Contents/Helpers/whodis-gui-engine"
           cp LICENSE README.md desktop/packaging/THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
@@ -240,16 +295,22 @@ jobs:
           test -f "$app/Contents/Resources/Qt-Licenses/GPL-3.0-only.txt"
           macdeployqt "$app" -always-overwrite
           mkdir -p release-assets
+          syft "dir:$app" \
+            --output "spdx-json=release-assets/whodis-gui_macos_universal.sbom.json"
+          jq --exit-status '.packages | length >= 10' \
+            release-assets/whodis-gui_macos_universal.sbom.json
+          grep -qi whodis release-assets/whodis-gui_macos_universal.sbom.json
+          test -d "$app/Contents/Frameworks/QtCore.framework"
           hdiutil create -volname Whodis -srcfolder "$app" -ov -format UDZO \
             "release-assets/whodis-gui_macos_universal.dmg"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: whodis-gui-macos-universal
           path: release-assets/*
           if-no-files-found: error
 
   release:
-    name: Publish CLI and GUI release
+    name: Assemble, verify, and optionally publish release
     needs:
       - gui-linux
       - gui-windows
@@ -260,45 +321,82 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: stable
+          go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: whodis-gui-*
           path: .release-assets/gui
           merge-multiple: true
-      - name: Install Syft for SBOM generation
-        uses: anchore/sbom-action/download-syft@v0
-      - name: Generate GUI SBOMs
-        shell: bash
-        run: |
-          for artifact in .release-assets/gui/*; do
-            syft "$artifact" --output "spdx-json=${artifact}.sbom.json"
-          done
-      - name: Vet and test
+      - name: Vet, test, and analyze release source
         run: |
           go vet ./...
           go test -race ./...
+          go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+          go run github.com/securego/gosec/v2/cmd/gosec@v2.22.10 -exclude-generated -quiet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
       - name: List unsigned GUI assets
         run: |
-          echo 'The first desktop release is intentionally unsigned.'
+          echo 'Desktop packages are intentionally unsigned for v2.0.0.'
           find .release-assets/gui -maxdepth 1 -type f -print
-      - name: Publish with GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+      - name: Prepare non-publishing preflight version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          PREFLIGHT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version=${PREFLIGHT_VERSION#v}
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $PREFLIGHT_VERSION" >&2
+            exit 2
+          fi
+          git tag --force "v$version"
+      - name: Assemble CLI and native packages without publishing
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
+          version: ${{ env.GORELEASER_VERSION }}
+          args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify staged release identities and SBOMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/checksums.txt
+          grep -q 'whodis-gui_' dist/checksums.txt
+          for sbom in .release-assets/gui/*.sbom.json; do
+            jq --exit-status '.packages | length >= 10' "$sbom" >/dev/null
+            grep -qi whodis "$sbom"
+          done
+          test "$(find .release-assets/gui -maxdepth 1 -type f -name '*.sbom.json' | wc -l)" -eq 5
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            version=${GITHUB_REF_NAME#v}
+            cli=$(find dist -type f -path '*linux_amd64*/whodis' -print -quit)
+            test -n "$cli"
+            test "$("$cli" --version)" = "whodis $version"
+          fi
+      - name: Upload private preflight bundle
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: whodis-${{ inputs.version }}-release-preflight
+          path: |
+            dist/**/*
+            .release-assets/gui/*
+            scripts/install.sh
+            scripts/install.ps1
+          if-no-files-found: error
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@v3
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: |
             dist/**/*.tar.gz
@@ -312,10 +410,38 @@ jobs:
             .release-assets/gui/*
             scripts/install.sh
             scripts/install.ps1
+      - name: Publish the already verified and attested files
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' assets < <(find dist -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' \
+               -o -name '*.rpm' -o -name '*.apk' -o -name '*.pkg.tar.zst' \
+               -o -name '*.sbom*' -o -name 'checksums.txt' \) -print0)
+          while IFS= read -r -d '' asset; do
+            assets+=("$asset")
+          done < <(find .release-assets/gui -maxdepth 1 -type f -print0)
+          assets+=(scripts/install.sh scripts/install.ps1)
+
+          notes=(--generate-notes)
+          if [ "$GITHUB_REF_NAME" = v2.0.0 ]; then
+            notes=(--notes-file RELEASE_NOTES_v2.0.0.md)
+          fi
+          release_kind=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_kind=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "Whodis ${GITHUB_REF_NAME#v}" \
+            "${notes[@]}" "${release_kind[@]}" "${assets[@]}"
 
   publish-aur:
     name: Update AUR packages
     needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -332,7 +458,7 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "AUR publishing skipped: no deploy key or this is a prerelease tag."
           fi
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         if: steps.aur.outputs.enabled == 'true'
         with:
           persist-credentials: false
@@ -357,6 +483,7 @@ jobs:
   publish-container:
     name: Publish OCI image
     needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -364,18 +491,18 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Sign in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate image metadata
         id: metadata
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/alex9001/whodis
           tags: |
@@ -383,7 +510,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - name: Build and publish multi-architecture image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64

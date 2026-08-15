@@ -6,15 +6,16 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/Alex9001/whodis"
-	"github.com/Alex9001/whodis/internal/guiapi"
+	"github.com/Alex9001/whodis/v2"
+	"github.com/Alex9001/whodis/v2/internal/guiapi"
 )
 
 var version = "dev"
 
 func main() {
-	client := whodis.NewClient(whodis.ClientOptions{})
-	server := guiapi.NewServer(resolvedVersion(), client, os.Stdin, os.Stdout, os.Stderr)
+	engine := whodis.NewEngine(whodis.EngineOptions{})
+	defer engine.Close()
+	server := guiapi.NewServerWithEngine(resolvedVersion(), engine, os.Stdin, os.Stdout, os.Stderr)
 	if err := server.Serve(); err != nil {
 		fmt.Fprintln(os.Stderr, "whodis-gui-engine:", err)
 		os.Exit(1)

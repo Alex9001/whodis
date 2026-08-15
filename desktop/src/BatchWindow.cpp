@@ -50,9 +50,9 @@ QString dnsRecordTypes(const QJsonArray &records)
 }
 }
 
-BatchWindow::BatchWindow(QWidget *parent)
+BatchWindow::BatchWindow(EngineClient *engine, const QJsonObject &options, QWidget *parent)
     : QMainWindow(parent)
-    , m_engine(new EngineClient(this))
+    , m_engine(engine)
     , m_targets(new QPlainTextEdit(this))
     , m_mode(new QComboBox(this))
     , m_workers(new QSpinBox(this))
@@ -63,6 +63,7 @@ BatchWindow::BatchWindow(QWidget *parent)
     , m_progress(new QProgressBar(this))
     , m_table(new QTableWidget(this))
     , m_result(new ResultWidget(this))
+    , m_options(options)
 {
     setWindowTitle(tr("Whodis Batch Lookup"));
     setWindowIcon(QIcon(QStringLiteral(":/icons/whodis.png")));
@@ -122,7 +123,7 @@ BatchWindow::BatchWindow(QWidget *parent)
     m_cancel->setVisible(false);
     m_retry->setEnabled(false);
     m_export->setEnabled(false);
-    m_start->setEnabled(false);
+    m_start->setEnabled(m_engine && m_engine->isReady());
 
     connect(importAction, &QAction::triggered, this, &BatchWindow::importTargets);
     connect(m_start, &QPushButton::clicked, this, &BatchWindow::startLookup);
@@ -144,7 +145,6 @@ BatchWindow::BatchWindow(QWidget *parent)
 
     QSettings settings;
     restoreGeometry(settings.value(QStringLiteral("batch/geometry")).toByteArray());
-    m_engine->start();
 }
 
 void BatchWindow::closeEvent(QCloseEvent *event)
@@ -206,7 +206,6 @@ void BatchWindow::beginLookup(const QStringList &targets)
         for (int column = 2; column < m_table->columnCount(); ++column)
             m_table->setItem(row, column, new QTableWidgetItem);
     }
-    m_table->setSortingEnabled(true);
     m_token.clear();
     m_result->clearResult();
     m_progress->setRange(0, targets.size());
@@ -214,9 +213,10 @@ void BatchWindow::beginLookup(const QStringList &targets)
     QJsonArray targetArray;
     for (const QString &target : targets)
         targetArray.append(target);
-    const QJsonObject params{{QStringLiteral("targets"), targetArray},
-                             {QStringLiteral("operation"), m_resultMode},
-                             {QStringLiteral("workers"), m_workers->value()}};
+    QJsonObject params = m_options;
+    params.insert(QStringLiteral("targets"), targetArray);
+    params.insert(QStringLiteral("operation"), m_resultMode);
+    params.insert(QStringLiteral("workers"), m_workers->value());
     m_activeRequest = m_engine->request(QStringLiteral("run"), params);
     setBusy(true);
     statusBar()->showMessage(tr("Running %1 for %2 targets…").arg(m_mode->currentText()).arg(targets.size()));
@@ -246,7 +246,7 @@ void BatchWindow::exportResults()
 {
     if (m_token.isEmpty())
         return;
-    const QString filters = tr("CSV table (*.csv);;Tab-separated text (*.tsv);;JSON (*.json)");
+    const QString filters = tr("CSV table (*.csv);;Tab-separated text (*.tsv);;NDJSON (*.ndjson);;JSON (*.json)");
     QString selectedFilter;
     const QString path = QFileDialog::getSaveFileName(this, tr("Export batch results"), QStringLiteral("whodis-results.csv"), filters, &selectedFilter);
     if (path.isEmpty())
@@ -254,6 +254,8 @@ void BatchWindow::exportResults()
     QString format = QStringLiteral("csv");
     if (selectedFilter.contains(QStringLiteral("tsv"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".tsv"), Qt::CaseInsensitive))
         format = QStringLiteral("tsv");
+    else if (selectedFilter.contains(QStringLiteral("NDJSON"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".ndjson"), Qt::CaseInsensitive))
+        format = QStringLiteral("ndjson");
     else if (selectedFilter.contains(QStringLiteral("JSON"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive))
         format = QStringLiteral("json");
     m_exportPath = path;
@@ -346,6 +348,8 @@ void BatchWindow::updateRow(int index, const QJsonObject &item)
 
 int BatchWindow::rowForIndex(int index) const
 {
+    if (!m_table->isSortingEnabled())
+        return index >= 0 && index < m_table->rowCount() ? index : -1;
     for (int row = 0; row < m_table->rowCount(); ++row) {
         const QTableWidgetItem *target = m_table->item(row, 0);
         if (target && target->data(Qt::UserRole).toInt() == index)
@@ -365,6 +369,7 @@ void BatchWindow::finishLookup(bool canceled)
     }
     m_retry->setEnabled(failures > 0);
     m_export->setEnabled(!m_token.isEmpty());
+    m_table->setSortingEnabled(true);
     statusBar()->showMessage(canceled ? tr("Batch canceled.") : tr("Batch complete: %1 failures.").arg(failures), 7000);
 }
 

@@ -3,11 +3,14 @@ package whodis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type rdapAdapter struct{ client *Client }
@@ -22,7 +25,7 @@ func (a rdapAdapter) Lookup(ctx context.Context, target Target, route RouteDecis
 	var err error
 	for _, base := range candidates {
 		endpoint := ensureTrailingSlash(base) + resource
-		record, source, err = a.fetch(ctx, endpoint)
+		record, source, err = a.fetch(ctx, endpoint, route.DiscoverySource != "command line")
 		if err == nil {
 			break
 		}
@@ -46,7 +49,7 @@ func (a rdapAdapter) Lookup(ctx context.Context, target Target, route RouteDecis
 		if !strings.Contains(link.Href, "/"+string(target.Kind)+"/") && !(target.Kind == KindASN && strings.Contains(link.Href, "/autnum/")) {
 			continue
 		}
-		if follow, followSource, followErr := a.fetch(ctx, link.Href); followErr == nil {
+		if follow, followSource, followErr := a.fetch(ctx, link.Href, true); followErr == nil {
 			object = mergeObjects(object, normalizeRDAP(target.Kind, follow))
 			sources = append(sources, followSource)
 		}
@@ -68,18 +71,55 @@ func rdapResource(target Target) string {
 	}
 }
 
-func (a rdapAdapter) fetch(ctx context.Context, endpoint string) (rdapRecord, Source, error) {
+func (a rdapAdapter) fetch(ctx context.Context, endpoint string, automatic bool) (rdapRecord, Source, error) {
+	var record rdapRecord
+	var source Source
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		record, source, err = a.fetchOnce(ctx, endpoint, automatic)
+		if err == nil || ctx.Err() != nil || !retryableRDAPFailure(err) || attempt == 1 {
+			return record, source, err
+		}
+		timer := time.NewTimer(retryDelayForRDAPError(err))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return rdapRecord{}, Source{}, contextLookupError("RDAP query", ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return record, source, err
+}
+
+func (a rdapAdapter) fetchOnce(ctx context.Context, endpoint string, automatic bool) (rdapRecord, Source, error) {
+	if automatic {
+		if err := validateAutomaticURL(ctx, endpoint, a.client.networkPolicy); err != nil {
+			return rdapRecord{}, Source{}, err
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return rdapRecord{}, Source{}, lookupError(ErrorUnavailable, "could not prepare RDAP request", err)
 	}
 	req.Header.Set("Accept", "application/rdap+json, application/json;q=0.9")
 	req.Header.Set("User-Agent", productUserAgent())
+	transport := a.client.transport
+	if automatic {
+		transport = a.client.autoTransport
+	}
 	client := &http.Client{
-		Timeout: a.client.timeout,
+		Timeout: a.client.timeout, Transport: transport,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
 			if len(via) >= 4 || (request.URL.Scheme != "https" && request.URL.Scheme != "http") {
 				return http.ErrUseLastResponse
+			}
+			if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && request.URL.Scheme != "https" && !a.client.networkPolicy.AllowInsecureHTTP {
+				return fmt.Errorf("RDAP redirect attempted an HTTPS downgrade")
+			}
+			if automatic {
+				if err := validateAutomaticURL(request.Context(), request.URL.String(), a.client.networkPolicy); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
@@ -104,6 +144,9 @@ func (a rdapAdapter) fetch(ctx context.Context, endpoint string) (rdapRecord, So
 		return rdapRecord{}, Source{}, lookupError(ErrorRateLimited, message, nil)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode >= 500 {
+			return rdapRecord{}, Source{}, lookupError(ErrorUnavailable, "RDAP service returned "+response.Status, nil)
+		}
 		return rdapRecord{}, Source{}, lookupError(ErrorProtocol, "RDAP service returned "+response.Status, nil)
 	}
 	var record rdapRecord
@@ -111,6 +154,46 @@ func (a rdapAdapter) fetch(ctx context.Context, endpoint string) (rdapRecord, So
 		return rdapRecord{}, Source{}, lookupError(ErrorProtocol, "RDAP service returned an invalid response", err)
 	}
 	return record, Source{Protocol: ProtocolRDAP, Endpoint: endpoint, Authority: response.Request.URL.Host, Raw: string(raw)}, nil
+}
+
+func retryableRDAPFailure(err error) bool {
+	var typed *LookupError
+	if !errors.As(err, &typed) {
+		return false
+	}
+	return typed.Kind == ErrorUnavailable || typed.Kind == ErrorRateLimited
+}
+
+func retryDelayForRDAPError(err error) time.Duration {
+	var typed *LookupError
+	if errors.As(err, &typed) {
+		if _, value, found := strings.Cut(typed.Message, "retry after "); found {
+			return retryAfterDuration(value)
+		}
+	}
+	return 250 * time.Millisecond
+}
+
+func retryAfterDuration(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		delay := time.Duration(seconds) * time.Second
+		if delay > 5*time.Second {
+			delay = 5 * time.Second
+		}
+		return delay
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		delay := time.Until(when)
+		if delay < 0 {
+			delay = 0
+		}
+		if delay > 5*time.Second {
+			delay = 5 * time.Second
+		}
+		return delay
+	}
+	return 250 * time.Millisecond
 }
 
 type rdapRecord struct {
@@ -228,7 +311,7 @@ func normalizeRDAP(kind Kind, record rdapRecord) Object {
 		}
 	}
 	for _, event := range record.Events {
-		object.Events = append(object.Events, Event{Action: event.Action, Date: event.Date})
+		object.Events = append(object.Events, Event(event))
 	}
 	for _, ns := range record.Nameservers {
 		if ns.LDHName != "" {

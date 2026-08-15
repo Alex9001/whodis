@@ -51,6 +51,7 @@ type HTTPProbe struct {
 	Redirects []string      `json:"redirects,omitempty" yaml:"redirects,omitempty"`
 	Duration  time.Duration `json:"duration_ns" yaml:"duration_ns"`
 	Server    string        `json:"server,omitempty" yaml:"server,omitempty"`
+	Healthy   bool          `json:"healthy" yaml:"healthy"`
 	Error     string        `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
@@ -383,17 +384,29 @@ func probeHTTP(ctx context.Context, endpoint string) HTTPProbe {
 		}
 		return nil
 	}
-	request, _ := http.NewRequestWithContext(ctx, http.MethodHead, endpoint, nil)
-	request.Header.Set("User-Agent", productUserAgent())
 	started := time.Now()
-	response, err := client.Do(request)
+	request := func(method string) (*http.Response, error) {
+		value, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		value.Header.Set("User-Agent", productUserAgent())
+		return client.Do(value)
+	}
+	response, err := request(http.MethodHead)
+	if err == nil && response.StatusCode == http.StatusMethodNotAllowed {
+		_ = response.Body.Close()
+		response, err = request(http.MethodGet)
+	}
 	probe.Duration = time.Since(started)
 	if err != nil {
 		probe.Error = err.Error()
 		return probe
 	}
 	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
 	probe.Status, probe.FinalURL, probe.Server = response.StatusCode, response.Request.URL.String(), response.Header.Get("Server")
+	probe.Healthy = response.StatusCode >= 200 && response.StatusCode < 400
 	return probe
 }
 
@@ -443,22 +456,38 @@ func probeSMTP(ctx context.Context, hostname string, preference uint16) MailProb
 		return probe
 	}
 	probe.Greeting = strings.Join(greeting, " ")
+	if smtpResponseCode(greeting) != 220 {
+		probe.Error = "SMTP server did not return a 220 greeting"
+		return probe
+	}
 	_, _ = fmt.Fprintf(connection, "EHLO whodis.invalid\r\n")
 	capabilities, err := readSMTPResponse(reader)
-	if err == nil {
+	if err == nil && smtpResponseCode(capabilities) == 250 {
 		probe.Capabilities = capabilities
 		for _, capability := range capabilities {
-			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(capability)), "STARTTLS") {
+			text := strings.TrimSpace(capability)
+			if len(text) > 4 {
+				text = text[4:]
+			}
+			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(text)), "STARTTLS") {
 				probe.STARTTLS = true
 			}
 		}
+	} else if err != nil {
+		probe.Error = "EHLO: " + err.Error()
+		return probe
+	} else {
+		probe.Error = "SMTP server did not accept EHLO"
+		return probe
 	}
 	if probe.STARTTLS {
 		_, _ = fmt.Fprintf(connection, "STARTTLS\r\n")
 		response, startTLSErr := readSMTPResponse(reader)
-		if startTLSErr != nil || len(response) == 0 {
+		if startTLSErr != nil || len(response) == 0 || smtpResponseCode(response) != 220 {
 			if startTLSErr != nil {
 				probe.Error = "STARTTLS: " + startTLSErr.Error()
+			} else {
+				probe.Error = "STARTTLS: SMTP server did not return 220"
 			}
 		} else {
 			tlsConnection := tls.Client(connection, &tls.Config{ServerName: hostname, MinVersion: tls.VersionTLS12})
@@ -491,12 +520,20 @@ func readSMTPResponse(reader *bufio.Reader) ([]string, error) {
 		if len(line) > 4 {
 			payload = line[4:]
 		}
-		lines = append(lines, payload)
+		lines = append(lines, line[:3]+" "+payload)
 		if len(line) < 4 || line[3] != '-' {
 			return lines, nil
 		}
 	}
 	return lines, fmt.Errorf("SMTP response exceeded line limit")
+}
+
+func smtpResponseCode(lines []string) int {
+	if len(lines) == 0 || len(lines[0]) < 3 {
+		return 0
+	}
+	code, _ := strconv.Atoi(lines[0][:3])
+	return code
 }
 
 func advertisedServices(records []DNSRecord) []ServiceProbe {
@@ -533,7 +570,7 @@ func advertisedServices(records []DNSRecord) []ServiceProbe {
 					}
 				}
 			}
-			if port > 0 {
+			if port > 0 && port <= uint64(^uint16(0)) {
 				services = append(services, ServiceProbe{Source: record.Type, Name: record.Name, Target: target, Port: uint16(port)})
 			}
 		}
@@ -653,19 +690,25 @@ func reachabilityFinding(probes []AddressProbe) Finding {
 }
 
 func httpFinding(probes []HTTPProbe) Finding {
-	succeeded := 0
+	responded, healthy, serverFailures := 0, 0, 0
 	for _, probe := range probes {
 		if probe.Status > 0 {
-			succeeded++
+			responded++
+		}
+		if probe.Healthy {
+			healthy++
+		}
+		if probe.Status >= 500 {
+			serverFailures++
 		}
 	}
 	severity := SeverityPass
-	if succeeded == 0 {
+	if responded == 0 || (healthy == 0 && serverFailures > 0) {
 		severity = SeverityError
-	} else if succeeded < len(probes) {
+	} else if healthy < len(probes) {
 		severity = SeverityWarning
 	}
-	return Finding{ID: "web.http", Severity: severity, Title: "Web endpoints", Summary: fmt.Sprintf("%d of %d HTTP or HTTPS endpoints returned a response.", succeeded, len(probes))}
+	return Finding{ID: "web.http", Severity: severity, Title: "Web endpoints", Summary: fmt.Sprintf("%d of %d HTTP or HTTPS endpoints returned a healthy 2xx/3xx response; %d responded at all.", healthy, len(probes), responded)}
 }
 
 func tlsFinding(probes []TLSProbe) Finding {

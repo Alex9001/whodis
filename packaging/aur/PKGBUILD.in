@@ -28,7 +28,7 @@ build() {
   export GOFLAGS='-buildmode=pie -trimpath -mod=readonly -modcacherw -buildvcs=false'
 
   go build \
-    -ldflags="-linkmode=external -X main.version=${pkgver} -X github.com/Alex9001/whodis.version=${pkgver}" \
+    -ldflags="-linkmode=external -X main.version=${pkgver} -X github.com/Alex9001/whodis/v2.version=${pkgver}" \
     -o whodis \
     ./cmd/whodis
 }

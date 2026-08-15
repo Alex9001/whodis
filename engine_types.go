@@ -6,15 +6,14 @@ import (
 )
 
 // ReportSchemaVersion is the version of Whodis's public JSON report schema.
-// Version 3 is operation-oriented: independent registration, DNS, and
-// diagnostic results can coexist without one failed provider erasing another.
-const ReportSchemaVersion = 3
+const ReportSchemaVersion = 4
 
 // Operation identifies one engine operation.
 type Operation string
 
 const (
 	OperationRegistration Operation = "registration"
+	OperationInspect      Operation = "inspect"
 	OperationDNSQuery     Operation = "dns.query"
 	OperationDNSInventory Operation = "dns.inventory"
 	OperationDNSCompare   Operation = "dns.compare"
@@ -75,13 +74,23 @@ type Request struct {
 	OnProgress   func(ProgressEvent) `json:"-" yaml:"-"`
 }
 
-// Report is the renderer-independent v3 result returned by Engine.Run.
+// RegistrationResult is the normalized registration portion of a v4 report.
+// Query identity and observation time live once on the enclosing Report.
+type RegistrationResult struct {
+	Route        RouteDecision  `json:"route" yaml:"route"`
+	FallbackFrom *RouteDecision `json:"fallback_from,omitempty" yaml:"fallback_from,omitempty"`
+	Object       Object         `json:"object" yaml:"object"`
+	Sources      []Source       `json:"sources" yaml:"sources"`
+}
+
+// Report is the renderer-independent v4 result returned by Engine.Run.
 type Report struct {
 	SchemaVersion int                 `json:"schema_version" yaml:"schema_version"`
+	RequestID     string              `json:"request_id,omitempty" yaml:"request_id,omitempty"`
 	Operation     Operation           `json:"operation" yaml:"operation"`
-	Query         Target              `json:"query" yaml:"query"`
-	RetrievedAt   time.Time           `json:"retrieved_at" yaml:"retrieved_at"`
-	Registration  *LookupResult       `json:"registration,omitempty" yaml:"registration,omitempty"`
+	Subject       Subject             `json:"subject" yaml:"subject"`
+	ObservedAt    time.Time           `json:"observed_at" yaml:"observed_at"`
+	Registration  *RegistrationResult `json:"registration,omitempty" yaml:"registration,omitempty"`
 	DNS           *DNSOperationResult `json:"dns,omitempty" yaml:"dns,omitempty"`
 	Diagnosis     *DiagnosisReport    `json:"diagnosis,omitempty" yaml:"diagnosis,omitempty"`
 	Findings      []Finding           `json:"findings,omitempty" yaml:"findings,omitempty"`
@@ -101,10 +110,28 @@ type BatchReport struct {
 	Reports       []Report `json:"reports" yaml:"reports"`
 }
 
+// StreamOptions controls incremental batch execution without retaining every
+// report in memory.
+type StreamOptions struct {
+	Workers int
+}
+
+// StreamItem identifies a completed report by its zero-based input position.
+type StreamItem struct {
+	Index  int    `json:"index" yaml:"index"`
+	Report Report `json:"report" yaml:"report"`
+}
+
+// EngineLimits bounds nested fan-out for reusable engines and embedded use.
+type EngineLimits struct {
+	RegistrationConcurrency int
+	MaximumBatchItems       int
+}
+
 // RegistrationProvider is the dependency-injection boundary for normalized
 // registration lookup implementations.
 type RegistrationProvider interface {
-	Lookup(context.Context, string, LookupOptions) (LookupResult, error)
+	Lookup(context.Context, Subject, LookupOptions) (RegistrationResult, error)
 }
 
 // DNSProvider is the dependency-injection boundary for DNS operations.
@@ -123,9 +150,21 @@ type DiagnoseProvider interface {
 
 // EngineOptions configures a reusable, concurrency-safe engine.
 type EngineOptions struct {
-	Client       *Client
-	Registration RegistrationProvider
-	DNS          DNSProvider
-	Diagnose     DiagnoseProvider
-	Timeout      time.Duration
+	Client        *Client
+	Registration  RegistrationProvider
+	DNS           DNSProvider
+	Diagnose      DiagnoseProvider
+	Timeout       time.Duration
+	NetworkPolicy NetworkPolicy
+	Limits        EngineLimits
+}
+
+func registrationResult(result LookupResult) RegistrationResult {
+	return RegistrationResult{Route: result.Route, FallbackFrom: result.FallbackFrom, Object: result.Object, Sources: result.Sources}
+}
+
+// AsLookupResult converts a v4 registration section for consumers migrating
+// from Whodis v1's standalone lookup model.
+func (result RegistrationResult) AsLookupResult(subject Subject, observedAt time.Time) LookupResult {
+	return LookupResult{SchemaVersion: 2, Query: subjectTarget(subject), Route: result.Route, FallbackFrom: result.FallbackFrom, RetrievedAt: observedAt, Object: result.Object, Sources: result.Sources}
 }

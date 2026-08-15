@@ -3,10 +3,10 @@ package guiapi
 import (
 	"encoding/json"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 )
 
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -45,21 +45,9 @@ type parseParams struct {
 }
 
 type parseResult struct {
-	Input      string        `json:"input"`
-	Normalized string        `json:"normalized"`
-	Target     whodis.Target `json:"target"`
-}
-
-type lookupParams struct {
-	Targets          []string `json:"targets"`
-	Mode             string   `json:"mode,omitempty"`
-	Protocol         string   `json:"protocol,omitempty"`
-	Fallback         string   `json:"fallback,omitempty"`
-	Server           string   `json:"server,omitempty"`
-	Resolver         string   `json:"resolver,omitempty"`
-	TimeoutMS        int      `json:"timeout_ms,omitempty"`
-	Workers          int      `json:"workers,omitempty"`
-	RefreshBootstrap bool     `json:"refresh_bootstrap,omitempty"`
+	Input      string         `json:"input"`
+	Normalized string         `json:"normalized"`
+	Subject    whodis.Subject `json:"subject"`
 }
 
 type runParams struct {
@@ -90,27 +78,6 @@ type rawSource struct {
 	Endpoint  string          `json:"endpoint"`
 	Authority string          `json:"authority,omitempty"`
 	Content   string          `json:"content"`
-}
-
-type item struct {
-	Input      string               `json:"input"`
-	Result     *whodis.LookupResult `json:"result,omitempty"`
-	Error      *whodis.BatchError   `json:"error,omitempty"`
-	RawSources []rawSource          `json:"raw_sources,omitempty"`
-}
-
-type progressParams struct {
-	RequestID string `json:"request_id"`
-	Index     int    `json:"index"`
-	Completed int    `json:"completed"`
-	Total     int    `json:"total"`
-	Item      item   `json:"item"`
-}
-
-type lookupResult struct {
-	Token    string `json:"token"`
-	Items    []item `json:"items"`
-	Canceled bool   `json:"canceled,omitempty"`
 }
 
 type reportItem struct {

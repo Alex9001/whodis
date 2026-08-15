@@ -3,6 +3,7 @@ package whodis
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -21,11 +22,12 @@ func (a whoisAdapter) Lookup(ctx context.Context, target Target, route RouteDeci
 	var sources []Source
 	var document whoisDocument
 	for hop := 0; hop < 4; hop++ {
+		automatic := route.DiscoverySource != "command line" || hop > 0
 		if seen[strings.ToLower(endpoint)] {
 			return Object{}, sources, lookupError(ErrorProtocol, "WHOIS referral loop detected", nil)
 		}
 		seen[strings.ToLower(endpoint)] = true
-		raw, err := a.query(ctx, endpoint, whoisQuery(target))
+		raw, err := a.query(ctx, endpoint, whoisQuery(target), automatic)
 		if err != nil {
 			return Object{}, sources, err
 		}
@@ -52,21 +54,41 @@ func (a whoisAdapter) Lookup(ctx context.Context, target Target, route RouteDeci
 	return normalizeWHOIS(target, document), sources, nil
 }
 
-func (a whoisAdapter) query(ctx context.Context, endpoint, query string) (string, error) {
+func (a whoisAdapter) query(ctx context.Context, endpoint, query string, automatic bool) (string, error) {
 	address := endpointWithPort(endpoint)
-	dialer := net.Dialer{Timeout: a.client.timeout}
-	connection, err := dialer.DialContext(ctx, "tcp", address)
+	var connection net.Conn
+	var err error
+	if automatic {
+		connection, err = dialAutomaticContext(ctx, "tcp", address, a.client.timeout, a.client.networkPolicy)
+	} else {
+		connection, err = (&net.Dialer{Timeout: a.client.timeout}).DialContext(ctx, "tcp", address)
+	}
 	if err != nil {
+		var typed *LookupError
+		if errors.As(err, &typed) {
+			return "", typed
+		}
 		return "", lookupError(ErrorUnavailable, "WHOIS service is unavailable at "+endpoint, err)
 	}
 	defer connection.Close()
 	deadline := time.Now().Add(a.client.timeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
 	_ = connection.SetDeadline(deadline)
+	stopCancelWatch := context.AfterFunc(ctx, func() {
+		_ = connection.SetDeadline(time.Now())
+		_ = connection.Close()
+	})
+	defer stopCancelWatch()
 	if _, err := io.WriteString(connection, query+"\r\n"); err != nil {
 		return "", lookupError(ErrorUnavailable, "could not send WHOIS query", err)
 	}
 	payload, err := io.ReadAll(io.LimitReader(connection, 8<<20))
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", contextLookupError("WHOIS query", ctx.Err())
+		}
 		return "", lookupError(ErrorUnavailable, "could not read WHOIS response", err)
 	}
 	if len(payload) == 0 {
@@ -75,9 +97,19 @@ func (a whoisAdapter) query(ctx context.Context, endpoint, query string) (string
 	return string(payload), nil
 }
 
+func contextLookupError(operation string, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return lookupError(ErrorTimeout, operation+" timed out", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return lookupError(ErrorCanceled, operation+" was canceled", err)
+	}
+	return lookupError(ErrorUnavailable, operation+" failed", err)
+}
+
 func (c *Client) discoverWHOIS(ctx context.Context, target Target) (RouteDecision, error) {
 	adapter := whoisAdapter{client: c}
-	raw, err := adapter.query(ctx, ianaWHOIS, ianaQuery(target))
+	raw, err := adapter.query(ctx, ianaWHOIS, ianaQuery(target), true)
 	if err != nil {
 		return RouteDecision{}, err
 	}
@@ -206,7 +238,7 @@ func (a whoisAdapter) probeRWHOISReferral(ctx context.Context, target Target, en
 			return Object{}, nil, "", false
 		}
 		seen[strings.ToLower(endpoint)] = true
-		raw, err := a.query(ctx, endpoint, whoisQuery(target))
+		raw, err := a.query(ctx, endpoint, whoisQuery(target), true)
 		if err != nil || whoisNotFound(raw) {
 			return Object{}, nil, "", false
 		}

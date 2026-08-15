@@ -30,7 +30,7 @@ found=false
 if [ -n "$license_dir" ] && [ -d "$license_dir" ]; then
     for license_file in "$license_dir"/*; do
         [ -f "$license_file" ] || continue
-        cp -- "$license_file" "$output_dir/"
+        cp -f -- "$license_file" "$output_dir/"
         found=true
     done
 fi
@@ -40,16 +40,16 @@ if [ "$found" = false ]; then
         /usr/share/doc/qt6-base-dev/copyright \
         /usr/share/doc/libqt6core6/copyright; do
         if [ -f "$copyright_file" ]; then
-            cp -- "$copyright_file" "$output_dir/Qt-COPYRIGHT"
+            cp -f -- "$copyright_file" "$output_dir/Qt-COPYRIGHT"
             found=true
             break
         fi
     done
     if [ -f /usr/share/common-licenses/LGPL-3 ]; then
-        cp -- /usr/share/common-licenses/LGPL-3 "$output_dir/LGPL-3.0-only.txt"
+        cp -f -- /usr/share/common-licenses/LGPL-3 "$output_dir/LGPL-3.0-only.txt"
     fi
     if [ -f /usr/share/common-licenses/GPL-3 ]; then
-        cp -- /usr/share/common-licenses/GPL-3 "$output_dir/GPL-3.0-only.txt"
+        cp -f -- /usr/share/common-licenses/GPL-3 "$output_dir/GPL-3.0-only.txt"
     fi
 fi
 

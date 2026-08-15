@@ -189,9 +189,7 @@ func treeIdentifierKey(value string, kind Kind) string {
 		}
 	case KindASN:
 		upper := strings.ToUpper(value)
-		if strings.HasPrefix(upper, "AS") {
-			upper = strings.TrimPrefix(upper, "AS")
-		}
+		upper = strings.TrimPrefix(upper, "AS")
 		if upper != "" && strings.Trim(upper, "0123456789") == "" {
 			upper = strings.TrimLeft(upper, "0")
 			if upper == "" {

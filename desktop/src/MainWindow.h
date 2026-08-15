@@ -69,4 +69,5 @@ private:
     QString m_exportPath;
     QString m_resultToken;
     QString m_validKind;
+    QStringList m_dnsTypes;
 };

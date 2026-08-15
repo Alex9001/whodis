@@ -18,7 +18,7 @@ class BatchWindow final : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit BatchWindow(QWidget *parent = nullptr);
+    explicit BatchWindow(EngineClient *engine, const QJsonObject &options = {}, QWidget *parent = nullptr);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -59,5 +59,6 @@ private:
     QString m_exportRequest;
     QString m_exportPath;
     QString m_resultMode;
+    QJsonObject m_options;
     bool m_cancelRequested = false;
 };

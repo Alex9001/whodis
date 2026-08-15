@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Alex9001/whodis"
+	"github.com/Alex9001/whodis/v2"
 )
 
 const formatEnvironmentVariable = "WHODIS_FORMAT"
@@ -43,6 +43,8 @@ type userConfig struct {
 	DNSResolvers     []string `json:"dns_resolvers,omitempty"`
 	ResolverStrategy string   `json:"resolver_strategy,omitempty"`
 	DNSSEC           *bool    `json:"dnssec,omitempty"`
+	Scrutiny         string   `json:"scrutiny,omitempty"`
+	CheckActive      *bool    `json:"check_active,omitempty"`
 }
 
 func defaultCLIRuntime() cliRuntime {
@@ -71,7 +73,7 @@ func loadUserConfig(runtime cliRuntime) (userConfig, bool, error) {
 	if err != nil {
 		return userConfig{}, false, err
 	}
-	payload, err := os.ReadFile(path)
+	payload, err := os.ReadFile(path) // #nosec G304 -- path is derived from the OS user config directory and a fixed suffix.
 	if errors.Is(err, os.ErrNotExist) {
 		return userConfig{}, false, nil
 	}
@@ -81,6 +83,7 @@ func loadUserConfig(runtime cliRuntime) (userConfig, bool, error) {
 
 	var config *userConfig
 	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
 		return userConfig{}, false, fmt.Errorf("could not parse config %s: %w", path, err)
 	}
@@ -166,14 +169,14 @@ func removeUserConfig(runtime cliRuntime) error {
 }
 
 func configIsEmpty(config userConfig) bool {
-	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil && len(config.DNSResolvers) == 0 && strings.TrimSpace(config.ResolverStrategy) == "" && config.DNSSEC == nil
+	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil && len(config.DNSResolvers) == 0 && strings.TrimSpace(config.ResolverStrategy) == "" && config.DNSSEC == nil && strings.TrimSpace(config.Scrutiny) == "" && config.CheckActive == nil
 }
 
 func configsEqual(left, right userConfig) bool {
-	if left.Format != right.Format || left.Color != right.Color || left.ResolverStrategy != right.ResolverStrategy || strings.Join(left.DNSResolvers, "\x00") != strings.Join(right.DNSResolvers, "\x00") {
+	if left.Format != right.Format || left.Color != right.Color || left.ResolverStrategy != right.ResolverStrategy || left.Scrutiny != right.Scrutiny || strings.Join(left.DNSResolvers, "\x00") != strings.Join(right.DNSResolvers, "\x00") {
 		return false
 	}
-	if !equalOptionalBool(left.Details, right.Details) || !equalOptionalBool(left.DNSSEC, right.DNSSEC) {
+	if !equalOptionalBool(left.Details, right.Details) || !equalOptionalBool(left.DNSSEC, right.DNSSEC) || !equalOptionalBool(left.CheckActive, right.CheckActive) {
 		return false
 	}
 	return true
@@ -262,6 +265,9 @@ func validateUserConfig(config userConfig) error {
 	if _, err := parsePersistentResolverStrategy(config.ResolverStrategy); err != nil {
 		return err
 	}
+	if _, err := parsePersistentScrutiny(config.Scrutiny); err != nil {
+		return err
+	}
 	if len(config.DNSResolvers) > 0 {
 		if err := whodis.ValidateDNSOptions(whodis.DNSOptions{Resolvers: config.DNSResolvers}); err != nil {
 			return err
@@ -283,7 +289,7 @@ func canonicalUserConfig(config userConfig) (userConfig, error) {
 	if err != nil {
 		return userConfig{}, err
 	}
-	canonical := userConfig{Details: config.Details, DNSResolvers: append([]string(nil), config.DNSResolvers...), DNSSEC: config.DNSSEC}
+	canonical := userConfig{Details: config.Details, DNSResolvers: append([]string(nil), config.DNSResolvers...), DNSSEC: config.DNSSEC, CheckActive: config.CheckActive}
 	if format != "auto" {
 		canonical.Format = format
 	}
@@ -293,7 +299,32 @@ func canonicalUserConfig(config userConfig) (userConfig, error) {
 	if strategy != "first" {
 		canonical.ResolverStrategy = strategy
 	}
+	scrutiny, err := parsePersistentScrutiny(config.Scrutiny)
+	if err != nil {
+		return userConfig{}, err
+	}
+	if scrutiny != "standard" {
+		canonical.Scrutiny = scrutiny
+	}
 	return canonical, nil
+}
+
+func parsePersistentScrutiny(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || value == "auto" || value == "standard" {
+		return "standard", nil
+	}
+	if value == "basic" || value == "strict" {
+		return value, nil
+	}
+	return "", fmt.Errorf("scrutiny %q cannot be saved; choose basic, standard, or strict", value)
+}
+
+func persistentCheckMode(value *bool) string {
+	if value != nil && *value {
+		return "active"
+	}
+	return "passive"
 }
 
 func parsePersistentResolverStrategy(value string) (string, error) {
@@ -348,6 +379,10 @@ func configValue(config userConfig, key string) (string, error) {
 		return parsePersistentResolverStrategy(config.ResolverStrategy)
 	case "dnssec":
 		return persistentOptionalBool(config.DNSSEC), nil
+	case "scrutiny":
+		return parsePersistentScrutiny(config.Scrutiny)
+	case "check-mode":
+		return persistentCheckMode(config.CheckActive), nil
 	default:
 		return "", fmt.Errorf("unknown preference %q", key)
 	}
@@ -421,8 +456,30 @@ func setConfigValue(config *userConfig, key, value string) error {
 		}
 		config.DNSSEC = choice
 		return nil
+	case "scrutiny":
+		scrutiny, err := parsePersistentScrutiny(value)
+		if err != nil {
+			return err
+		}
+		if scrutiny == "standard" {
+			config.Scrutiny = ""
+		} else {
+			config.Scrutiny = scrutiny
+		}
+		return nil
+	case "check-mode":
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "passive":
+			config.CheckActive = nil
+		case "active":
+			choice := true
+			config.CheckActive = &choice
+		default:
+			return fmt.Errorf("check-mode must be passive or active")
+		}
+		return nil
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, or dnssec", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, or check-mode", key)
 	}
 }
 
@@ -440,8 +497,12 @@ func unsetConfigValue(config *userConfig, key string) error {
 		config.ResolverStrategy = ""
 	case "dnssec":
 		config.DNSSEC = nil
+	case "scrutiny":
+		config.Scrutiny = ""
+	case "check-mode":
+		config.CheckActive = nil
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, or dnssec", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, or check-mode", key)
 	}
 	return nil
 }
@@ -514,7 +575,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "get":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details|resolver|strategy|dnssec")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode")
 			return 2
 		}
 		config, exists, err := loadUserConfig(runtime)
@@ -538,7 +599,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "set":
 		if len(args) != 3 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details|resolver|strategy|dnssec <value>")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details|resolver|strategy|dnssec|scrutiny|check-mode <value>")
 			return 2
 		}
 		if err := setConfigValue(&userConfig{}, args[1], args[2]); err != nil {
@@ -554,7 +615,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "unset":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details|resolver|strategy|dnssec")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode")
 			return 2
 		}
 		if err := unsetConfigValue(&userConfig{}, args[1]); err != nil {
@@ -626,12 +687,14 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	resolver := resolverPreset(config.DNSResolvers)
 	strategy, _ := parsePersistentResolverStrategy(config.ResolverStrategy)
 	dnssec := persistentOptionalBool(config.DNSSEC)
+	scrutiny, _ := parsePersistentScrutiny(config.Scrutiny)
+	checkMode := persistentCheckMode(config.CheckActive)
 	scanner := bufio.NewScanner(runtime.stdin)
 
 	fmt.Fprintln(stdout, "Whodis preferences")
 	fmt.Fprintln(stdout, "Enter a number, press Enter to keep the current choice, or type q to cancel.")
 
-	format, cancelled, err := promptWizardChoice(scanner, stdout, 1, 6, "Output format", format, []wizardChoice{
+	format, cancelled, err := promptWizardChoice(scanner, stdout, 1, 8, "Output format", format, []wizardChoice{
 		{value: "auto", label: "Auto", description: "dashboard in a terminal; plain text when piped or redirected"},
 		{value: "dashboard", label: "Dashboard", description: "responsive panel grid that adapts to terminal width"},
 		{value: "tree", label: "Tree", description: "hierarchical view for scanning relationships"},
@@ -642,7 +705,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	color, cancelled, err = promptWizardChoice(scanner, stdout, 2, 6, "Color", color, []wizardChoice{
+	color, cancelled, err = promptWizardChoice(scanner, stdout, 2, 8, "Color", color, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use color only on a capable terminal; respect NO_COLOR"},
 		{value: "always", label: "Always", description: "force ANSI color in dashboard and tree output"},
 		{value: "never", label: "Never", description: "never emit ANSI color"},
@@ -651,7 +714,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	details, cancelled, err = promptWizardChoice(scanner, stdout, 3, 6, "Registry notices", details, []wizardChoice{
+	details, cancelled, err = promptWizardChoice(scanner, stdout, 3, 8, "Registry notices", details, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use the compact summary behavior built into visual formats"},
 		{value: "summary", label: "Summary", description: "always show only the deduplicated notice count"},
 		{value: "expanded", label: "Expanded", description: "show deduplicated titles, descriptions, and links"},
@@ -669,12 +732,12 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	if resolver == "custom" {
 		resolverChoices = append(resolverChoices, wizardChoice{value: "custom", label: "Custom", description: "keep the resolver URIs already stored in this config"})
 	}
-	resolver, cancelled, err = promptWizardChoice(scanner, stdout, 4, 6, "Default DNS resolver", resolver, resolverChoices)
+	resolver, cancelled, err = promptWizardChoice(scanner, stdout, 4, 8, "Default DNS resolver", resolver, resolverChoices)
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
 		return wizardExitCode(err)
 	}
 
-	strategy, cancelled, err = promptWizardChoice(scanner, stdout, 5, 6, "Multiple resolver behavior", strategy, []wizardChoice{
+	strategy, cancelled, err = promptWizardChoice(scanner, stdout, 5, 8, "Multiple resolver behavior", strategy, []wizardChoice{
 		{value: "first", label: "First", description: "stop after the first successful resolver"},
 		{value: "all", label: "All", description: "retain every resolver response"},
 		{value: "fastest", label: "Fastest", description: "race resolvers and keep the first successful response"},
@@ -684,10 +747,27 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	dnssec, cancelled, err = promptWizardChoice(scanner, stdout, 6, 6, "DNSSEC requests", dnssec, []wizardChoice{
+	dnssec, cancelled, err = promptWizardChoice(scanner, stdout, 6, 8, "DNSSEC requests", dnssec, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use each command's normal DNSSEC behavior"},
 		{value: "on", label: "On", description: "request DNSSEC records by default"},
 		{value: "off", label: "Off", description: "do not request DNSSEC records by default"},
+	})
+	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+		return wizardExitCode(err)
+	}
+
+	scrutiny, cancelled, err = promptWizardChoice(scanner, stdout, 7, 8, "Check scrutiny", scrutiny, []wizardChoice{
+		{value: "basic", label: "Basic", description: "fail only clear registration, DNS, or diagnostic problems"},
+		{value: "standard", label: "Standard", description: "balanced default with warnings for approaching risks"},
+		{value: "strict", label: "Strict", description: "promote warnings such as missing DNSSEC to failures"},
+	})
+	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+		return wizardExitCode(err)
+	}
+
+	checkMode, cancelled, err = promptWizardChoice(scanner, stdout, 8, 8, "Default check mode", checkMode, []wizardChoice{
+		{value: "passive", label: "Passive", description: "registration and DNS only; safe for routine checks"},
+		{value: "active", label: "Active", description: "also probe published web, TLS, mail, and services"},
 	})
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
 		return wizardExitCode(err)
@@ -717,6 +797,14 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
+	if err := setConfigValue(&draft, "scrutiny", scrutiny); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	}
+	if err := setConfigValue(&draft, "check-mode", checkMode); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	}
 	draft, err = canonicalUserConfig(draft)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
@@ -730,6 +818,8 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	fmt.Fprintf(stdout, "  Resolver: %s\n", wizardDisplayValue(resolver))
 	fmt.Fprintf(stdout, "  Strategy: %s\n", wizardDisplayValue(strategy))
 	fmt.Fprintf(stdout, "  DNSSEC  : %s\n", wizardDisplayValue(dnssec))
+	fmt.Fprintf(stdout, "  Scrutiny: %s\n", wizardDisplayValue(scrutiny))
+	fmt.Fprintf(stdout, "  Check mode: %s\n", wizardDisplayValue(checkMode))
 	fmt.Fprintf(stdout, "  File   : %s\n", path)
 	confirmed, cancelled, err := promptWizardConfirmation(scanner, stdout)
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
@@ -877,8 +967,10 @@ func printConfigUsage(writer io.Writer) {
   whodis config set resolver system|<URI>[,<URI>...]
   whodis config set strategy first|all|fastest|random|consensus
   whodis config set dnssec auto|on|off
-  whodis config get format|color|details|resolver|strategy|dnssec
-  whodis config unset format|color|details|resolver|strategy|dnssec
+  whodis config set scrutiny basic|standard|strict
+  whodis config set check-mode passive|active
+  whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode
+  whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode
   whodis config reset
   whodis config path
 `)

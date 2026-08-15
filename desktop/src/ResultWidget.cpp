@@ -128,6 +128,8 @@ QString eventActionClass(const QString &action)
     if (key == QStringLiteral("lastchanged") || key == QStringLiteral("lastupdate")
         || key == QStringLiteral("updated") || key == QStringLiteral("changed"))
         return QStringLiteral("lastchanged");
+    if (key == QStringLiteral("lastupdateofrdapdatabase") || key == QStringLiteral("rdapdatabaseupdated"))
+        return QStringLiteral("rdapupdated");
     return key;
 }
 
@@ -139,6 +141,8 @@ QString canonicalEventAction(const QString &actionClass)
         return QStringLiteral("expiration");
     if (actionClass == QStringLiteral("lastchanged"))
         return QStringLiteral("last changed");
+    if (actionClass == QStringLiteral("rdapupdated"))
+        return QStringLiteral("RDAP database updated");
     return {};
 }
 
@@ -196,24 +200,28 @@ QList<QPair<QString, QString>> consolidatedEvents(const QJsonArray &values)
     }
 
     QList<QPair<QString, QString>> rows;
-    QList<QStringList> rowDateKeys;
+    QStringList selectedDateKeys;
     QHash<QString, int> rowIndexes;
     for (const auto &event : unique) {
-        const QString action = event.first.isEmpty() ? QStringLiteral("Event") : event.first;
+        const QString actionClass = eventActionClass(event.first);
+        const QString canonical = canonicalEventAction(actionClass);
+        const QString action = !canonical.isEmpty() ? canonical : (event.first.isEmpty() ? QStringLiteral("Event") : event.first);
         const QString date = event.second.isEmpty() ? QStringLiteral("unknown") : event.second;
-        const QString actionKey = compactEventAction(action);
+        const QString actionKey = actionClass.isEmpty() ? compactEventAction(action) : actionClass;
         const auto existing = rowIndexes.constFind(actionKey);
         if (existing == rowIndexes.cend()) {
             rowIndexes.insert(actionKey, rows.size());
             rows.append(qMakePair(action, date));
-            rowDateKeys.append(QStringList{eventDateKey(date)});
+            selectedDateKeys.append(eventDateKey(date));
             continue;
         }
         const int index = existing.value();
         const QString dateKey = eventDateKey(date);
-        if (!rowDateKeys[index].contains(dateKey)) {
-            rowDateKeys[index].append(dateKey);
-            rows[index].second += QStringLiteral(" · ") + date;
+        const bool preferEarlier = actionClass == QStringLiteral("registration");
+        const bool replace = preferEarlier ? dateKey < selectedDateKeys[index] : dateKey > selectedDateKeys[index];
+        if (replace) {
+            rows[index].second = date;
+            selectedDateKeys[index] = dateKey;
         }
     }
     return rows;
@@ -230,6 +238,7 @@ ResultWidget::ResultWidget(QWidget *parent)
     , m_delegation(new QTableWidget(this))
     , m_services(new QTableWidget(this))
     , m_findings(new QTableWidget(this))
+    , m_errors(new QTableWidget(this))
     , m_contacts(new QTableWidget(this))
     , m_rawSource(new QComboBox(this))
     , m_rawText(new QPlainTextEdit(this))
@@ -255,6 +264,7 @@ ResultWidget::ResultWidget(QWidget *parent)
     configureTable(m_delegation, {tr("Hop"), tr("Zone"), tr("Server"), tr("Result"), tr("Nameservers"), tr("Addresses")});
     configureTable(m_services, {tr("Category"), tr("Endpoint"), tr("Result"), tr("Details")});
     configureTable(m_findings, {tr("Result"), tr("Check"), tr("Summary")});
+    configureTable(m_errors, {tr("Operation"), tr("Kind"), tr("Message")});
     configureTable(m_contacts, {tr("Role"), tr("Name"), tr("Handle"), tr("Email"), tr("Phone"), tr("Organization")});
 
     m_rawPage = new QWidget(this);
@@ -275,6 +285,7 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_tabs->addTab(m_delegation, tr("Delegation"));
     m_tabs->addTab(m_services, tr("Services"));
     m_tabs->addTab(m_findings, tr("Findings"));
+    m_tabs->addTab(m_errors, tr("Errors"));
     m_tabs->addTab(m_contacts, tr("Contacts"));
     m_tabs->addTab(m_rawPage, tr("Raw"));
 
@@ -293,6 +304,7 @@ void ResultWidget::clearResult()
     m_delegation->setRowCount(0);
     m_services->setRowCount(0);
     m_findings->setRowCount(0);
+    m_errors->setRowCount(0);
     m_contacts->setRowCount(0);
     m_rawSource->clear();
     m_rawText->clear();
@@ -314,6 +326,7 @@ void ResultWidget::setItem(const QJsonObject &item)
     m_tabs->setTabVisible(m_tabs->indexOf(m_delegation), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_services), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_findings), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_errors), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_contacts), m_contacts->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_rawPage), m_rawSource->count() > 0);
     if (auto *stack = qobject_cast<QStackedLayout *>(layout()))
@@ -327,20 +340,24 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     const QJsonObject report = item.value(QStringLiteral("report")).toObject();
     const QJsonObject registration = report.value(QStringLiteral("registration")).toObject();
     if (!registration.isEmpty()) {
-        populateOverview(registration);
+        QJsonObject presentation = registration;
+        presentation.insert(QStringLiteral("query"), report.value(QStringLiteral("subject")));
+        presentation.insert(QStringLiteral("retrieved_at"), report.value(QStringLiteral("observed_at")));
+        populateOverview(presentation);
         populateContacts(registration);
     } else {
         m_overview->clear();
         auto *operation = addGroup(m_overview, tr("Operation"));
-        addValue(operation, tr("Target"), report.value(QStringLiteral("query")).toObject().value(QStringLiteral("canonical")).toString());
+        addValue(operation, tr("Target"), report.value(QStringLiteral("subject")).toObject().value(QStringLiteral("canonical")).toString());
         addValue(operation, tr("Action"), report.value(QStringLiteral("operation")).toString());
-        addValue(operation, tr("Retrieved"), report.value(QStringLiteral("retrieved_at")).toString());
+        addValue(operation, tr("Retrieved"), report.value(QStringLiteral("observed_at")).toString());
     }
     populateReportDNS(report);
     populateCompare(report);
     populateDelegation(report);
     populateServices(report);
     populateFindings(report);
+    populateErrors(report);
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
 
     m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
@@ -349,9 +366,12 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     m_tabs->setTabVisible(m_tabs->indexOf(m_delegation), m_delegation->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_services), m_services->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_findings), m_findings->rowCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_errors), m_errors->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_contacts), m_contacts->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_rawPage), m_rawSource->count() > 0);
-    if (m_findings->rowCount() > 0)
+    if (m_errors->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_errors);
+    else if (m_findings->rowCount() > 0)
         m_tabs->setCurrentWidget(m_findings);
     else if (m_dns->rowCount() > 0 && registration.isEmpty())
         m_tabs->setCurrentWidget(m_dns);
@@ -579,8 +599,10 @@ void ResultWidget::populateFindings(const QJsonObject &report)
 {
     m_findings->setSortingEnabled(false);
     QJsonArray findings = report.value(QStringLiteral("findings")).toArray();
-    if (findings.isEmpty())
-        findings = report.value(QStringLiteral("diagnosis")).toObject().value(QStringLiteral("findings")).toArray();
+    for (const QJsonValue &finding : report.value(QStringLiteral("diagnosis")).toObject().value(QStringLiteral("findings")).toArray()) {
+        if (!findings.contains(finding))
+            findings.append(finding);
+    }
     m_findings->setRowCount(findings.size());
     for (int row = 0; row < findings.size(); ++row) {
         const QJsonObject finding = findings.at(row).toObject();
@@ -589,6 +611,20 @@ void ResultWidget::populateFindings(const QJsonObject &report)
         m_findings->setItem(row, 2, new QTableWidgetItem(finding.value(QStringLiteral("summary")).toString()));
     }
     m_findings->setSortingEnabled(true);
+}
+
+void ResultWidget::populateErrors(const QJsonObject &report)
+{
+    m_errors->setSortingEnabled(false);
+    const QJsonArray errors = report.value(QStringLiteral("errors")).toArray();
+    m_errors->setRowCount(errors.size());
+    for (int row = 0; row < errors.size(); ++row) {
+        const QJsonObject error = errors.at(row).toObject();
+        m_errors->setItem(row, 0, new QTableWidgetItem(error.value(QStringLiteral("operation")).toString()));
+        m_errors->setItem(row, 1, new QTableWidgetItem(error.value(QStringLiteral("kind")).toString()));
+        m_errors->setItem(row, 2, new QTableWidgetItem(error.value(QStringLiteral("message")).toString()));
+    }
+    m_errors->setSortingEnabled(true);
 }
 
 void ResultWidget::populateContacts(const QJsonObject &result)

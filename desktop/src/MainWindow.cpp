@@ -14,12 +14,14 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStatusBar>
@@ -33,8 +35,8 @@ MainWindow::MainWindow(QWidget *parent)
     , m_advanced(new AdvancedDialog(this))
     , m_target(new QLineEdit(this))
     , m_lookup(new QPushButton(tr("Lookup"), this))
-    , m_scan(new QPushButton(tr("Scan"), this))
-    , m_dns(new QPushButton(QStringLiteral("DNS"), this))
+    , m_scan(new QPushButton(tr("Inspect"), this))
+    , m_dns(new QPushButton(tr("DNS Query"), this))
     , m_diagnose(new QPushButton(tr("Diagnose"), this))
     , m_batch(new QPushButton(tr("Batch…"), this))
     , m_cancel(new QPushButton(tr("Cancel"), this))
@@ -129,6 +131,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     QSettings settings;
     restoreGeometry(settings.value(QStringLiteral("main/geometry")).toByteArray());
+    const QJsonDocument advanced = QJsonDocument::fromJson(settings.value(QStringLiteral("advanced/options")).toByteArray());
+    if (advanced.isObject())
+        m_advanced->setOptions(advanced.object());
     m_engine->start();
     updateActionState();
 }
@@ -163,11 +168,19 @@ void MainWindow::runLookup()
 
 void MainWindow::runDNSScan()
 {
-    startOperation(QStringLiteral("dns.inventory"));
+    startOperation(QStringLiteral("inspect"));
 }
 
 void MainWindow::runDNSQuery()
 {
+    bool accepted = false;
+    const QString current = m_dnsTypes.isEmpty() ? QStringLiteral("A AAAA") : m_dnsTypes.join(QLatin1Char(' '));
+    const QString value = QInputDialog::getText(this, tr("DNS record types"),
+                                                tr("Record types (space or comma separated):"),
+                                                QLineEdit::Normal, current, &accepted).trimmed();
+    if (!accepted || value.isEmpty())
+        return;
+    m_dnsTypes = value.split(QRegularExpression(QStringLiteral("[,\\s]+")), Qt::SkipEmptyParts);
     startOperation(QStringLiteral("dns.query"));
 }
 
@@ -188,7 +201,7 @@ void MainWindow::runDiagnose()
 
 void MainWindow::runAXFR()
 {
-    if (m_validKind != QStringLiteral("domain"))
+    if (m_validKind != QStringLiteral("registrable_domain"))
         return;
     if (QMessageBox::question(this, tr("Attempt zone transfer"),
                               tr("Whodis will ask the authoritative nameservers for a complete zone transfer. Most public zones correctly refuse this. Continue?")) == QMessageBox::Yes)
@@ -205,8 +218,12 @@ void MainWindow::startOperation(const QString &operation)
     QJsonObject dns = params.value(QStringLiteral("dns")).toObject();
     if (!resolver.isEmpty())
         dns.insert(QStringLiteral("resolvers"), QJsonArray{resolver});
-    if (operation == QStringLiteral("dns.query"))
-        dns.insert(QStringLiteral("types"), QJsonArray{QStringLiteral("A"), QStringLiteral("AAAA")});
+    if (operation == QStringLiteral("dns.query")) {
+        QJsonArray types;
+        for (const QString &type : std::as_const(m_dnsTypes))
+            types.append(type.toUpper());
+        dns.insert(QStringLiteral("types"), types);
+    }
     if (!dns.isEmpty())
         params.insert(QStringLiteral("dns"), dns);
     params.insert(QStringLiteral("targets"), QJsonArray{target});
@@ -230,7 +247,7 @@ void MainWindow::cancelLookup()
 
 void MainWindow::openBatch()
 {
-    auto *window = new BatchWindow(this);
+    auto *window = new BatchWindow(m_engine, m_advanced->options(), this);
     window->setAttribute(Qt::WA_DeleteOnClose);
     window->show();
     window->raise();
@@ -239,8 +256,12 @@ void MainWindow::openBatch()
 void MainWindow::openAdvanced()
 {
     const QJsonObject previous = m_advanced->options();
-    if (m_advanced->exec() != QDialog::Accepted)
+    if (m_advanced->exec() != QDialog::Accepted) {
         m_advanced->setOptions(previous);
+    } else {
+        QSettings settings;
+        settings.setValue(QStringLiteral("advanced/options"), QJsonDocument(m_advanced->options()).toJson(QJsonDocument::Compact));
+    }
 }
 
 void MainWindow::copyCurrent()
@@ -256,7 +277,7 @@ void MainWindow::saveCurrent()
 {
     if (m_resultToken.isEmpty())
         return;
-    const QString filters = tr("JSON (*.json);;YAML (*.yaml);;Markdown (*.md);;Plain text (*.txt);;Raw response (*.raw.txt)");
+    const QString filters = tr("JSON (*.json);;NDJSON (*.ndjson);;CSV (*.csv);;YAML (*.yaml);;Markdown (*.md);;Plain text (*.txt);;Raw response (*.raw.txt)");
     QString selectedFilter;
     const QString path = QFileDialog::getSaveFileName(this, tr("Save Whodis result"), m_result->currentTarget() + QStringLiteral(".json"), filters, &selectedFilter);
     if (path.isEmpty())
@@ -264,6 +285,10 @@ void MainWindow::saveCurrent()
     QString format = QStringLiteral("json");
     if (selectedFilter.contains(QStringLiteral("YAML"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".yaml"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".yml"), Qt::CaseInsensitive))
         format = QStringLiteral("yaml");
+    else if (selectedFilter.contains(QStringLiteral("NDJSON"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".ndjson"), Qt::CaseInsensitive))
+        format = QStringLiteral("ndjson");
+    else if (selectedFilter.contains(QStringLiteral("CSV"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".csv"), Qt::CaseInsensitive))
+        format = QStringLiteral("csv");
     else if (selectedFilter.contains(QStringLiteral("Markdown"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive))
         format = QStringLiteral("markdown");
     else if (selectedFilter.contains(QStringLiteral("Plain"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".txt"), Qt::CaseInsensitive))
@@ -278,7 +303,7 @@ void MainWindow::handleResponse(const QString &id, const QString &method, const 
 {
     if (method == QStringLiteral("parse") && id == m_parseRequest) {
         const QJsonObject parsed = result.toObject();
-        m_validKind = parsed.value(QStringLiteral("target")).toObject().value(QStringLiteral("kind")).toString();
+        m_validKind = parsed.value(QStringLiteral("subject")).toObject().value(QStringLiteral("kind")).toString();
         const QString normalized = parsed.value(QStringLiteral("normalized")).toString();
         m_target->setToolTip(normalized == m_target->text().trimmed() ? QString() : tr("Will look up %1").arg(normalized));
         statusBar()->clearMessage();
@@ -356,13 +381,15 @@ void MainWindow::updateActionState()
 {
     const bool idle = m_lookupRequest.isEmpty();
     const bool valid = !m_validKind.isEmpty();
-    m_lookup->setEnabled(m_engine->isReady() && idle && valid);
-    m_scan->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
-    m_dns->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
-    m_diagnose->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
-    m_axfrAction->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
-    m_compareAction->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
-    m_traceAction->setEnabled(m_engine->isReady() && idle && m_validKind == QStringLiteral("domain"));
+    const bool domain = m_validKind == QStringLiteral("registrable_domain");
+    const bool dnsName = domain || m_validKind == QStringLiteral("dns_name");
+    m_lookup->setEnabled(m_engine->isReady() && idle && valid && m_validKind != QStringLiteral("dns_name"));
+    m_scan->setEnabled(m_engine->isReady() && idle && domain);
+    m_dns->setEnabled(m_engine->isReady() && idle && (dnsName || m_validKind == QStringLiteral("ip")));
+    m_diagnose->setEnabled(m_engine->isReady() && idle && domain);
+    m_axfrAction->setEnabled(m_engine->isReady() && idle && domain);
+    m_compareAction->setEnabled(m_engine->isReady() && idle && dnsName);
+    m_traceAction->setEnabled(m_engine->isReady() && idle && dnsName);
     m_saveAction->setEnabled(!m_resultToken.isEmpty());
     m_copyAction->setEnabled(!m_result->currentTarget().isEmpty());
 }

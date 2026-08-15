@@ -3,6 +3,8 @@ package whodis
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"strconv"
@@ -14,24 +16,42 @@ import (
 
 const defaultTimeout = 15 * time.Second
 
-// Client is safe to reuse for multiple sequential or concurrent lookups.
+// Client is safe to reuse for multiple sequential or concurrent registration
+// lookups.
+//
+// Deprecated: use Engine for new integrations. Client remains available for
+// source compatibility with registration-focused v1 callers.
 type Client struct {
-	timeout  time.Duration
-	cache    *bootstrapCache
-	adapters map[Protocol]ProtocolAdapter
+	timeout       time.Duration
+	cache         *bootstrapCache
+	adapters      map[Protocol]ProtocolAdapter
+	networkPolicy NetworkPolicy
+	transport     *http.Transport
+	autoTransport *http.Transport
 }
 
 // NewClient creates a protocol-aware lookup client. It makes no network
 // requests until Route or Lookup is called.
+//
+// Deprecated: use NewEngine for new integrations.
 func NewClient(options ClientOptions) *Client {
 	timeout := options.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxConnsPerHost = 4
+	transport.MaxIdleConnsPerHost = 4
+	autoTransport := transport.Clone()
+	// Automatic registry discovery must connect directly so an environment
+	// proxy cannot resolve a referral again after Whodis validates it.
+	autoTransport.Proxy = nil
+	autoTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dialAutomaticContext(ctx, network, address, timeout, options.NetworkPolicy)
+	}
 	c := &Client{
-		timeout:  timeout,
-		cache:    newBootstrapCache(options.CacheDirectory),
-		adapters: make(map[Protocol]ProtocolAdapter),
+		timeout: timeout, cache: newBootstrapCache(options.CacheDirectory), adapters: make(map[Protocol]ProtocolAdapter),
+		networkPolicy: options.NetworkPolicy, transport: transport, autoTransport: autoTransport,
 	}
 	c.adapters[ProtocolRDAP] = rdapAdapter{client: c}
 	c.adapters[ProtocolWHOIS] = whoisAdapter{client: c}
@@ -42,6 +62,17 @@ func NewClient(options ClientOptions) *Client {
 		}
 	}
 	return c
+}
+
+// Close releases pooled network transports. It is safe to call repeatedly.
+func (c *Client) Close() error {
+	if c != nil && c.transport != nil {
+		c.transport.CloseIdleConnections()
+	}
+	if c != nil && c.autoTransport != nil {
+		c.autoTransport.CloseIdleConnections()
+	}
+	return nil
 }
 
 // ParseTarget classifies and canonicalizes one user supplied lookup target.
