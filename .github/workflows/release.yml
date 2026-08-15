@@ -165,11 +165,7 @@ jobs:
           New-Item -ItemType Directory -Path release-assets | Out-Null
           Compress-Archive -Path "$PWD/stage/bin/*" `
             -DestinationPath "release-assets/whodis-gui_windows_${{ matrix.arch }}_portable.zip"
-          choco install nsis -y --no-progress
-          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS/makensis.exe"
-          if (-not (Test-Path $makensis)) {
-            throw "NSIS compiler was not installed at $makensis"
-          }
+          $makensis = & "$PWD/scripts/install-nsis.ps1"
           & $makensis `
             "/DAPP_SOURCE=$PWD\stage\bin" `
             "/DAPP_ICON=$PWD\desktop\resources\whodis.ico" `
