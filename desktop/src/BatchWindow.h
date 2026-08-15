@@ -37,6 +37,7 @@ private slots:
 private:
     QStringList targetsFromEditor() const;
     void beginLookup(const QStringList &targets);
+    void beginRetry(const QStringList &targets, const QVector<int> &indexes);
     void updateRow(int index, const QJsonObject &item);
     int rowForIndex(int index) const;
     void finishLookup(bool canceled = false);

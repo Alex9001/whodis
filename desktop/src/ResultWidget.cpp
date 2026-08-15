@@ -104,6 +104,29 @@ QJsonArray operationRecords(const QJsonObject &dns)
     return records;
 }
 
+QString comparisonKey(const QJsonObject &value)
+{
+    return value.value(QStringLiteral("resolver")).toString() + QLatin1Char('\0')
+        + value.value(QStringLiteral("name")).toString().trimmed().toLower() + QLatin1Char('\0')
+        + value.value(QStringLiteral("type")).toString().trimmed().toUpper() + QLatin1Char('\0')
+        + value.value(QStringLiteral("class")).toString().trimmed().toUpper();
+}
+
+QString comparisonDetails(const QJsonObject &message)
+{
+    QStringList values;
+    for (const QString &value : {message.value(QStringLiteral("rcode")).toString(),
+                                 message.value(QStringLiteral("transport")).toString().toUpper(),
+                                 message.value(QStringLiteral("dnssec")).toString()}) {
+        if (!value.isEmpty())
+            values.append(value);
+    }
+    const double duration = message.value(QStringLiteral("duration_ns")).toDouble();
+    if (duration > 0)
+        values.append(QStringLiteral("%1 ms").arg(duration / 1000000.0, 0, 'f', 1));
+    return values.join(QStringLiteral(" · "));
+}
+
 QString compactEventAction(QString action)
 {
     action = action.trimmed().toLower();
@@ -260,7 +283,7 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_dns->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_dns->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
 
-    configureTable(m_compare, {tr("Resolver"), tr("Missing"), tr("Extra")});
+    configureTable(m_compare, {tr("Query"), tr("Resolver"), tr("Result"), tr("Details")});
     configureTable(m_delegation, {tr("Hop"), tr("Zone"), tr("Server"), tr("Result"), tr("Nameservers"), tr("Addresses")});
     configureTable(m_services, {tr("Category"), tr("Endpoint"), tr("Result"), tr("Details")});
     configureTable(m_findings, {tr("Result"), tr("Check"), tr("Summary")});
@@ -401,6 +424,16 @@ QString ResultWidget::currentTarget() const
     return m_item.value(QStringLiteral("input")).toString();
 }
 
+QString ResultWidget::currentRawSource() const
+{
+    return m_rawSource->currentData(Qt::UserRole).toString();
+}
+
+bool ResultWidget::hasRawSource() const
+{
+    return m_rawSource->count() > 0 && !currentRawSource().isEmpty();
+}
+
 int ResultWidget::dnsRowCount() const
 {
     return m_dns->rowCount();
@@ -503,14 +536,76 @@ void ResultWidget::populateReportDNS(const QJsonObject &report)
 void ResultWidget::populateCompare(const QJsonObject &report)
 {
     m_compare->setSortingEnabled(false);
-    const QJsonArray differences = reportDNS(report).value(QStringLiteral("differences")).toArray();
-    m_compare->setRowCount(differences.size());
-    for (int row = 0; row < differences.size(); ++row) {
-        const QJsonObject difference = differences.at(row).toObject();
-        m_compare->setItem(row, 0, new QTableWidgetItem(difference.value(QStringLiteral("resolver")).toString()));
-        m_compare->setItem(row, 1, new QTableWidgetItem(joined(difference.value(QStringLiteral("missing")))));
-        m_compare->setItem(row, 2, new QTableWidgetItem(joined(difference.value(QStringLiteral("extra")))));
+    m_compare->setRowCount(0);
+    const QJsonObject dns = reportDNS(report);
+    const QJsonArray differences = dns.value(QStringLiteral("differences")).toArray();
+    if (dns.value(QStringLiteral("mode")).toString() != QStringLiteral("compare") && differences.isEmpty()) {
+        m_compare->setSortingEnabled(true);
+        return;
     }
+
+    QHash<QString, QJsonObject> differencesByQuery;
+    QHash<QString, QJsonObject> legacyDifferencesByResolver;
+    for (const QJsonValue &value : differences) {
+        const QJsonObject difference = value.toObject();
+        if (difference.value(QStringLiteral("name")).toString().isEmpty())
+            legacyDifferencesByResolver.insert(difference.value(QStringLiteral("resolver")).toString(), difference);
+        else
+            differencesByQuery.insert(comparisonKey(difference), difference);
+    }
+
+    const auto addRow = [this](const QString &query, const QString &resolver, const QString &result, const QString &details) {
+        const int row = m_compare->rowCount();
+        m_compare->insertRow(row);
+        m_compare->setItem(row, 0, new QTableWidgetItem(query));
+        m_compare->setItem(row, 1, new QTableWidgetItem(resolver));
+        m_compare->setItem(row, 2, new QTableWidgetItem(result));
+        m_compare->setItem(row, 3, new QTableWidgetItem(details));
+    };
+
+    for (const QJsonValue &value : dns.value(QStringLiteral("messages")).toArray()) {
+        const QJsonObject message = value.toObject();
+        const QString resolver = message.value(QStringLiteral("resolver")).toString();
+        const QString query = (message.value(QStringLiteral("name")).toString() + QLatin1Char(' ')
+                               + message.value(QStringLiteral("type")).toString()).trimmed();
+        QJsonObject difference = differencesByQuery.take(comparisonKey(message));
+        if (difference.isEmpty())
+            difference = legacyDifferencesByResolver.take(resolver);
+        const QString error = message.value(QStringLiteral("error")).toString();
+        if (!error.isEmpty()) {
+            addRow(query, resolver, tr("Failed"), error);
+        } else if (!difference.isEmpty()) {
+            QStringList details;
+            const QString missing = joined(difference.value(QStringLiteral("missing")));
+            const QString extra = joined(difference.value(QStringLiteral("extra")));
+            if (!missing.isEmpty())
+                details.append(tr("Missing: %1").arg(missing));
+            if (!extra.isEmpty())
+                details.append(tr("Extra: %1").arg(extra));
+            addRow(query, resolver, tr("Different"), details.join(QStringLiteral(" · ")));
+        } else {
+            addRow(query, resolver, tr("Agrees"), comparisonDetails(message));
+        }
+    }
+
+    const auto addUnmatchedDifference = [&addRow](const QJsonObject &difference) {
+        const QString query = (difference.value(QStringLiteral("name")).toString() + QLatin1Char(' ')
+                               + difference.value(QStringLiteral("type")).toString()).trimmed();
+        QStringList details;
+        const QString missing = joined(difference.value(QStringLiteral("missing")));
+        const QString extra = joined(difference.value(QStringLiteral("extra")));
+        if (!missing.isEmpty())
+            details.append(QObject::tr("Missing: %1").arg(missing));
+        if (!extra.isEmpty())
+            details.append(QObject::tr("Extra: %1").arg(extra));
+        addRow(query, difference.value(QStringLiteral("resolver")).toString(), QObject::tr("Different"), details.join(QStringLiteral(" · ")));
+    };
+    for (const QJsonObject &difference : differencesByQuery)
+        addUnmatchedDifference(difference);
+    for (const QJsonObject &difference : legacyDifferencesByResolver)
+        addUnmatchedDifference(difference);
+    if (m_compare->rowCount() == 0)
+        addRow({}, tr("All resolvers"), tr("Agrees"), tr("Resolvers agree after TTL and answer-order normalization."));
     m_compare->setSortingEnabled(true);
 }
 

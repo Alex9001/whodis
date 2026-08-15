@@ -23,6 +23,8 @@ public:
     void showDNSTab();
     QString copyText() const;
     QString currentTarget() const;
+    QString currentRawSource() const;
+    bool hasRawSource() const;
     int dnsRowCount() const;
 
 private:

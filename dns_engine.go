@@ -114,6 +114,9 @@ type DNSMessage struct {
 // DNSDifference is one normalized disagreement between resolvers.
 type DNSDifference struct {
 	Resolver string   `json:"resolver" yaml:"resolver"`
+	Name     string   `json:"name,omitempty" yaml:"name,omitempty"`
+	Type     string   `json:"type,omitempty" yaml:"type,omitempty"`
+	Class    string   `json:"class,omitempty" yaml:"class,omitempty"`
 	Missing  []string `json:"missing,omitempty" yaml:"missing,omitempty"`
 	Extra    []string `json:"extra,omitempty" yaml:"extra,omitempty"`
 }
@@ -1192,23 +1195,45 @@ func dnsSecurityState(message *mdns.Msg) string {
 }
 
 func compareDNSMessages(messages []DNSMessage) []DNSDifference {
-	var baseline []string
+	type comparisonGroup struct {
+		messages []DNSMessage
+	}
+	groups := make(map[string]*comparisonGroup)
+	var order []string
 	for _, message := range messages {
-		if message.Error == "" {
-			baseline = normalizedAnswerSet(message)
-			break
+		key := strings.ToLower(strings.TrimSuffix(message.Name, ".")) + "\x00" + strings.ToUpper(message.Type) + "\x00" + strings.ToUpper(message.Class)
+		group := groups[key]
+		if group == nil {
+			group = &comparisonGroup{}
+			groups[key] = group
+			order = append(order, key)
 		}
+		group.messages = append(group.messages, message)
 	}
 	var differences []DNSDifference
-	for _, message := range messages {
-		if message.Error != "" {
-			differences = append(differences, DNSDifference{Resolver: message.Resolver, Missing: baseline, Extra: []string{"ERROR: " + message.Error}})
-			continue
+	for _, key := range order {
+		group := groups[key]
+		var baseline []string
+		for _, message := range group.messages {
+			if message.Error == "" {
+				baseline = normalizedAnswerSet(message)
+				break
+			}
 		}
-		current := normalizedAnswerSet(message)
-		missing, extra := stringSetDifference(baseline, current), stringSetDifference(current, baseline)
-		if len(missing) > 0 || len(extra) > 0 {
-			differences = append(differences, DNSDifference{Resolver: message.Resolver, Missing: missing, Extra: extra})
+		for _, message := range group.messages {
+			difference := DNSDifference{Resolver: message.Resolver, Name: message.Name, Type: message.Type, Class: message.Class}
+			if message.Error != "" {
+				difference.Missing = append([]string(nil), baseline...)
+				difference.Extra = []string{"ERROR: " + message.Error}
+				differences = append(differences, difference)
+				continue
+			}
+			current := normalizedAnswerSet(message)
+			difference.Missing = stringSetDifference(baseline, current)
+			difference.Extra = stringSetDifference(current, baseline)
+			if len(difference.Missing) > 0 || len(difference.Extra) > 0 {
+				differences = append(differences, difference)
+			}
 		}
 	}
 	return differences

@@ -456,6 +456,9 @@ split into CLI and GUI assets so a server never needs to install Qt.
   exhaustive security audit.
 - Raw source output is limited to one registration response. Multi-target and
   workstation operations use human-readable or structured report formats.
+- The desktop batch workspace accepts up to 1,000 targets and retains recent
+  exportable results in a bounded in-memory cache. Use CLI NDJSON streaming for
+  larger jobs.
 - Saved snapshots are local files, not a scheduler or hosted monitoring
   service. Use cron, systemd timers, Task Scheduler, or CI to run checks.
 - Authenticated registry accounts, proprietary registry APIs, web scraping,

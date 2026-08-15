@@ -61,6 +61,8 @@ type runParams struct {
 	RefreshBootstrap bool                   `json:"refresh_bootstrap,omitempty"`
 	DNS              whodis.DNSOptions      `json:"dns,omitempty"`
 	Diagnose         whodis.DiagnoseOptions `json:"diagnose,omitempty"`
+	BaseToken        string                 `json:"base_token,omitempty"`
+	ReplaceIndices   []int                  `json:"replace_indices,omitempty"`
 }
 
 type cancelParams struct {

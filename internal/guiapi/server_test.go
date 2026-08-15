@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Alex9001/whodis/v2"
 )
@@ -82,5 +83,131 @@ func TestServerProtocolV3Run(t *testing.T) {
 	}
 	if completed.Result.Token == "" || len(completed.Result.Items) != 1 || completed.Result.Items[0].Report.SchemaVersion != whodis.ReportSchemaVersion {
 		t.Fatalf("run result = %+v", completed.Result)
+	}
+}
+
+func TestReportItemsExposeRawOnce(t *testing.T) {
+	report := whodis.Report{
+		SchemaVersion: whodis.ReportSchemaVersion,
+		Operation:     whodis.OperationRegistration,
+		Subject:       whodis.Subject{Original: "example.test", Canonical: "example.test"},
+		Registration: &whodis.RegistrationResult{Sources: []whodis.Source{{
+			Protocol: whodis.ProtocolWHOIS, Endpoint: "whois.example.test", Raw: "Domain Name: EXAMPLE.TEST\n",
+		}}},
+	}
+	items := reportItems([]string{"example.test"}, []whodis.Report{report})
+	if len(items) != 1 || len(items[0].RawSources) != 1 || items[0].RawSources[0].Content == "" {
+		t.Fatalf("report items = %#v", items)
+	}
+	if items[0].Report.Registration.Sources[0].Raw != "" {
+		t.Fatal("presentation report duplicated the raw response")
+	}
+	if report.Registration.Sources[0].Raw == "" {
+		t.Fatal("stored report was mutated while preparing presentation")
+	}
+}
+
+func TestMergeRetryResultPreservesSuccessfulReports(t *testing.T) {
+	baseBatch := whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: []whodis.Report{
+		{Operation: whodis.OperationRegistration, Subject: whodis.Subject{Canonical: "good.test"}},
+		{Operation: whodis.OperationRegistration, Subject: whodis.Subject{Canonical: "failed.test"}, Errors: []whodis.OperationError{{Message: "offline"}}},
+	}}
+	base := &storedResult{reportBatch: &baseBatch, inputs: []string{"good.test", "failed.test"}}
+	retried := whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: []whodis.Report{
+		{Operation: whodis.OperationRegistration, Subject: whodis.Subject{Canonical: "failed.test"}},
+	}}
+	merged, inputs := mergeRetryResult(retried, runParams{Targets: []string{"failed.test"}, ReplaceIndices: []int{1}}, base)
+	if len(merged.Reports) != 2 || merged.Reports[0].Subject.Canonical != "good.test" || merged.Reports[1].Subject.Canonical != "failed.test" || len(merged.Reports[1].Errors) != 0 {
+		t.Fatalf("merged retry = %#v", merged)
+	}
+	if len(inputs) != 2 || inputs[0] != "good.test" || inputs[1] != "failed.test" {
+		t.Fatalf("merged inputs = %#v", inputs)
+	}
+}
+
+func TestServerRetryReturnsCompleteMergedBatch(t *testing.T) {
+	var output bytes.Buffer
+	server := NewServerWithEngine("test", fakeEngine{}, strings.NewReader(""), &output, &bytes.Buffer{})
+	baseBatch := whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: []whodis.Report{
+		{SchemaVersion: whodis.ReportSchemaVersion, Operation: whodis.OperationDNSQuery, Subject: whodis.Subject{Original: "good.test", Canonical: "good.test"}},
+		{SchemaVersion: whodis.ReportSchemaVersion, Operation: whodis.OperationDNSQuery, Subject: whodis.Subject{Original: "failed.test", Canonical: "failed.test"}, Errors: []whodis.OperationError{{Message: "offline"}}},
+	}}
+	baseToken, err := server.storeReportResult(baseBatch, []string{"good.test", "failed.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err := json.Marshal(runParams{
+		Targets: []string{"failed.test"}, Operation: whodis.OperationDNSQuery,
+		BaseToken: baseToken, ReplaceIndices: []int{1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.handle(request{JSONRPC: "2.0", ID: json.RawMessage(`"retry-1"`), Method: "run", Params: params})
+	server.group.Wait()
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("retry response lines = %d, want progress and result:\n%s", len(lines), output.String())
+	}
+	var response struct {
+		Result runResult `json:"result"`
+		Error  *rpcError `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != nil || response.Result.Token == "" || len(response.Result.Items) != 2 {
+		t.Fatalf("retry response = %+v", response)
+	}
+	if response.Result.Items[0].Input != "good.test" || response.Result.Items[1].Input != "failed.test" || len(response.Result.Items[1].Report.Errors) != 0 {
+		t.Fatalf("retry items = %#v", response.Result.Items)
+	}
+	stored, ok := server.loadResult(response.Result.Token)
+	if !ok || stored.reportBatch == nil || len(stored.reportBatch.Reports) != 2 {
+		t.Fatalf("merged export result was not retained: %#v", stored)
+	}
+}
+
+func TestValidateRunParamsBoundsDesktopBatchesAndRetryIndexes(t *testing.T) {
+	targets := make([]string, maximumGUIBatchItems+1)
+	for index := range targets {
+		targets[index] = "example.test"
+	}
+	if err := validateRunParams(runParams{Targets: targets, Operation: whodis.OperationRegistration}); err == nil {
+		t.Fatal("oversized desktop batch was accepted")
+	}
+	if err := validateRunParams(runParams{Targets: []string{"example.test"}, Operation: whodis.OperationRegistration, BaseToken: "result-1"}); err == nil {
+		t.Fatal("retry base without indexes was accepted")
+	}
+	if err := validateRunParams(runParams{Targets: []string{"one.test", "two.test"}, Operation: whodis.OperationRegistration, BaseToken: "result-1", ReplaceIndices: []int{1, 1}}); err == nil {
+		t.Fatal("duplicate retry indexes were accepted")
+	}
+}
+
+func TestStoredResultsExpireAndStayWithinCountLimit(t *testing.T) {
+	server := NewServerWithEngine("test", fakeEngine{}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+	batch := whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: []whodis.Report{{Operation: whodis.OperationRegistration}}}
+	var first string
+	for index := 0; index <= maximumStoredResults; index++ {
+		token, err := server.storeReportResult(batch, []string{"example.test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			first = token
+		}
+	}
+	if len(server.resultIDs) != maximumStoredResults {
+		t.Fatalf("stored result count = %d", len(server.resultIDs))
+	}
+	if _, ok := server.results[first]; ok {
+		t.Fatal("oldest stored result was not evicted")
+	}
+	oldest := server.resultIDs[0]
+	value := server.results[oldest]
+	value.storedAt = time.Now().Add(-storedResultTTL - time.Second)
+	server.results[oldest] = value
+	if _, ok := server.loadResult(oldest); ok {
+		t.Fatal("expired stored result remained available")
 	}
 }

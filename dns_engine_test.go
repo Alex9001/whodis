@@ -93,6 +93,21 @@ func TestConsensusQueryRecordsNormalizedDifferences(t *testing.T) {
 	if len(result.Messages) != 2 || len(result.Differences) != 1 {
 		t.Fatalf("consensus result = %#v", result)
 	}
+	if result.Differences[0].Name != "example.test" || result.Differences[0].Type != "A" || result.Differences[0].Class != "IN" {
+		t.Fatalf("difference query identity = %#v", result.Differences[0])
+	}
+}
+
+func TestCompareDNSMessagesKeepsRecordTypesIndependent(t *testing.T) {
+	messages := []DNSMessage{
+		{Name: "example.test", Type: "A", Class: "IN", Resolver: "first", Rcode: "NOERROR", Answer: []DNSRecord{{Name: "example.test", Type: "A", Value: "192.0.2.1"}}},
+		{Name: "example.test", Type: "A", Class: "IN", Resolver: "second", Rcode: "NOERROR", Answer: []DNSRecord{{Name: "example.test", Type: "A", Value: "192.0.2.1"}}},
+		{Name: "example.test", Type: "AAAA", Class: "IN", Resolver: "first", Rcode: "NOERROR", Answer: []DNSRecord{{Name: "example.test", Type: "AAAA", Value: "2001:db8::1"}}},
+		{Name: "example.test", Type: "AAAA", Class: "IN", Resolver: "second", Rcode: "NOERROR", Answer: []DNSRecord{{Name: "example.test", Type: "AAAA", Value: "2001:db8::1"}}},
+	}
+	if differences := compareDNSMessages(messages); len(differences) != 0 {
+		t.Fatalf("equal per-type answers reported cross-type differences: %#v", differences)
+	}
 }
 
 func TestValidateDNSOptionsRejectsMalformedEDNS(t *testing.T) {

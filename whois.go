@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-const ianaWHOIS = "whois.iana.org"
+const (
+	ianaWHOIS        = "whois.iana.org"
+	maximumWHOISData = 8 << 20
+)
 
 type whoisAdapter struct{ client *Client }
 
@@ -84,12 +87,15 @@ func (a whoisAdapter) query(ctx context.Context, endpoint, query string, automat
 	if _, err := io.WriteString(connection, query+"\r\n"); err != nil {
 		return "", lookupError(ErrorUnavailable, "could not send WHOIS query", err)
 	}
-	payload, err := io.ReadAll(io.LimitReader(connection, 8<<20))
+	payload, err := io.ReadAll(io.LimitReader(connection, maximumWHOISData+1))
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", contextLookupError("WHOIS query", ctx.Err())
 		}
 		return "", lookupError(ErrorUnavailable, "could not read WHOIS response", err)
+	}
+	if len(payload) > maximumWHOISData {
+		return "", lookupError(ErrorProtocol, "WHOIS response exceeds the 8 MiB safety limit", nil)
 	}
 	if len(payload) == 0 {
 		return "", lookupError(ErrorProtocol, "WHOIS service returned an empty response", nil)

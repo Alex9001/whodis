@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPlainTextEdit>
+#include <QTableWidget>
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QtTest>
@@ -15,6 +16,7 @@ private slots:
     void displaysTargetAndDNS();
     void displaysSchemaV4WorkbenchTabs();
     void deduplicatesEquivalentTimelineAndDNSRows();
+    void showsResolverAgreementAndRawSource();
 };
 
 void ResultWidgetTest::displaysTargetAndDNS()
@@ -149,6 +151,58 @@ void ResultWidgetTest::deduplicatesEquivalentTimelineAndDNSRows()
     }
     QCOMPARE(databaseRows, 1);
     QCOMPARE(transferRows, 1);
+}
+
+void ResultWidgetTest::showsResolverAgreementAndRawSource()
+{
+    ResultWidget widget;
+    const QJsonArray messages{
+        QJsonObject{{QStringLiteral("name"), QStringLiteral("example.com")},
+                    {QStringLiteral("type"), QStringLiteral("A")},
+                    {QStringLiteral("class"), QStringLiteral("IN")},
+                    {QStringLiteral("resolver"), QStringLiteral("system")},
+                    {QStringLiteral("rcode"), QStringLiteral("NOERROR")},
+                    {QStringLiteral("transport"), QStringLiteral("udp")}},
+        QJsonObject{{QStringLiteral("name"), QStringLiteral("example.com")},
+                    {QStringLiteral("type"), QStringLiteral("A")},
+                    {QStringLiteral("class"), QStringLiteral("IN")},
+                    {QStringLiteral("resolver"), QStringLiteral("authoritative://192.0.2.53:53")},
+                    {QStringLiteral("rcode"), QStringLiteral("NOERROR")},
+                    {QStringLiteral("transport"), QStringLiteral("udp")}},
+    };
+    const QJsonObject report{
+        {QStringLiteral("schema_version"), 4},
+        {QStringLiteral("operation"), QStringLiteral("dns.compare")},
+        {QStringLiteral("subject"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")}}},
+        {QStringLiteral("dns"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("compare")},
+                                             {QStringLiteral("messages"), messages}}},
+    };
+    const QString raw = QStringLiteral("Domain Name: EXAMPLE.COM\n");
+    const QJsonArray rawSources{QJsonObject{{QStringLiteral("protocol"), QStringLiteral("whois")},
+                                            {QStringLiteral("endpoint"), QStringLiteral("whois.example")},
+                                            {QStringLiteral("content"), raw}}};
+    widget.setReportItem(QJsonObject{{QStringLiteral("input"), QStringLiteral("example.com")},
+                                     {QStringLiteral("report"), report},
+                                     {QStringLiteral("raw_sources"), rawSources}});
+
+    const QTabWidget *tabs = widget.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    int compareIndex = -1;
+    for (int index = 0; index < tabs->count(); ++index) {
+        if (tabs->tabText(index) == QStringLiteral("Compare")) {
+            compareIndex = index;
+            break;
+        }
+    }
+    QVERIFY(compareIndex >= 0);
+    QVERIFY(tabs->isTabVisible(compareIndex));
+    auto *comparison = qobject_cast<QTableWidget *>(tabs->widget(compareIndex));
+    QVERIFY(comparison);
+    QCOMPARE(comparison->rowCount(), 2);
+    QCOMPARE(comparison->item(0, 2)->text(), QStringLiteral("Agrees"));
+    QCOMPARE(comparison->item(1, 2)->text(), QStringLiteral("Agrees"));
+    QVERIFY(widget.hasRawSource());
+    QCOMPARE(widget.currentRawSource(), raw);
 }
 
 QTEST_MAIN(ResultWidgetTest)

@@ -6,7 +6,7 @@ on:
       version:
         description: Version identity used by non-publishing preflight packages
         required: true
-        default: 2.0.0
+        default: 2.0.1
   push:
     tags:
       - "v*"
@@ -343,7 +343,7 @@ jobs:
           go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
       - name: List unsigned GUI assets
         run: |
-          echo 'Desktop packages are intentionally unsigned for v2.0.0.'
+          echo 'Desktop packages are intentionally unsigned.'
           find .release-assets/gui -maxdepth 1 -type f -print
       - name: Prepare non-publishing preflight version
         if: github.event_name == 'workflow_dispatch'
@@ -427,8 +427,9 @@ jobs:
           assets+=(scripts/install.sh scripts/install.ps1)
 
           notes=(--generate-notes)
-          if [ "$GITHUB_REF_NAME" = v2.0.0 ]; then
-            notes=(--notes-file RELEASE_NOTES_v2.0.0.md)
+          release_notes_file="RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          if [ -f "$release_notes_file" ]; then
+            notes=(--notes-file "$release_notes_file")
           fi
           release_kind=(--latest)
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then

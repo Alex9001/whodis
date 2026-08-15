@@ -54,8 +54,11 @@ Full HTTP and HTTPS URLs are accepted by the desktop boundary and normalized to
 their hostname. Operation results use public Whodis report schema v4, which
 keeps partial registration, DNS, diagnosis, findings, and scoped errors. The
 helper retains a small in-memory result cache so the GUI can export without
-repeating network requests. Globalping is off until the user explicitly checks
-the third-party remote-probe option.
+repeating network requests. Retry requests replace failed reports inside their
+original batch so successful rows and exports remain complete. Desktop batches
+are capped at 1,000 targets, and the cache is bounded by age, count, and total
+encoded size; use CLI streaming output for larger jobs. Globalping is off until
+the user explicitly checks the third-party remote-probe option.
 
 ## Release packages
 

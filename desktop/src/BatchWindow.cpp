@@ -26,6 +26,8 @@
 #include <QVBoxLayout>
 
 namespace {
+constexpr int maximumDesktopBatchTargets = 1000;
+
 QString eventDate(const QJsonObject &result, const QStringList &actions)
 {
     const QJsonArray events = result.value(QStringLiteral("object")).toObject().value(QStringLiteral("events")).toArray();
@@ -193,6 +195,10 @@ void BatchWindow::startLookup()
 
 void BatchWindow::beginLookup(const QStringList &targets)
 {
+    if (targets.size() > maximumDesktopBatchTargets) {
+        statusBar()->showMessage(tr("Desktop batches support at most %1 targets. Use the CLI streaming formats for larger jobs.").arg(maximumDesktopBatchTargets), 7000);
+        return;
+    }
     m_cancelRequested = false;
     m_resultMode = m_mode->currentData().toString();
     m_items = QVector<QJsonObject>(targets.size());
@@ -234,12 +240,48 @@ void BatchWindow::cancelLookup()
 void BatchWindow::retryFailed()
 {
     QStringList failed;
-    for (const QJsonObject &item : std::as_const(m_items)) {
-        if (!item.value(QStringLiteral("report")).toObject().value(QStringLiteral("errors")).toArray().isEmpty())
+    QVector<int> indexes;
+    for (int index = 0; index < m_items.size(); ++index) {
+        const QJsonObject item = m_items[index];
+        if (!item.value(QStringLiteral("report")).toObject().value(QStringLiteral("errors")).toArray().isEmpty()) {
             failed.append(item.value(QStringLiteral("input")).toString());
+            indexes.append(index);
+        }
     }
     if (!failed.isEmpty())
-        beginLookup(failed);
+        beginRetry(failed, indexes);
+}
+
+void BatchWindow::beginRetry(const QStringList &targets, const QVector<int> &indexes)
+{
+    if (m_token.isEmpty() || targets.isEmpty() || targets.size() != indexes.size())
+        return;
+    m_cancelRequested = false;
+    m_table->setSortingEnabled(false);
+    for (int index : indexes) {
+        const int row = rowForIndex(index);
+        if (row < 0)
+            continue;
+        m_table->item(row, 1)->setText(tr("Queued for retry"));
+        m_table->item(row, 6)->setText({});
+    }
+    m_progress->setRange(0, targets.size());
+    m_progress->setValue(0);
+    QJsonArray targetArray;
+    QJsonArray replaceIndexes;
+    for (const QString &target : targets)
+        targetArray.append(target);
+    for (int index : indexes)
+        replaceIndexes.append(index);
+    QJsonObject params = m_options;
+    params.insert(QStringLiteral("targets"), targetArray);
+    params.insert(QStringLiteral("operation"), m_resultMode);
+    params.insert(QStringLiteral("workers"), m_workers->value());
+    params.insert(QStringLiteral("base_token"), m_token);
+    params.insert(QStringLiteral("replace_indices"), replaceIndexes);
+    m_activeRequest = m_engine->request(QStringLiteral("run"), params);
+    setBusy(true);
+    statusBar()->showMessage(tr("Retrying %1 failed target(s)…").arg(targets.size()));
 }
 
 void BatchWindow::exportResults()
@@ -348,8 +390,6 @@ void BatchWindow::updateRow(int index, const QJsonObject &item)
 
 int BatchWindow::rowForIndex(int index) const
 {
-    if (!m_table->isSortingEnabled())
-        return index >= 0 && index < m_table->rowCount() ? index : -1;
     for (int row = 0; row < m_table->rowCount(); ++row) {
         const QTableWidgetItem *target = m_table->item(row, 0);
         if (target && target->data(Qt::UserRole).toInt() == index)
@@ -381,6 +421,10 @@ void BatchWindow::setBusy(bool busy)
     m_mode->setEnabled(!busy);
     m_workers->setEnabled(!busy);
     m_targets->setReadOnly(busy);
+    if (busy) {
+        m_retry->setEnabled(false);
+        m_export->setEnabled(false);
+    }
 }
 
 void BatchWindow::showSelectedResult()

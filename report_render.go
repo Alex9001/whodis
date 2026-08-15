@@ -251,9 +251,10 @@ func renderDNSReport(builder *strings.Builder, result *DNSOperationResult, width
 	} else if len(result.Differences) > 0 {
 		var rows [][]string
 		for _, difference := range result.Differences {
-			rows = append(rows, []string{difference.Resolver, strings.Join(difference.Missing, "; "), strings.Join(difference.Extra, "; ")})
+			query := strings.TrimSpace(difference.Name + " " + difference.Type)
+			rows = append(rows, []string{query, difference.Resolver, strings.Join(difference.Missing, "; "), strings.Join(difference.Extra, "; ")})
 		}
-		writeReportTable(builder, "Resolver differences", []string{"Resolver", "Missing", "Extra"}, rows, width)
+		writeReportTable(builder, "Resolver differences", []string{"Query", "Resolver", "Missing", "Extra"}, rows, width)
 	}
 	if len(result.Trace) > 0 {
 		var rows [][]string
@@ -566,9 +567,10 @@ func renderDNSOperationMarkdown(builder *strings.Builder, title string, dns *DNS
 		}
 	}
 	if len(dns.Differences) > 0 {
-		builder.WriteString("\n### Resolver differences\n\n| Resolver | Missing | Extra |\n| --- | --- | --- |\n")
+		builder.WriteString("\n### Resolver differences\n\n| Query | Resolver | Missing | Extra |\n| --- | --- | --- | --- |\n")
 		for _, difference := range dns.Differences {
-			fmt.Fprintf(builder, "| %s | %s | %s |\n", markdownCell(difference.Resolver), markdownCell(strings.Join(difference.Missing, "; ")), markdownCell(strings.Join(difference.Extra, "; ")))
+			query := strings.TrimSpace(difference.Name + " " + difference.Type)
+			fmt.Fprintf(builder, "| %s | %s | %s | %s |\n", markdownCell(query), markdownCell(difference.Resolver), markdownCell(strings.Join(difference.Missing, "; ")), markdownCell(strings.Join(difference.Extra, "; ")))
 		}
 	}
 	if len(dns.Trace) > 0 {

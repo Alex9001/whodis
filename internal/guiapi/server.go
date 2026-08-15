@@ -21,7 +21,17 @@ type engineRunner interface {
 
 type storedResult struct {
 	reportBatch *whodis.BatchReport
+	inputs      []string
+	storedAt    time.Time
+	bytes       int64
 }
+
+const (
+	maximumGUIBatchItems     = 1000
+	maximumStoredResults     = 20
+	maximumStoredResultBytes = 64 << 20
+	storedResultTTL          = 30 * time.Minute
+)
 
 // Server exposes the Whodis engine to a desktop frontend over JSON-RPC.
 type Server struct {
@@ -31,13 +41,14 @@ type Server struct {
 	output  io.Writer
 	logs    io.Writer
 
-	writeMutex sync.Mutex
-	stateMutex sync.Mutex
-	cancels    map[string]context.CancelFunc
-	results    map[string]storedResult
-	resultIDs  []string
-	nextToken  atomic.Uint64
-	group      sync.WaitGroup
+	writeMutex  sync.Mutex
+	stateMutex  sync.Mutex
+	cancels     map[string]context.CancelFunc
+	results     map[string]storedResult
+	resultIDs   []string
+	resultBytes int64
+	nextToken   atomic.Uint64
+	group       sync.WaitGroup
 }
 
 // NewServerWithEngine constructs a protocol-v3 server with an explicitly
@@ -84,7 +95,7 @@ func (server *Server) handle(rpcRequest request) {
 		server.writeResult(rpcRequest.ID, helloResult{
 			ProtocolVersion: ProtocolVersion,
 			EngineVersion:   server.version,
-			Capabilities:    []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "batch", "progress", "cancel", "raw", "export", "schema_v4"},
+			Capabilities:    []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "batch", "batch_retry", "progress", "cancel", "raw", "export", "schema_v4"},
 		})
 	case "parse":
 		var params parseParams
@@ -163,6 +174,24 @@ func validateRunParams(params runParams) error {
 	if len(params.Targets) == 0 {
 		return fmt.Errorf("at least one target is required")
 	}
+	if len(params.Targets) > maximumGUIBatchItems {
+		return fmt.Errorf("desktop batches support at most %d targets; use the CLI streaming formats for larger jobs", maximumGUIBatchItems)
+	}
+	if (strings.TrimSpace(params.BaseToken) == "") != (len(params.ReplaceIndices) == 0) {
+		return fmt.Errorf("base_token and replace_indices must be supplied together")
+	}
+	if len(params.ReplaceIndices) > 0 {
+		if len(params.ReplaceIndices) != len(params.Targets) {
+			return fmt.Errorf("replace_indices must match the number of retry targets")
+		}
+		seen := make(map[int]bool, len(params.ReplaceIndices))
+		for _, index := range params.ReplaceIndices {
+			if index < 0 || seen[index] {
+				return fmt.Errorf("replace_indices must contain unique non-negative indexes")
+			}
+			seen[index] = true
+		}
+	}
 	switch params.Operation {
 	case whodis.OperationRegistration, whodis.OperationInspect, whodis.OperationDNSQuery, whodis.OperationDNSInventory,
 		whodis.OperationDNSCompare, whodis.OperationDNSTrace, whodis.OperationDNSTransfer,
@@ -212,6 +241,26 @@ func (server *Server) startRun(id json.RawMessage, params runParams) {
 		server.writeError(id, -32600, "run id must be a string", nil)
 		return
 	}
+	var retryBase *storedResult
+	if params.BaseToken != "" {
+		stored, found := server.loadResult(params.BaseToken)
+		if !found || stored.reportBatch == nil {
+			server.writeError(id, -32602, "unknown or expired base result token", nil)
+			return
+		}
+		if len(stored.inputs) != len(stored.reportBatch.Reports) {
+			server.writeError(id, -32602, "base result is incomplete", nil)
+			return
+		}
+		for offset, index := range params.ReplaceIndices {
+			if index >= len(stored.inputs) || stored.inputs[index] != params.Targets[offset] || stored.reportBatch.Reports[index].Operation != params.Operation {
+				server.writeError(id, -32602, "retry targets do not match the base result", nil)
+				return
+			}
+		}
+		retryBase = &stored
+	}
+
 	server.stateMutex.Lock()
 	if _, exists := server.cancels[requestID]; exists {
 		server.stateMutex.Unlock()
@@ -262,16 +311,13 @@ func (server *Server) startRun(id json.RawMessage, params runParams) {
 			server.writeLookupError(id, err)
 			return
 		}
-		token := server.storeReportResult(batch)
-		items := make([]reportItem, len(batch.Reports))
-		for index, report := range batch.Reports {
-			items[index] = reportItem{Input: params.Targets[index], Report: report}
-			if report.Registration != nil {
-				for _, source := range report.Registration.Sources {
-					items[index].RawSources = append(items[index].RawSources, rawSource{Protocol: source.Protocol, Endpoint: source.Endpoint, Authority: source.Authority, Content: source.Raw})
-				}
-			}
+		batch, inputs := mergeRetryResult(batch, params, retryBase)
+		token, storeErr := server.storeReportResult(batch, inputs)
+		if storeErr != nil {
+			server.writeLookupError(id, storeErr)
+			return
 		}
+		items := reportItems(inputs, batch.Reports)
 		server.writeResult(id, runResult{Token: token, Items: items, Canceled: runContext.Err() != nil})
 	}()
 }
@@ -321,25 +367,92 @@ func (server *Server) removeCancel(requestID string) {
 	server.stateMutex.Unlock()
 }
 
-func (server *Server) storeReportResult(batch whodis.BatchReport) string {
+func reportItems(inputs []string, reports []whodis.Report) []reportItem {
+	items := make([]reportItem, len(reports))
+	for index, report := range reports {
+		input := report.Subject.Original
+		if index < len(inputs) && inputs[index] != "" {
+			input = inputs[index]
+		}
+		presentation := report
+		items[index] = reportItem{Input: input, Report: presentation}
+		if report.Registration == nil {
+			continue
+		}
+		registration := *report.Registration
+		registration.Sources = append([]whodis.Source(nil), report.Registration.Sources...)
+		for sourceIndex := range registration.Sources {
+			source := &registration.Sources[sourceIndex]
+			if source.Raw != "" {
+				items[index].RawSources = append(items[index].RawSources, rawSource{Protocol: source.Protocol, Endpoint: source.Endpoint, Authority: source.Authority, Content: source.Raw})
+				source.Raw = ""
+			}
+		}
+		presentation.Registration = &registration
+		items[index].Report = presentation
+	}
+	return items
+}
+
+func mergeRetryResult(batch whodis.BatchReport, params runParams, base *storedResult) (whodis.BatchReport, []string) {
+	if base == nil {
+		return batch, append([]string(nil), params.Targets...)
+	}
+	merged := append([]whodis.Report(nil), base.reportBatch.Reports...)
+	for offset, index := range params.ReplaceIndices {
+		merged[index] = batch.Reports[offset]
+	}
+	return whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: merged}, append([]string(nil), base.inputs...)
+}
+
+func (server *Server) storeReportResult(batch whodis.BatchReport, inputs []string) (string, error) {
+	encoded, err := json.Marshal(batch)
+	if err != nil {
+		return "", fmt.Errorf("could not retain desktop result: %w", err)
+	}
+	size := int64(len(encoded))
+	if size > maximumStoredResultBytes {
+		return "", fmt.Errorf("desktop result exceeds the 64 MiB retention limit; use CLI streaming output for this batch")
+	}
 	token := fmt.Sprintf("result-%d", server.nextToken.Add(1))
 	server.stateMutex.Lock()
-	server.results[token] = storedResult{reportBatch: &batch}
-	server.resultIDs = append(server.resultIDs, token)
-	if len(server.resultIDs) > 20 {
-		oldest := server.resultIDs[0]
-		server.resultIDs = server.resultIDs[1:]
-		delete(server.results, oldest)
+	defer server.stateMutex.Unlock()
+	server.pruneResultsLocked(time.Now())
+	for len(server.resultIDs) >= maximumStoredResults || (len(server.resultIDs) > 0 && server.resultBytes+size > maximumStoredResultBytes) {
+		server.removeOldestResultLocked()
 	}
-	server.stateMutex.Unlock()
-	return token
+	server.results[token] = storedResult{reportBatch: &batch, inputs: append([]string(nil), inputs...), storedAt: time.Now(), bytes: size}
+	server.resultIDs = append(server.resultIDs, token)
+	server.resultBytes += size
+	return token, nil
 }
 
 func (server *Server) loadResult(token string) (storedResult, bool) {
 	server.stateMutex.Lock()
 	defer server.stateMutex.Unlock()
+	server.pruneResultsLocked(time.Now())
 	result, ok := server.results[token]
 	return result, ok
+}
+
+func (server *Server) pruneResultsLocked(now time.Time) {
+	for len(server.resultIDs) > 0 {
+		oldest := server.results[server.resultIDs[0]]
+		if now.Sub(oldest.storedAt) < storedResultTTL {
+			break
+		}
+		server.removeOldestResultLocked()
+	}
+}
+
+func (server *Server) removeOldestResultLocked() {
+	if len(server.resultIDs) == 0 {
+		return
+	}
+	oldestID := server.resultIDs[0]
+	server.resultIDs = server.resultIDs[1:]
+	server.resultBytes -= server.results[oldestID].bytes
+	delete(server.results, oldestID)
 }
 
 func (server *Server) writeResult(id json.RawMessage, result any) {

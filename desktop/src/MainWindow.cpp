@@ -277,7 +277,9 @@ void MainWindow::saveCurrent()
 {
     if (m_resultToken.isEmpty())
         return;
-    const QString filters = tr("JSON (*.json);;NDJSON (*.ndjson);;CSV (*.csv);;YAML (*.yaml);;Markdown (*.md);;Plain text (*.txt);;Raw response (*.raw.txt)");
+    QString filters = tr("JSON (*.json);;NDJSON (*.ndjson);;CSV (*.csv);;YAML (*.yaml);;Markdown (*.md);;Plain text (*.txt)");
+    if (m_result->hasRawSource())
+        filters += tr(";;Raw response (*.raw.txt)");
     QString selectedFilter;
     const QString path = QFileDialog::getSaveFileName(this, tr("Save Whodis result"), m_result->currentTarget() + QStringLiteral(".json"), filters, &selectedFilter);
     if (path.isEmpty())
@@ -293,8 +295,15 @@ void MainWindow::saveCurrent()
         format = QStringLiteral("markdown");
     else if (selectedFilter.contains(QStringLiteral("Plain"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".txt"), Qt::CaseInsensitive))
         format = QStringLiteral("plain");
-    if (selectedFilter.contains(QStringLiteral("Raw"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".raw.txt"), Qt::CaseInsensitive))
-        format = QStringLiteral("raw");
+    if (selectedFilter.contains(QStringLiteral("Raw"), Qt::CaseInsensitive) || path.endsWith(QStringLiteral(".raw.txt"), Qt::CaseInsensitive)) {
+        QSaveFile file(path);
+        const QByteArray content = m_result->currentRawSource().toUtf8();
+        if (content.isEmpty() || !file.open(QIODevice::WriteOnly) || file.write(content) != content.size() || !file.commit())
+            QMessageBox::warning(this, tr("Could not save"), file.errorString());
+        else
+            statusBar()->showMessage(tr("Saved %1").arg(QFileInfo(path).fileName()), 5000);
+        return;
+    }
     m_exportPath = path;
     m_exportRequest = m_engine->request(QStringLiteral("export"), {{QStringLiteral("token"), m_resultToken}, {QStringLiteral("format"), format}});
 }
