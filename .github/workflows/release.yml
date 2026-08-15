@@ -123,7 +123,7 @@ jobs:
           }
           trap cleanup_weston EXIT
 
-          for attempt in $(seq 1 50); do
+          for _ in $(seq 1 50); do
             [ -S "$wayland_runtime/wayland-whodis" ] && break
             if ! kill -0 "$weston_pid" 2>/dev/null; then
               cat "$weston_log" >&2

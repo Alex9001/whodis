@@ -65,12 +65,18 @@ jobs:
           scripts/render-aur.sh 0.1.0 \
             0000000000000000000000000000000000000000000000000000000000000000 \
             "$aur_test_dir"
-          ! grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"
+          if grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"; then
+            echo "CLI AUR template contains an unresolved placeholder" >&2
+            exit 1
+          fi
           cmp packaging/aur/LICENSE "$aur_test_dir/LICENSE"
           scripts/render-aur-gui.sh 0.1.0 \
             0000000000000000000000000000000000000000000000000000000000000000 \
             "$aur_test_dir"
-          ! grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"
+          if grep -R '@PKGVER@\|@SHA256@' "$aur_test_dir"; then
+            echo "GUI AUR template contains an unresolved placeholder" >&2
+            exit 1
+          fi
           cmp packaging/aur-gui/LICENSE "$aur_test_dir/LICENSE"
       - name: Validate community package rendering
         run: |
@@ -85,7 +91,10 @@ jobs:
           done
           scripts/render-community-packages.sh v2.0.0 \
             "$package_test_dir/checksums.txt" "$package_test_dir/rendered"
-          ! grep -R '@[A-Z0-9_]*@' "$package_test_dir/rendered"
+          if grep -R '@[A-Z0-9_]*@' "$package_test_dir/rendered"; then
+            echo "Community package template contains an unresolved placeholder" >&2
+            exit 1
+          fi
           ruby -c "$package_test_dir/rendered/homebrew/whodis.rb"
           jq --exit-status '.version == "2.0.0"' "$package_test_dir/rendered/scoop/whodis.json"
       - name: Exercise Qt SDK license collection
