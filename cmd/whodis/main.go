@@ -1531,8 +1531,12 @@ func printInvestigateUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage: whodis investigate <domain> [<domain> ...] [options]
 
 Builds an evidence-backed technology and infrastructure profile from bounded public DNS, HTTP, TLS,
-mail, PTR, and IP-registration observations. Network ownership is reported separately from inferred
-hosting. Whodis does not run a generic port scan or execute page JavaScript.
+mail, PTR, and IP-registration observations. The single fetched homepage also produces a score-free
+snapshot of delivery, basic SEO, security headers, and static accessibility markers. Network ownership
+is reported separately from inferred hosting.
+
+Whodis reads at most 1 MiB of the final homepage response. It does not execute JavaScript, fetch page
+assets, crawl additional pages, calculate browser performance metrics, or run a generic port scan.
 
 Third-party passive DNS is off by default. Use --enrich otx to request AlienVault OTX observations;
 WHODIS_OTX_API_KEY is read from the environment when present. Related domains are live-checked and

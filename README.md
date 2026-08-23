@@ -52,6 +52,10 @@ stable machine-readable report.
   views without a browser or a separately installed CLI. Result columns are
   adjustable and remembered per view, while long values wrap instead of being
   clipped or forcing the whole layout sideways.
+- **Evidence-backed site profile** — identify platforms, versions, WordPress
+  plugins and themes, commerce, optimization, hosting, DNS, and mail, then
+  review a score-free homepage delivery, SEO, security-header, and
+  accessibility snapshot.
 
 ## See it in action
 
@@ -262,9 +266,11 @@ port-range scanner.
 ## Investigate a site's stack without hand-waving
 
 `whodis investigate` builds on Diagnose and turns bounded public observations
-into a quick, renderer-independent stack profile. It combines homepage HTTP
-headers and markup, DNS provider patterns, mail records, PTR names, and IP RDAP
-registration. Web fingerprints use the MIT-licensed `wappalyzergo` engine.
+into a quick, renderer-independent stack profile. It combines one homepage
+HTTP response, DNS provider patterns, mail records, PTR names, and IP RDAP
+registration. Web fingerprints use the MIT-licensed `wappalyzergo` engine,
+augmented with conservative header, cookie-name, generator, asset-path, and
+markup signals.
 
 ```bash
 whodis investigate example.com
@@ -273,21 +279,35 @@ whodis investigate example.com --research-links all
 whodis investigate example.com --enrich otx --related-limit 50 --json
 ```
 
-Each detected component has a category, role, `high`/`medium`/`low`
-confidence, and the exact bounded evidence behind it. Whodis deliberately
+Each detected component has a category, role, optional version and parent,
+descriptive traits, `high`/`medium`/`low` confidence, the basis for that
+confidence, and bounded evidence behind it. Known WordPress paths identify
+products such as WooCommerce, Gravity Forms, Ninja Forms, ACF, Elementor,
+Genesis, and common cache/optimization plugins. Unknown public plugin or theme
+slugs are preserved as explicitly unmapped observations instead of being
+silently discarded. Whodis deliberately
 separates a network owner such as Amazon from a managed hosting provider, and
 does not call a lone `autodiscover` record Microsoft 365 or cPanel. A compact
 summary is followed by evidence tables in terminal output. In the desktop app,
-the **Overview** immediately summarizes web technology, server/edge, hosting,
-network, DNS, mail, and analytics/security findings. The **Stack** view uses a
-clean master/detail layout: select one technology, network, or note to
-see its wrapped summary and evidence below, without repetitive evidence rows.
+the **Overview** immediately summarizes the web platform, commerce,
+plugins/forms, theme, optimization, server/edge, hosting, network, DNS, mail,
+and homepage observations. Homepage observations cover response delivery and
+source-level asset hints, basic metadata, browser security headers, and a few
+static accessibility markers. Their deterministic pass/info/warning entries
+appear in the existing **Findings** view; there is no synthetic score. The
+**Stack** view uses a clean master/detail layout: select one technology,
+network, or note to see its wrapped summary and evidence below, without
+repetitive evidence rows.
 The dedicated **Research** view keeps manual third-party pivots out of the
 evidence tree, grouped under the domain and each public IP. The **Related**
 view keeps passive observations separate from stack claims.
 
-Local investigation is the default. It does not execute JavaScript, crawl the
-site, scan arbitrary ports, or contact related domains. Whodis locally creates
+Local investigation is the default. It reads at most the first 1 MiB of the
+single final homepage response. It does not execute JavaScript, fetch
+referenced assets, crawl additional pages, calculate Lighthouse/Core Web
+Vitals, assign a site grade, scan arbitrary ports, or contact related domains.
+A missing signal means only “not observed in this bounded response”—never proof
+that a product is absent or that a security issue exists. Whodis locally creates
 a curated set of links for AlienVault OTX, VirusTotal, BuiltWith, urlscan.io,
 crt.sh, the Wayback Machine, Shodan, and Censys. It does not contact those
 services until you explicitly open a link. Additional Wappalyzer, Netcraft,
@@ -469,8 +489,9 @@ err = whodis.RenderReport(os.Stdout, report, whodis.FormatJSON, whodis.RenderOpt
 `Report` schema version 5 keeps registration, DNS, diagnosis, investigation,
 findings, and provider-scoped errors independent, so one failed registry,
 probe, or enrichment does not erase useful results. Schema v5 adds explainable
-stack components, network attribution, curated manual research links, and bounded related
-observations. Snapshot replay continues to read schema-v4 snapshots.
+stack components, a bounded homepage profile, network attribution, curated
+manual research links, and bounded related observations. Snapshot replay
+continues to read schema-v4 snapshots.
 Diagnostic findings are aggregated once at report level instead of being
 duplicated inside the diagnosis payload.
 `Engine.RunBatch` preserves input order, while `Engine.RunStream` handles input
@@ -524,8 +545,11 @@ split into CLI and GUI assets so a server never needs to install Qt.
   exhaustive security audit.
 - Technology fingerprints and provider mappings are evidence-backed best
   efforts, not contractual proof. Sites can hide, proxy, or spoof headers and
-  infrastructure. Passive-DNS neighbors are historical observations, not
-  ownership, customer, or compromise claims.
+  infrastructure. The homepage audit is a static, single-response observation:
+  it does not execute JavaScript, fetch assets, crawl pages, measure browser
+  performance, claim that an unobserved plugin is absent, grade a site, or
+  perform a vulnerability assessment. Passive-DNS neighbors are historical
+  observations, not ownership, customer, or compromise claims.
 - Raw source output is limited to one registration response. Multi-target and
   workstation operations use human-readable or structured report formats.
 - The desktop batch workspace accepts up to 1,000 targets and retains recent

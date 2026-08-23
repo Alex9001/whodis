@@ -13,17 +13,23 @@ through the same operation engine and exports CSV, TSV, or JSON.
 
 Result and batch tables use wrapped, user-adjustable columns. Widths are saved
 independently for each view, and row heights adapt when a column changes. An
-investigation opens on Overview with a categorized technology and
-infrastructure summary. Stack is a master/detail workspace: category headings
-organize selectable findings, while one lower pane shows the selected summary,
-and evidence. Its splitter position is also remembered. Research links live in
+investigation opens on Overview with categorized platform, commerce,
+plugin/form, theme, optimization, and infrastructure summaries plus a compact
+homepage delivery, SEO, security-header, and accessibility profile. The same
+score-free homepage observations appear as deterministic rows in Findings.
+Stack is a master/detail workspace: category headings organize selectable
+technologies, while one lower pane shows the selected version, relationship,
+confidence basis, summary, and bounded evidence. Its splitter position is also
+remembered. Research links live in
 their own adjustable, wrapped view grouped by domain and public IP, with one
 native Open/Copy action instead of repeated buttons.
 
-Investigate is local by default. The Core research-link catalog is generated
-locally, and no listed service receives a domain or IP until the user opens its
-link. Advanced offers Core, All, Off, and individual persistent provider
-choices. Its OTX checkbox is an
+Investigate is local by default. Homepage analysis uses one bounded response;
+it does not execute JavaScript, fetch referenced assets, crawl pages, calculate
+browser performance metrics, or assign a score. The Core research-link catalog
+is generated locally, and no listed service receives a domain or IP until the
+user opens its link. Advanced offers Core, All, Off, and individual persistent
+provider choices. Its OTX checkbox is an
 explicit, session-only third-party opt-in and is never restored automatically.
 Harmless related-result, research-link, custom-template, and endpoint
 preferences may be saved; an
@@ -62,7 +68,7 @@ engine build.
 
 The GUI starts `whodis-gui-engine` as a child process. Requests and responses
 are JSON-RPC 2.0 objects separated by newlines over standard input and output;
-diagnostics go only to standard error. Protocol version 4 provides `hello`,
+diagnostics go only to standard error. Protocol version 5 provides `hello`,
 `parse`, schema-v5 `run`, `cancel`, and `export`, plus asynchronous progress
 notifications. All operations use `run`; the old registration-only bridge was
 removed. The helper is a private implementation detail rather than a second

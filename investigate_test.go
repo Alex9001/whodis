@@ -3,6 +3,7 @@ package whodis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	mdns "github.com/miekg/dns"
+	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 )
 
 type investigationDNSFixture struct {
@@ -90,6 +92,13 @@ func TestInvestigationSynthesizesLayeredStackWithoutOverclaimingMail(t *testing.
 			t.Errorf("missing %q in %#v", expected, report.Components)
 		}
 	}
+	elementor := homepageComponent(report.Components, "Elementor")
+	if elementor == nil || elementor.Parent != "WordPress" || elementor.Role != "Page builder" || !containsFold(elementor.Traits, "Page builders") || !containsFold(elementor.Basis, "asset_path") {
+		t.Fatalf("granular Elementor component = %#v", elementor)
+	}
+	if report.Homepage == nil || !report.Homepage.MarkupAnalyzed || !hasFinding(report.Findings, "web.homepage.response") || !hasFinding(report.Findings, "web.security.headers") {
+		t.Fatalf("homepage investigation = (%#v, %#v)", report.Homepage, report.Findings)
+	}
 	if hasComponent(report.Components, "Microsoft 365") {
 		t.Fatalf("autodiscover-free local mail was mislabeled Microsoft 365: %#v", report.Components)
 	}
@@ -109,6 +118,67 @@ func TestAutodiscoverAloneDoesNotClaimMicrosoft365OrCPanel(t *testing.T) {
 		if hasComponent(components.values(), name) {
 			t.Fatalf("single autodiscover record claimed %s", name)
 		}
+	}
+}
+
+func TestComponentAccumulatorCapsEvidenceWithoutInflatingTheTotal(t *testing.T) {
+	components := newComponentAccumulator()
+	evidence := make([]InvestigationEvidence, 0, maximumComponentEvidence+2)
+	for index := 0; index < maximumComponentEvidence+2; index++ {
+		evidence = append(evidence, InvestigationEvidence{Source: "http", Field: "signal", Value: fmt.Sprintf("value-%d", index)})
+	}
+	component := StackComponent{Category: StackWebApplication, Name: "Example CMS", Confidence: ConfidenceMedium, Evidence: evidence}
+	components.add(component)
+	components.add(component)
+	values := components.values()
+	if len(values) != 1 || len(values[0].Evidence) != maximumComponentEvidence || values[0].EvidenceTotal != maximumComponentEvidence+2 {
+		t.Fatalf("capped component = %#v", values)
+	}
+}
+
+func TestExplicitTechnologyHeadersCaptureVersionsAndBasis(t *testing.T) {
+	components := newComponentAccumulator()
+	components.addWeb(nil, nil, webInvestigationObservation{
+		URL: "https://example.test/",
+		Headers: http.Header{
+			"Server":       {"nginx/1.26.3"},
+			"X-Powered-By": {"PHP/8.4.1"},
+			"X-Pingback":   {"https://example.test/xmlrpc.php"},
+		},
+	})
+	values := components.values()
+	for _, expected := range []struct {
+		name, version string
+	}{
+		{"nginx", "1.26.3"},
+		{"PHP", "8.4.1"},
+		{"WordPress", ""},
+	} {
+		component := homepageComponent(values, expected.name)
+		if component == nil || component.Version != expected.version || component.Confidence != ConfidenceHigh || !containsFold(component.Basis, "header") {
+			t.Errorf("%s component = %#v", expected.name, component)
+		}
+	}
+}
+
+func TestWappalyzerImplicationsCanBeMarkedAsIndirect(t *testing.T) {
+	implications := wappalyzerImplicationMap()
+	parents := implications["mysql"]
+	if !containsFold(parents, "WordPress") || !detectedParent(parents, map[string]wappalyzer.AppInfo{"WordPress:6.8": {}}) {
+		t.Fatalf("WordPress implication map = %#v", parents)
+	}
+}
+
+func TestPublicHomepageEvidenceStripsURLSecretsAndControlCharacters(t *testing.T) {
+	parsed, err := url.Parse("https://user:secret@example.test/path?token=private#fragment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sanitizedObservationURL(parsed); got != "https://example.test/path" {
+		t.Fatalf("sanitized URL = %q", got)
+	}
+	if got := cleanHeaderValue("nginx\x1b[31m\r\nspoofed\u202e"); strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\u202e') || strings.ContainsAny(got, "\r\n") {
+		t.Fatalf("clean header retained terminal controls: %q", got)
 	}
 }
 
@@ -220,7 +290,7 @@ func TestRelatedValidationDoesNotCallAnIncompleteLookupStale(t *testing.T) {
 
 func TestServerHeaderClassifiesKnownEdgeServices(t *testing.T) {
 	components := newComponentAccumulator()
-	components.addWeb(nil, webInvestigationObservation{URL: "https://example.test/", Headers: http.Header{"Server": {"cloudflare"}}})
+	components.addWeb(nil, nil, webInvestigationObservation{URL: "https://example.test/", Headers: http.Header{"Server": {"cloudflare"}}})
 	values := components.values()
 	if !hasComponent(values, "Cloudflare") || values[0].Category != StackEdge {
 		t.Fatalf("edge header components = %#v", values)

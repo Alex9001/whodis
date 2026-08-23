@@ -282,6 +282,66 @@ QList<QPair<QString, QString>> consolidatedEvents(const QJsonArray &values)
     return rows;
 }
 
+bool jsonArrayContains(const QJsonArray &values, const QString &candidate)
+{
+    for (const QJsonValue &value : values) {
+        if (value.toString().compare(candidate, Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
+QString technologyGroupKey(const QJsonObject &component)
+{
+    const QJsonArray traits = component.value(QStringLiteral("traits")).toArray();
+    if (jsonArrayContains(traits, QStringLiteral("WordPress themes")))
+        return QStringLiteral("themes");
+    if (jsonArrayContains(traits, QStringLiteral("Ecommerce")))
+        return QStringLiteral("commerce");
+    if (jsonArrayContains(traits, QStringLiteral("Caching")) || jsonArrayContains(traits, QStringLiteral("Performance")))
+        return QStringLiteral("optimization");
+    if (jsonArrayContains(traits, QStringLiteral("WordPress plugins"))
+        || jsonArrayContains(traits, QStringLiteral("Form builders"))
+        || jsonArrayContains(traits, QStringLiteral("Page builders")))
+        return QStringLiteral("extensions");
+    return component.value(QStringLiteral("category")).toString().trimmed().toLower();
+}
+
+QString technologyGroupLabel(const QString &key)
+{
+    if (key == QStringLiteral("web_application"))
+        return QObject::tr("Web applications");
+    if (key == QStringLiteral("framework"))
+        return QObject::tr("Frameworks");
+    if (key == QStringLiteral("extensions"))
+        return QObject::tr("Plugins and forms");
+    if (key == QStringLiteral("commerce"))
+        return QObject::tr("Commerce");
+    if (key == QStringLiteral("themes"))
+        return QObject::tr("Themes");
+    if (key == QStringLiteral("optimization"))
+        return QObject::tr("Optimization");
+    QString label = key;
+    label.replace(QLatin1Char('_'), QLatin1Char(' '));
+    if (!label.isEmpty())
+        label[0] = label.at(0).toUpper();
+    return label;
+}
+
+QString yesNo(bool value)
+{
+    return value ? QObject::tr("yes") : QObject::tr("no");
+}
+
+QString byteCount(int value)
+{
+    if (value >= 1024 * 1024)
+        return QObject::tr("%1 MiB").arg(double(value) / (1024.0 * 1024.0), 0, 'f', 1);
+    if (value >= 1024)
+        return QObject::tr("%1 KiB").arg(double(value) / 1024.0, 0, 'f', 1);
+    return QObject::tr("%1 B").arg(value);
+}
+
 }
 
 ResultWidget::ResultWidget(QWidget *parent)
@@ -536,7 +596,7 @@ void ResultWidget::setReportItem(const QJsonObject &item)
         addValue(operation, tr("Action"), report.value(QStringLiteral("operation")).toString());
         addValue(operation, tr("Retrieved"), report.value(QStringLiteral("observed_at")).toString());
     }
-    populateInvestigationOverview(investigation);
+    populateInvestigationOverview(report);
     populateReportDNS(report);
     populateCompare(report);
     populateDelegation(report);
@@ -681,24 +741,29 @@ void ResultWidget::populateOverview(const QJsonObject &result)
     }
 }
 
-void ResultWidget::populateInvestigationOverview(const QJsonObject &investigation)
+void ResultWidget::populateInvestigationOverview(const QJsonObject &report)
 {
+    const QJsonObject investigation = report.value(QStringLiteral("investigation")).toObject();
     if (investigation.isEmpty())
         return;
 
     struct CategorySummary {
         QString label;
-        QStringList keys;
+        QString key;
     };
     const QList<CategorySummary> categories{
-        {tr("Web technology"), {QStringLiteral("web_application"), QStringLiteral("framework")}},
-        {tr("Server / edge"), {QStringLiteral("web_server"), QStringLiteral("edge")}},
-        {tr("Hosting"), {QStringLiteral("hosting")}},
-        {tr("Network owner"), {QStringLiteral("network")}},
-        {tr("DNS provider"), {QStringLiteral("dns")}},
-        {tr("Mail"), {QStringLiteral("mail")}},
-        {tr("Analytics / security"), {QStringLiteral("analytics"), QStringLiteral("security")}},
-        {tr("Other"), {QStringLiteral("other")}},
+        {tr("Web platform"), QStringLiteral("platform")},
+        {tr("Commerce"), QStringLiteral("commerce")},
+        {tr("Plugins and forms"), QStringLiteral("extensions")},
+        {tr("Theme"), QStringLiteral("themes")},
+        {tr("Optimization"), QStringLiteral("optimization")},
+        {tr("Server / edge"), QStringLiteral("server")},
+        {tr("Hosting"), QStringLiteral("hosting")},
+        {tr("Network owner"), QStringLiteral("network")},
+        {tr("DNS provider"), QStringLiteral("dns")},
+        {tr("Mail"), QStringLiteral("mail")},
+        {tr("Analytics / security"), QStringLiteral("analytics_security")},
+        {tr("Other"), QStringLiteral("other")},
     };
     QList<QStringList> values(categories.size());
     for (const QJsonValue &value : investigation.value(QStringLiteral("components")).toArray()) {
@@ -710,9 +775,16 @@ void ResultWidget::populateInvestigationOverview(const QJsonObject &investigatio
         if (name.isEmpty())
             continue;
         const QString category = component.value(QStringLiteral("category")).toString().trimmed().toLower();
+        QString summaryKey = technologyGroupKey(component);
+        if (summaryKey == QStringLiteral("web_application") || summaryKey == QStringLiteral("framework"))
+            summaryKey = QStringLiteral("platform");
+        else if (summaryKey == QStringLiteral("web_server") || summaryKey == QStringLiteral("edge"))
+            summaryKey = QStringLiteral("server");
+        else if (summaryKey == QStringLiteral("analytics") || summaryKey == QStringLiteral("security"))
+            summaryKey = QStringLiteral("analytics_security");
         int categoryIndex = categories.size() - 1;
         for (int index = 0; index < categories.size(); ++index) {
-            if (categories.at(index).keys.contains(category)) {
+            if (categories.at(index).key == summaryKey || categories.at(index).key == category) {
                 categoryIndex = index;
                 break;
             }
@@ -749,6 +821,63 @@ void ResultWidget::populateInvestigationOverview(const QJsonObject &investigatio
     const int currentIndex = m_overview->indexOfTopLevelItem(group);
     QTreeWidgetItem *detached = m_overview->takeTopLevelItem(currentIndex);
     m_overview->insertTopLevelItem(qMin(1, m_overview->topLevelItemCount()), detached);
+
+    const QJsonObject homepage = investigation.value(QStringLiteral("homepage")).toObject();
+    if (homepage.isEmpty())
+        return;
+    const QJsonObject assets = homepage.value(QStringLiteral("assets")).toObject();
+    const QJsonObject metadata = homepage.value(QStringLiteral("metadata")).toObject();
+    const QJsonObject security = homepage.value(QStringLiteral("security")).toObject();
+    const QJsonObject accessibility = homepage.value(QStringLiteral("accessibility")).toObject();
+    auto *homepageGroup = addGroup(m_overview, tr("Homepage observations"));
+    QStringList responseParts{
+        QString::number(homepage.value(QStringLiteral("status")).toInt()),
+        homepage.value(QStringLiteral("http_version")).toString(),
+        homepage.value(QStringLiteral("content_encoding")).toString(),
+        byteCount(homepage.value(QStringLiteral("decoded_bytes")).toInt()),
+    };
+    responseParts.removeAll(QString());
+    addValue(homepageGroup, tr("Response"), responseParts.join(QStringLiteral(" · ")));
+    const bool markupAnalyzed = homepage.value(QStringLiteral("markup_analyzed")).toBool();
+    if (markupAnalyzed) {
+        addValue(homepageGroup, tr("Delivery"),
+                 tr("HTML %1 · %2 scripts (%3 potentially blocking) · %4 styles · %5 third-party origins")
+                     .arg(homepage.value(QStringLiteral("html_minification")).toString())
+                     .arg(assets.value(QStringLiteral("scripts")).toInt())
+                     .arg(assets.value(QStringLiteral("potentially_blocking_scripts")).toInt())
+                     .arg(assets.value(QStringLiteral("stylesheets")).toInt())
+                     .arg(assets.value(QStringLiteral("third_party_origin_total")).toInt()));
+        addValue(homepageGroup, tr("SEO basics"),
+                 tr("title %1 · description %2 · canonical %3 · viewport %4 · H1 %5 · JSON-LD %6")
+                     .arg(yesNo(metadata.value(QStringLiteral("title")).toBool()))
+                     .arg(yesNo(metadata.value(QStringLiteral("meta_description")).toBool()))
+                     .arg(yesNo(!metadata.value(QStringLiteral("canonical_url")).toString().isEmpty()))
+                     .arg(yesNo(metadata.value(QStringLiteral("viewport")).toBool()))
+                     .arg(metadata.value(QStringLiteral("h1_count")).toInt())
+                     .arg(metadata.value(QStringLiteral("structured_data")).toInt()));
+    } else {
+        addValue(homepageGroup, tr("Markup"), tr("Not analyzed; only response-header observations are available."));
+    }
+    int securityHeaders = 0;
+    for (const QString &key : {QStringLiteral("hsts"), QStringLiteral("csp"), QStringLiteral("frame_protection"),
+                               QStringLiteral("no_sniff"), QStringLiteral("referrer_policy"), QStringLiteral("permissions_policy")})
+        securityHeaders += security.value(key).toBool() ? 1 : 0;
+    addValue(homepageGroup, tr("Security headers"),
+             tr("%1 of 6 observed · HTTPS %2 · mixed-content references %3")
+                 .arg(securityHeaders).arg(yesNo(security.value(QStringLiteral("https")).toBool()))
+                 .arg(security.value(QStringLiteral("mixed_content_references")).toInt()));
+    if (markupAnalyzed) {
+        addValue(homepageGroup, tr("Accessibility markers"),
+                 tr("language %1 · missing alt %2/%3 · unlabeled controls %4/%5")
+                     .arg(yesNo(accessibility.value(QStringLiteral("language")).toBool()))
+                     .arg(accessibility.value(QStringLiteral("images_missing_alt")).toInt())
+                     .arg(assets.value(QStringLiteral("images")).toInt())
+                     .arg(accessibility.value(QStringLiteral("form_controls_missing_label")).toInt())
+                     .arg(accessibility.value(QStringLiteral("form_controls")).toInt()));
+    }
+    const int homepageIndex = m_overview->indexOfTopLevelItem(homepageGroup);
+    QTreeWidgetItem *homepageDetached = m_overview->takeTopLevelItem(homepageIndex);
+    m_overview->insertTopLevelItem(qMin(2, m_overview->topLevelItemCount()), homepageDetached);
 }
 
 void ResultWidget::populateDNS(const QJsonObject &result)
@@ -962,18 +1091,22 @@ void ResultWidget::populateInvestigation(const QJsonObject &report)
     QTreeWidgetItem *firstLeaf = nullptr;
     for (const QJsonValue &value : investigation.value(QStringLiteral("components")).toArray()) {
         const QJsonObject component = value.toObject();
-        const QString categoryKey = component.value(QStringLiteral("category")).toString();
+        const QString categoryKey = technologyGroupKey(component);
         QTreeWidgetItem *group = categories.value(categoryKey);
         if (!group) {
-            QString label = categoryKey;
-            label.replace(QLatin1Char('_'), QLatin1Char(' '));
-            if (!label.isEmpty())
-                label[0] = label.at(0).toUpper();
-            group = addStackGroup(m_stack, label);
+            group = addStackGroup(m_stack, technologyGroupLabel(categoryKey));
             categories.insert(categoryKey, group);
         }
-        auto *technology = new QTreeWidgetItem(group, {QString(), component.value(QStringLiteral("name")).toString(),
-                                                       component.value(QStringLiteral("role")).toString(),
+        QString technologyName = component.value(QStringLiteral("name")).toString();
+        const QString version = component.value(QStringLiteral("version")).toString();
+        if (!version.isEmpty())
+            technologyName += QStringLiteral(" ") + version;
+        QString role = component.value(QStringLiteral("role")).toString();
+        const QString parent = component.value(QStringLiteral("parent")).toString();
+        if (!parent.isEmpty())
+            role = role.isEmpty() ? parent : role + tr(" · %1").arg(parent);
+        auto *technology = new QTreeWidgetItem(group, {QString(), technologyName,
+                                                       role,
                                                        component.value(QStringLiteral("confidence")).toString().toUpper()});
         setStackPayload(technology, QStringLiteral("component"), component);
         if (!firstLeaf)
@@ -1061,10 +1194,25 @@ void ResultWidget::showStackDetails(QTreeWidgetItem *item)
         m_evidence->setItem(row, 3, new QTableWidgetItem(value));
     };
     if (kind == QStringLiteral("component")) {
-        m_stackDetailTitle->setText(payload.value(QStringLiteral("name")).toString());
+        QString title = payload.value(QStringLiteral("name")).toString();
+        if (!payload.value(QStringLiteral("version")).toString().isEmpty())
+            title += QStringLiteral(" ") + payload.value(QStringLiteral("version")).toString();
+        m_stackDetailTitle->setText(title);
         QString summary = payload.value(QStringLiteral("summary")).toString();
         if (summary.isEmpty())
             summary = payload.value(QStringLiteral("role")).toString();
+        QStringList context;
+        if (!payload.value(QStringLiteral("parent")).toString().isEmpty())
+            context.append(tr("Parent: %1").arg(payload.value(QStringLiteral("parent")).toString()));
+        if (!payload.value(QStringLiteral("traits")).toArray().isEmpty())
+            context.append(tr("Traits: %1").arg(joined(payload.value(QStringLiteral("traits")))));
+        if (!payload.value(QStringLiteral("basis")).toArray().isEmpty())
+            context.append(tr("Basis: %1").arg(joined(payload.value(QStringLiteral("basis")))));
+        if (!context.isEmpty())
+            summary += QStringLiteral("\n") + context.join(QStringLiteral(" · "));
+        const int evidenceTotal = payload.value(QStringLiteral("evidence_total")).toInt(payload.value(QStringLiteral("evidence")).toArray().size());
+        if (evidenceTotal > payload.value(QStringLiteral("evidence")).toArray().size())
+            summary += tr("\nShowing %1 of %2 evidence signals.").arg(payload.value(QStringLiteral("evidence")).toArray().size()).arg(evidenceTotal);
         m_stackDetailSummary->setText(summary);
         for (const QJsonValue &value : payload.value(QStringLiteral("evidence")).toArray()) {
             const QJsonObject evidence = value.toObject();

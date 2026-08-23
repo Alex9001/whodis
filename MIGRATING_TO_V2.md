@@ -60,6 +60,14 @@ adds `OperationInvestigate`, `InvestigationProvider`, and named
 fields can continue unchanged; snapshot replay deliberately accepts saved v4
 reports.
 
+Newer schema-v5 producers may also include additive component metadata
+(`version`, `parent`, `traits`, `basis`, and `evidence_total`) and an optional
+`investigation.homepage` profile. The homepage profile contains response facts
+and source-level asset, metadata, security-header, and accessibility
+observations from one bounded response; it never contains the response body.
+Its deterministic observations are aggregated into canonical
+`Report.findings`. Consumers should continue ignoring unknown fields.
+
 Code that decoded schema v3 should read `subject.canonical` instead of
 `query.canonical` and `observed_at` instead of `retrieved_at` at report level.
 Consumers should ignore unknown fields and branch on `schema_version`.
@@ -96,8 +104,8 @@ attribution. Existing registration exit codes retain their meanings.
 
 ## Desktop helper protocol
 
-`whodis-gui-engine` protocol version 4 carries schema-v5 reports. Frontends
+`whodis-gui-engine` protocol version 5 carries schema-v5 reports. Frontends
 must use the `run` method; the old `lookup` method has been removed. The `hello`
-capabilities include `inspect`, `investigate`, `stack`, `related`, and
-`schema_v5`. This protocol remains a private
+capabilities include `inspect`, `investigate`, `stack`, `homepage_profile`,
+`related`, and `schema_v5`. This protocol remains a private
 desktop boundary, not a separately supported network API.

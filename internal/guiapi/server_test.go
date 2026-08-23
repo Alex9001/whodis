@@ -75,7 +75,7 @@ func TestServerProtocolV5Run(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &hello); err != nil || hello.Result.ProtocolVersion != 5 {
 		t.Fatalf("hello = (%+v, %v)", hello, err)
 	}
-	if !containsString(hello.Result.Capabilities, "investigate") || !containsString(hello.Result.Capabilities, "research_links") || !containsString(hello.Result.Capabilities, "schema_v5") || len(hello.Result.InvestigationLinkProviders) < 10 {
+	if !containsString(hello.Result.Capabilities, "investigate") || !containsString(hello.Result.Capabilities, "homepage_profile") || !containsString(hello.Result.Capabilities, "research_links") || !containsString(hello.Result.Capabilities, "schema_v5") || len(hello.Result.InvestigationLinkProviders) < 10 {
 		t.Fatalf("hello capabilities = %#v", hello.Result.Capabilities)
 	}
 	var completed struct {

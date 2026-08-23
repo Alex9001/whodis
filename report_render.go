@@ -93,7 +93,7 @@ func RenderBatchReport(writer io.Writer, batch BatchReport, format Format, optio
 
 func renderReportCSV(writer io.Writer, reports []Report) error {
 	csvWriter := csv.NewWriter(writer)
-	header := []string{"TARGET", "KIND", "REGISTRATION_DOMAIN", "OPERATION", "PROTOCOL", "AUTHORITY", "REGISTRAR", "REGISTRY", "REGISTERED", "UPDATED", "EXPIRES", "DNSSEC", "STATUS", "NAMESERVERS", "DNS_RECORDS", "FINDINGS", "ERRORS", "OBSERVED_AT", "STACK_SUMMARY", "TECHNOLOGIES", "NETWORK_PROVIDER", "DNS_PROVIDER", "MAIL_PROVIDER", "RELATED_COUNT"}
+	header := []string{"TARGET", "KIND", "REGISTRATION_DOMAIN", "OPERATION", "PROTOCOL", "AUTHORITY", "REGISTRAR", "REGISTRY", "REGISTERED", "UPDATED", "EXPIRES", "DNSSEC", "STATUS", "NAMESERVERS", "DNS_RECORDS", "FINDINGS", "ERRORS", "OBSERVED_AT", "STACK_SUMMARY", "TECHNOLOGIES", "NETWORK_PROVIDER", "DNS_PROVIDER", "MAIL_PROVIDER", "RELATED_COUNT", "HOMEPAGE_URL", "HOMEPAGE_STATUS", "HOMEPAGE_SUMMARY"}
 	if err := csvWriter.Write(header); err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func renderReportCSV(writer io.Writer, reports []Report) error {
 			row[18] = investigation.Summary
 			var technologies, networkProviders, dnsProviders, mailProviders []string
 			for _, component := range investigation.Components {
-				technologies = append(technologies, string(component.Category)+":"+component.Name)
+				technologies = append(technologies, string(component.Category)+":"+technologyDisplay(component))
 				switch component.Category {
 				case StackNetwork:
 					networkProviders = append(networkProviders, component.Name)
@@ -142,6 +142,11 @@ func renderReportCSV(writer io.Writer, reports []Report) error {
 			row[22] = strings.Join(uniqueStrings(mailProviders), "; ")
 			relatedCount := max(investigation.RelatedTotal, len(investigation.Related))
 			row[23] = strconv.Itoa(relatedCount)
+			if homepage := investigation.Homepage; homepage != nil {
+				row[24] = homepage.URL
+				row[25] = strconv.Itoa(homepage.Status)
+				row[26] = homepageSummary(homepage)
+			}
 		}
 		if err := csvWriter.Write(row); err != nil {
 			return err
@@ -249,6 +254,9 @@ func renderInvestigationReport(builder *strings.Builder, report *InvestigationRe
 		return
 	}
 	writeReportTable(builder, "Stack summary", []string{"Domain", "Profile"}, [][]string{{report.Domain, report.Summary}}, width)
+	if homepage := report.Homepage; homepage != nil {
+		writeReportTable(builder, "Homepage observations", []string{"Area", "Observation"}, homepageObservationRows(homepage), width)
+	}
 	if len(report.Components) > 0 {
 		rows := make([][]string, 0, len(report.Components))
 		for _, component := range report.Components {
@@ -257,7 +265,10 @@ func renderInvestigationReport(builder *strings.Builder, report *InvestigationRe
 				item := strings.TrimSpace(observation.Source + " " + observation.Field + ": " + observation.Value)
 				evidence = append(evidence, item)
 			}
-			rows = append(rows, []string{strings.ReplaceAll(string(component.Category), "_", " "), component.Name, component.Role, strings.ToUpper(string(component.Confidence)), strings.Join(evidence, "; ")})
+			if component.EvidenceTotal > len(component.Evidence) {
+				evidence = append(evidence, fmt.Sprintf("+%d more evidence signals", component.EvidenceTotal-len(component.Evidence)))
+			}
+			rows = append(rows, []string{strings.ReplaceAll(string(component.Category), "_", " "), technologyDisplay(component), componentRole(component), componentConfidence(component), strings.Join(evidence, "; ")})
 		}
 		writeReportTable(builder, "Detected stack", []string{"Layer", "Technology", "Role", "Confidence", "Evidence"}, rows, width)
 	}
@@ -318,6 +329,38 @@ func allInvestigationLinks(report *InvestigationReport) []InvestigationLink {
 		result = append(result, link)
 	}
 	return result
+}
+
+func technologyDisplay(component StackComponent) string {
+	if strings.TrimSpace(component.Version) == "" {
+		return component.Name
+	}
+	return component.Name + " " + component.Version
+}
+
+func componentRole(component StackComponent) string {
+	if component.Parent == "" {
+		return component.Role
+	}
+	if component.Role == "" {
+		return component.Parent
+	}
+	return component.Role + " · " + component.Parent
+}
+
+func componentConfidence(component StackComponent) string {
+	value := strings.ToUpper(string(component.Confidence))
+	if len(component.Basis) > 0 {
+		value += " (" + strings.Join(component.Basis, ", ") + ")"
+	}
+	return value
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func formatInvestigationRange(first, last time.Time) string {
@@ -640,6 +683,12 @@ func renderInvestigationMarkdown(builder *strings.Builder, investigation *Invest
 	}
 	builder.WriteString("\n## Stack summary\n\n")
 	fmt.Fprintf(builder, "%s\n", markdownCell(investigation.Summary))
+	if homepage := investigation.Homepage; homepage != nil {
+		builder.WriteString("\n### Homepage observations\n\n| Area | Observation |\n| --- | --- |\n")
+		for _, row := range homepageObservationRows(homepage) {
+			fmt.Fprintf(builder, "| %s | %s |\n", markdownCell(row[0]), markdownCell(row[1]))
+		}
+	}
 	if len(investigation.Components) > 0 {
 		builder.WriteString("\n### Detected stack\n\n| Layer | Technology | Role | Confidence | Evidence |\n| --- | --- | --- | --- | --- |\n")
 		for _, component := range investigation.Components {
@@ -647,7 +696,10 @@ func renderInvestigationMarkdown(builder *strings.Builder, investigation *Invest
 			for _, observation := range component.Evidence {
 				evidence = append(evidence, strings.TrimSpace(observation.Source+" "+observation.Field+": "+observation.Value))
 			}
-			fmt.Fprintf(builder, "| %s | %s | %s | %s | %s |\n", markdownCell(strings.ReplaceAll(string(component.Category), "_", " ")), markdownCell(component.Name), markdownCell(component.Role), component.Confidence, markdownCell(strings.Join(evidence, "; ")))
+			if component.EvidenceTotal > len(component.Evidence) {
+				evidence = append(evidence, fmt.Sprintf("+%d more evidence signals", component.EvidenceTotal-len(component.Evidence)))
+			}
+			fmt.Fprintf(builder, "| %s | %s | %s | %s | %s |\n", markdownCell(strings.ReplaceAll(string(component.Category), "_", " ")), markdownCell(technologyDisplay(component)), markdownCell(componentRole(component)), markdownCell(componentConfidence(component)), markdownCell(strings.Join(evidence, "; ")))
 		}
 	}
 	if len(investigation.Networks) > 0 {
@@ -680,6 +732,26 @@ func renderInvestigationMarkdown(builder *strings.Builder, investigation *Invest
 			fmt.Fprintf(builder, "- %s\n", markdownCell(warning))
 		}
 	}
+}
+
+func homepageObservationRows(homepage *HomepageProfile) [][]string {
+	if homepage == nil {
+		return nil
+	}
+	rows := [][]string{{"Response", fmt.Sprintf("%s · %d · %s · %s decoded", homepage.URL, homepage.Status, firstString([]string{homepage.HTTPVersion}, "HTTP"), formatByteCount(homepage.DecodedBytes))}}
+	if homepage.MarkupAnalyzed {
+		rows = append(rows,
+			[]string{"Delivery", homepageSummary(homepage)},
+			[]string{"SEO basics", fmt.Sprintf("title %s · description %s · canonical %s · viewport %s · H1 %d · JSON-LD %d", yesNo(homepage.Metadata.Title), yesNo(homepage.Metadata.MetaDescription), yesNo(homepage.Metadata.CanonicalURL != ""), yesNo(homepage.Metadata.Viewport), homepage.Metadata.H1Count, homepage.Metadata.StructuredData)},
+		)
+	} else {
+		rows = append(rows, []string{"Markup", "Not analyzed; only response-header observations are available."})
+	}
+	rows = append(rows, []string{"Security headers", fmt.Sprintf("HSTS %s · CSP %s · frame protection %s · nosniff %s · referrer policy %s · permissions policy %s", yesNo(homepage.Security.HSTS), yesNo(homepage.Security.CSP), yesNo(homepage.Security.FrameProtection), yesNo(homepage.Security.NoSniff), yesNo(homepage.Security.ReferrerPolicy), yesNo(homepage.Security.PermissionsPolicy))})
+	if homepage.MarkupAnalyzed {
+		rows = append(rows, []string{"Accessibility markers", fmt.Sprintf("language %s · missing alt %d/%d · unlabeled controls %d/%d", yesNo(homepage.Accessibility.Language), homepage.Accessibility.ImagesMissingAlt, homepage.Assets.Images, homepage.Accessibility.FormControlsMissingLabel, homepage.Accessibility.FormControls)})
+	}
+	return rows
 }
 
 func renderDNSOperationMarkdown(builder *strings.Builder, title string, dns *DNSOperationResult) {

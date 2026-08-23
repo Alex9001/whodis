@@ -230,9 +230,11 @@ func (engine *Engine) Run(ctx context.Context, request Request) (Report, error) 
 		}
 		investigation, investigationErr := engine.investigation.Investigate(runContext, subject, diagnosis, request.Investigation)
 		report.Investigation = investigation
-		if investigation != nil && len(investigation.ProviderErrors) > 0 {
+		if investigation != nil {
+			report.Findings = append(report.Findings, investigation.Findings...)
 			report.Errors = append(report.Errors, investigation.ProviderErrors...)
 			investigationValue := *investigation
+			investigationValue.Findings = nil
 			investigationValue.ProviderErrors = nil
 			report.Investigation = &investigationValue
 		}

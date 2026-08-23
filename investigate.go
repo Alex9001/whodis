@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	mdns "github.com/miekg/dns"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
@@ -80,12 +81,17 @@ type InvestigationEvidence struct {
 
 // StackComponent is one technology or provider and the evidence for its role.
 type StackComponent struct {
-	Category   StackCategory           `json:"category" yaml:"category"`
-	Name       string                  `json:"name" yaml:"name"`
-	Role       string                  `json:"role,omitempty" yaml:"role,omitempty"`
-	Confidence Confidence              `json:"confidence" yaml:"confidence"`
-	Summary    string                  `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Evidence   []InvestigationEvidence `json:"evidence,omitempty" yaml:"evidence,omitempty"`
+	Category      StackCategory           `json:"category" yaml:"category"`
+	Name          string                  `json:"name" yaml:"name"`
+	Role          string                  `json:"role,omitempty" yaml:"role,omitempty"`
+	Version       string                  `json:"version,omitempty" yaml:"version,omitempty"`
+	Parent        string                  `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Traits        []string                `json:"traits,omitempty" yaml:"traits,omitempty"`
+	Basis         []string                `json:"basis,omitempty" yaml:"basis,omitempty"`
+	Confidence    Confidence              `json:"confidence" yaml:"confidence"`
+	Summary       string                  `json:"summary,omitempty" yaml:"summary,omitempty"`
+	Evidence      []InvestigationEvidence `json:"evidence,omitempty" yaml:"evidence,omitempty"`
+	EvidenceTotal int                     `json:"evidence_total,omitempty" yaml:"evidence_total,omitempty"`
 }
 
 // InvestigationLink is a resolved, user-opened pivot. Whodis never opens a
@@ -142,11 +148,13 @@ type InvestigationReport struct {
 	Domain         string               `json:"domain" yaml:"domain"`
 	Summary        string               `json:"summary" yaml:"summary"`
 	Components     []StackComponent     `json:"components,omitempty" yaml:"components,omitempty"`
+	Homepage       *HomepageProfile     `json:"homepage,omitempty" yaml:"homepage,omitempty"`
 	Networks       []NetworkObservation `json:"networks,omitempty" yaml:"networks,omitempty"`
 	Related        []RelatedObservation `json:"related,omitempty" yaml:"related,omitempty"`
 	RelatedTotal   int                  `json:"related_total,omitempty" yaml:"related_total,omitempty"`
 	Links          []InvestigationLink  `json:"links,omitempty" yaml:"links,omitempty"`
 	Warnings       []string             `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Findings       []Finding            `json:"findings,omitempty" yaml:"findings,omitempty"`
 	ProviderErrors []OperationError     `json:"-" yaml:"-"`
 }
 
@@ -220,12 +228,13 @@ func ValidateInvestigationOptions(options InvestigationOptions) error {
 }
 
 type nativeInvestigationProvider struct {
-	dns               DNSProvider
-	registration      RegistrationProvider
-	networkPolicy     NetworkPolicy
-	fingerprinter     *wappalyzer.Wappalyze
-	enrichments       map[string]EnrichmentProvider
-	registrationSlots chan struct{}
+	dns                DNSProvider
+	registration       RegistrationProvider
+	networkPolicy      NetworkPolicy
+	fingerprinter      *wappalyzer.Wappalyze
+	fingerprintImplies map[string][]string
+	enrichments        map[string]EnrichmentProvider
+	registrationSlots  chan struct{}
 }
 
 func newNativeInvestigationProvider(dns DNSProvider, registration RegistrationProvider, policy NetworkPolicy, enrichments map[string]EnrichmentProvider, registrationSlots chan struct{}) InvestigationProvider {
@@ -242,7 +251,7 @@ func newNativeInvestigationProvider(dns DNSProvider, registration RegistrationPr
 	if registrationSlots == nil {
 		registrationSlots = make(chan struct{}, 4)
 	}
-	return &nativeInvestigationProvider{dns: dns, registration: registration, networkPolicy: policy, fingerprinter: fingerprinter, enrichments: registered, registrationSlots: registrationSlots}
+	return &nativeInvestigationProvider{dns: dns, registration: registration, networkPolicy: policy, fingerprinter: fingerprinter, fingerprintImplies: wappalyzerImplicationMap(), enrichments: registered, registrationSlots: registrationSlots}
 }
 
 func (provider *nativeInvestigationProvider) Investigate(ctx context.Context, subject Subject, diagnosis *DiagnosisReport, options InvestigationOptions) (*InvestigationReport, error) {
@@ -302,7 +311,13 @@ func (provider *nativeInvestigationProvider) Investigate(ctx context.Context, su
 	}
 
 	components := newComponentAccumulator()
-	components.addWeb(provider.fingerprinter, web)
+	components.addWeb(provider.fingerprinter, provider.fingerprintImplies, web)
+	homepage, webComponents, webFindings := analyzeHomepage(web)
+	for _, component := range webComponents {
+		components.add(component)
+	}
+	report.Homepage = homepage
+	report.Findings = append(report.Findings, webFindings...)
 	components.addDNS(domain, records)
 	components.addNetworks(networks)
 	report.Components = components.values()
@@ -369,10 +384,15 @@ func publicInvestigationAddresses(addresses []string) []string {
 }
 
 type webInvestigationObservation struct {
-	URL     string
-	Status  int
-	Headers http.Header
-	Body    []byte
+	URL             string
+	Status          int
+	HTTPVersion     string
+	ContentType     string
+	ContentEncoding string
+	ContentLength   int64
+	Headers         http.Header
+	Body            []byte
+	Truncated       bool
 }
 
 func (provider *nativeInvestigationProvider) fetchWeb(ctx context.Context, domain string, supplied *http.Client) (webInvestigationObservation, error) {
@@ -400,16 +420,32 @@ func (provider *nativeInvestigationProvider) fetchWeb(ctx context.Context, domai
 			failures = append(failures, err.Error())
 			continue
 		}
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, maximumInvestigationBody))
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, maximumInvestigationBody+1))
 		_ = response.Body.Close()
 		if readErr != nil {
 			return webInvestigationObservation{}, readErr
 		}
+		truncated := len(body) > maximumInvestigationBody
+		if truncated {
+			body = body[:maximumInvestigationBody]
+		}
 		finalURL := endpoint
 		if response.Request != nil && response.Request.URL != nil {
-			finalURL = response.Request.URL.String()
+			finalURL = sanitizedObservationURL(response.Request.URL)
 		}
-		return webInvestigationObservation{URL: finalURL, Status: response.StatusCode, Headers: response.Header.Clone(), Body: body}, nil
+		encoding := cleanHeaderValue(response.Header.Get("Content-Encoding"))
+		if response.Uncompressed && encoding == "" {
+			encoding = "gzip"
+		}
+		contentLength := response.ContentLength
+		if contentLength < 0 {
+			contentLength = 0
+		}
+		return webInvestigationObservation{
+			URL: finalURL, Status: response.StatusCode, HTTPVersion: response.Proto,
+			ContentType: cleanHeaderValue(response.Header.Get("Content-Type")), ContentEncoding: encoding,
+			ContentLength: contentLength, Headers: response.Header.Clone(), Body: body, Truncated: truncated,
+		}, nil
 	}
 	return webInvestigationObservation{}, errors.New(strings.Join(uniqueStrings(failures), "; "))
 }
@@ -834,10 +870,18 @@ func resolveInvestigationLink(template, targetType, value string) (Investigation
 	return InvestigationLink{Label: label, Type: targetType, Value: value, URL: parsed.String()}, nil
 }
 
-type componentAccumulator struct{ valuesByKey map[string]*StackComponent }
+type componentAccumulator struct {
+	valuesByKey  map[string]*StackComponent
+	evidenceSeen map[string]map[string]bool
+}
+
+const maximumComponentEvidence = 8
 
 func newComponentAccumulator() *componentAccumulator {
-	return &componentAccumulator{valuesByKey: make(map[string]*StackComponent)}
+	return &componentAccumulator{
+		valuesByKey:  make(map[string]*StackComponent),
+		evidenceSeen: make(map[string]map[string]bool),
+	}
 }
 
 func (accumulator *componentAccumulator) add(component StackComponent) {
@@ -845,25 +889,66 @@ func (accumulator *componentAccumulator) add(component StackComponent) {
 	if component.Name == "" {
 		return
 	}
-	key := string(component.Category) + "\x00" + strings.ToLower(component.Name) + "\x00" + strings.ToLower(component.Role)
+	if component.Category == StackWebApplication || component.Category == StackFramework || component.Category == StackWebServer || component.Category == StackEdge || component.Category == StackAnalytics || component.Category == StackSecurity || component.Category == StackOther {
+		component.Name = canonicalTechnologyName(component.Name)
+	}
+	component.Traits = uniqueStrings(component.Traits)
+	component.Basis = uniqueStrings(component.Basis)
+	allEvidence := uniqueEvidence(component.Evidence)
+	component.Evidence = allEvidence
+	if component.EvidenceTotal < len(allEvidence) {
+		component.EvidenceTotal = len(allEvidence)
+	}
+	if len(component.Evidence) > maximumComponentEvidence {
+		component.Evidence = component.Evidence[:maximumComponentEvidence]
+	}
+	key := string(component.Category) + "\x00" + strings.ToLower(component.Name)
 	if existing := accumulator.valuesByKey[key]; existing != nil {
 		if confidenceRank(component.Confidence) > confidenceRank(existing.Confidence) {
 			existing.Confidence = component.Confidence
 		}
+		if roleSpecificity(component.Role) > roleSpecificity(existing.Role) {
+			existing.Role = component.Role
+		}
+		if existing.Version == "" || len(component.Version) > len(existing.Version) {
+			existing.Version = component.Version
+		}
+		if existing.Parent == "" {
+			existing.Parent = component.Parent
+		}
+		existing.Traits = appendUniqueStrings(existing.Traits, component.Traits...)
+		existing.Basis = appendUniqueStrings(existing.Basis, component.Basis...)
 		if existing.Summary == "" {
 			existing.Summary = component.Summary
 		}
-		for _, evidence := range component.Evidence {
-			existing.Evidence = appendUniqueEvidence(existing.Evidence, evidence)
+		seen := accumulator.evidenceSeen[key]
+		for _, evidence := range allEvidence {
+			evidenceKey := investigationEvidenceKey(evidence)
+			if !seen[evidenceKey] {
+				seen[evidenceKey] = true
+				existing.EvidenceTotal++
+				if len(existing.Evidence) < maximumComponentEvidence {
+					existing.Evidence = append(existing.Evidence, evidence)
+				}
+			}
+		}
+		if component.EvidenceTotal > existing.EvidenceTotal {
+			existing.EvidenceTotal = component.EvidenceTotal
 		}
 		return
 	}
 	copy := component
 	copy.Evidence = append([]InvestigationEvidence(nil), component.Evidence...)
+	copy.Traits = append([]string(nil), component.Traits...)
+	copy.Basis = append([]string(nil), component.Basis...)
 	accumulator.valuesByKey[key] = &copy
+	accumulator.evidenceSeen[key] = make(map[string]bool, len(allEvidence))
+	for _, evidence := range allEvidence {
+		accumulator.evidenceSeen[key][investigationEvidenceKey(evidence)] = true
+	}
 }
 
-func (accumulator *componentAccumulator) addWeb(fingerprinter *wappalyzer.Wappalyze, web webInvestigationObservation) {
+func (accumulator *componentAccumulator) addWeb(fingerprinter *wappalyzer.Wappalyze, impliedBy map[string][]string, web webInvestigationObservation) {
 	if web.URL == "" {
 		return
 	}
@@ -878,18 +963,25 @@ func (accumulator *componentAccumulator) addWeb(fingerprinter *wappalyzer.Wappal
 			info := identified[name]
 			displayName, version, _ := strings.Cut(name, ":")
 			category, role := fingerprintCategory(info.Categories)
-			summary := "Matched bounded HTTP headers or homepage markup."
-			if version != "" {
-				summary += " Fingerprint version: " + truncateEvidence(version) + "."
+			confidence := ConfidenceMedium
+			basis := []string{"wappalyzer"}
+			if parents := impliedBy[strings.ToLower(displayName)]; detectedParent(parents, identified) {
+				confidence = ConfidenceLow
+				basis = []string{"implied"}
 			}
-			accumulator.add(StackComponent{Category: category, Name: displayName, Role: role, Confidence: ConfidenceMedium,
-				Summary:  summary,
+			parent := ""
+			if containsFold(info.Categories, "WordPress plugins") || containsFold(info.Categories, "WordPress themes") {
+				parent = "WordPress"
+			}
+			accumulator.add(StackComponent{Category: category, Name: displayName, Role: role, Version: truncateEvidence(version), Parent: parent,
+				Traits: append([]string(nil), info.Categories...), Basis: basis, Confidence: confidence,
+				Summary:  conciseTechnologySummary(info.Description),
 				Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: "technology fingerprint", Value: name}}})
 		}
 	}
 	server := cleanHeaderValue(web.Headers.Get("Server"))
 	if server != "" {
-		name := strings.TrimSpace(strings.SplitN(server, "/", 2)[0])
+		name, version := productHeader(server)
 		category, role := StackWebServer, "Web server"
 		switch {
 		case strings.Contains(strings.ToLower(server), "cloudflare"):
@@ -899,14 +991,33 @@ func (accumulator *componentAccumulator) addWeb(fingerprinter *wappalyzer.Wappal
 		case strings.Contains(strings.ToLower(server), "akamai"):
 			category, name, role = StackEdge, "Akamai", "Edge/CDN"
 		}
-		accumulator.add(StackComponent{Category: category, Name: name, Role: role, Confidence: ConfidenceHigh,
+		if category == StackEdge {
+			version = ""
+		}
+		accumulator.add(StackComponent{Category: category, Name: name, Role: role, Version: version, Confidence: ConfidenceHigh,
+			Basis:    []string{"header"},
 			Summary:  "The HTTP response explicitly identified this software or edge service.",
 			Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: "Server", Value: server}}})
 	}
 	redirectBy := cleanHeaderValue(web.Headers.Get("X-Redirect-By"))
 	if strings.Contains(strings.ToLower(redirectBy), "wordpress") {
 		accumulator.add(StackComponent{Category: StackWebApplication, Name: "WordPress", Role: "CMS", Confidence: ConfidenceHigh,
+			Basis:    []string{"header"},
 			Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: "X-Redirect-By", Value: redirectBy}}})
+	}
+	if pingback := cleanHeaderValue(web.Headers.Get("X-Pingback")); strings.Contains(strings.ToLower(pingback), "xmlrpc.php") {
+		accumulator.add(StackComponent{Category: StackWebApplication, Name: "WordPress", Role: "CMS", Confidence: ConfidenceHigh,
+			Basis: []string{"header"}, Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: "X-Pingback", Value: truncateEvidence(pingback)}}})
+	}
+	poweredBy := cleanHeaderValue(web.Headers.Get("X-Powered-By"))
+	if poweredBy != "" {
+		name, version := productHeader(poweredBy)
+		lower := strings.ToLower(name)
+		if lower == "php" || lower == "asp.net" || lower == "express" {
+			accumulator.add(StackComponent{Category: StackFramework, Name: name, Role: "Runtime/framework", Version: version, Confidence: ConfidenceHigh,
+				Basis: []string{"header"}, Summary: "The HTTP response explicitly identified this runtime or framework.",
+				Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: "X-Powered-By", Value: poweredBy}}})
+		}
 	}
 	for key, values := range web.Headers {
 		lower := strings.ToLower(key)
@@ -914,17 +1025,9 @@ func (accumulator *componentAccumulator) addWeb(fingerprinter *wappalyzer.Wappal
 			continue
 		}
 		accumulator.add(StackComponent{Category: StackWebApplication, Name: "TenWeb", Role: "WordPress optimization", Confidence: ConfidenceHigh,
+			Parent: "WordPress", Traits: []string{"WordPress plugins", "Performance"}, Basis: []string{"header"},
 			Summary:  "TenWeb-specific response headers were present.",
 			Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: key, Value: cleanHeaderValue(strings.Join(values, ", "))}}})
-	}
-	body := strings.ToLower(string(web.Body))
-	if strings.Contains(body, "/wp-content/") || strings.Contains(body, "/wp-includes/") {
-		accumulator.add(StackComponent{Category: StackWebApplication, Name: "WordPress", Role: "CMS", Confidence: ConfidenceHigh,
-			Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: "homepage markup", Value: "WordPress asset paths"}}})
-	}
-	if strings.Contains(body, "elementor") {
-		accumulator.add(StackComponent{Category: StackWebApplication, Name: "Elementor", Role: "Page builder", Confidence: ConfidenceMedium,
-			Evidence: []InvestigationEvidence{{Source: "http", Subject: web.URL, Field: "homepage markup", Value: "Elementor asset markers"}}})
 	}
 }
 
@@ -935,10 +1038,20 @@ func fingerprintCategory(categories []string) (StackCategory, string) {
 		return StackWebServer, "Web server"
 	case strings.Contains(joined, "cdn") || strings.Contains(joined, "reverse prox"):
 		return StackEdge, "Edge/CDN"
-	case strings.Contains(joined, "cms"):
-		return StackWebApplication, "CMS"
+	case strings.Contains(joined, "wordpress themes"):
+		return StackWebApplication, "WordPress theme"
+	case strings.Contains(joined, "ecommerce"):
+		return StackWebApplication, "Ecommerce"
+	case strings.Contains(joined, "form builder"):
+		return StackWebApplication, "Form builder"
 	case strings.Contains(joined, "page builder"):
 		return StackWebApplication, "Page builder"
+	case strings.Contains(joined, "caching") || strings.Contains(joined, "performance"):
+		return StackWebApplication, "Performance optimization"
+	case strings.Contains(joined, "wordpress plugins"):
+		return StackWebApplication, "WordPress plugin"
+	case strings.Contains(joined, "cms"):
+		return StackWebApplication, "CMS"
 	case strings.Contains(joined, "javascript framework") || strings.Contains(joined, "web framework"):
 		return StackFramework, "Framework"
 	case strings.Contains(joined, "analytics") || strings.Contains(joined, "rum"):
@@ -950,6 +1063,109 @@ func fingerprintCategory(categories []string) (StackCategory, string) {
 	default:
 		return StackOther, firstString(categories, "Web technology")
 	}
+}
+
+func wappalyzerImplicationMap() map[string][]string {
+	var fingerprints wappalyzer.Fingerprints
+	if err := json.Unmarshal([]byte(wappalyzer.GetRawFingerprints()), &fingerprints); err != nil {
+		return nil
+	}
+	result := make(map[string][]string)
+	for parent, fingerprint := range fingerprints.Apps {
+		if fingerprint == nil {
+			continue
+		}
+		for _, implied := range fingerprint.Implies {
+			name, _, _ := strings.Cut(implied, ";")
+			name, _, _ = strings.Cut(name, ":")
+			key := strings.ToLower(strings.TrimSpace(name))
+			if key != "" {
+				result[key] = append(result[key], parent)
+			}
+		}
+	}
+	return result
+}
+
+func detectedParent(parents []string, identified map[string]wappalyzer.AppInfo) bool {
+	for detected := range identified {
+		name, _, _ := strings.Cut(detected, ":")
+		for _, parent := range parents {
+			if strings.EqualFold(name, parent) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsFold(values []string, candidate string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func conciseTechnologySummary(value string) string {
+	value = cleanHeaderValue(value)
+	if stop := strings.Index(value, ". "); stop >= 0 {
+		value = value[:stop+1]
+	}
+	if len(value) > 240 {
+		value = value[:237] + "..."
+	}
+	if value == "" {
+		return "Matched bounded HTTP headers or homepage markup."
+	}
+	return value
+}
+
+func canonicalTechnologyName(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "litespeed cache":
+		return "LiteSpeed Cache"
+	case "genesis theme":
+		return "Genesis Framework"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func productHeader(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	name, version, found := strings.Cut(value, "/")
+	if !found {
+		return value, ""
+	}
+	fields := strings.Fields(strings.TrimSpace(version))
+	if len(fields) == 0 {
+		return strings.TrimSpace(name), ""
+	}
+	version = fields[0]
+	return strings.TrimSpace(name), truncateEvidence(strings.Trim(version, ";,"))
+}
+
+func roleSpecificity(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "other", "web technology", "web application":
+		return 0
+	case "wordpress plugin", "wordpress theme", "framework":
+		return 1
+	default:
+		return 2
+	}
+}
+
+func appendUniqueStrings(destination []string, values ...string) []string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !containsFold(destination, value) {
+			destination = append(destination, value)
+		}
+	}
+	return destination
 }
 
 func (accumulator *componentAccumulator) addDNS(domain string, records []DNSRecord) {
@@ -1198,21 +1414,33 @@ func intersectsStrings(left, right []string) bool {
 
 func investigationSummary(components []StackComponent) string {
 	groups := []struct {
-		label      string
-		categories map[StackCategory]bool
+		label string
+		match func(StackComponent) bool
 	}{
-		{"Web", map[StackCategory]bool{StackWebApplication: true, StackFramework: true}},
-		{"Server", map[StackCategory]bool{StackWebServer: true, StackEdge: true}},
-		{"Hosting", map[StackCategory]bool{StackHosting: true}},
-		{"Network", map[StackCategory]bool{StackNetwork: true}},
-		{"DNS", map[StackCategory]bool{StackDNS: true}},
-		{"Mail", map[StackCategory]bool{StackMail: true}},
+		{"Web", func(component StackComponent) bool {
+			return (component.Category == StackWebApplication || component.Category == StackFramework) && component.Parent == ""
+		}},
+		{"Commerce", func(component StackComponent) bool { return containsFold(component.Traits, "Ecommerce") }},
+		{"Extensions", func(component StackComponent) bool {
+			return containsFold(component.Traits, "WordPress plugins") && !containsFold(component.Traits, "Ecommerce") && !containsFold(component.Traits, "Caching") && !containsFold(component.Traits, "Performance")
+		}},
+		{"Theme", func(component StackComponent) bool { return containsFold(component.Traits, "WordPress themes") }},
+		{"Optimization", func(component StackComponent) bool {
+			return containsFold(component.Traits, "Caching") || containsFold(component.Traits, "Performance")
+		}},
+		{"Server", func(component StackComponent) bool {
+			return component.Category == StackWebServer || component.Category == StackEdge
+		}},
+		{"Hosting", func(component StackComponent) bool { return component.Category == StackHosting }},
+		{"Network", func(component StackComponent) bool { return component.Category == StackNetwork }},
+		{"DNS", func(component StackComponent) bool { return component.Category == StackDNS }},
+		{"Mail", func(component StackComponent) bool { return component.Category == StackMail }},
 	}
 	var parts []string
 	for _, group := range groups {
 		var names []string
 		for _, component := range components {
-			if group.categories[component.Category] && component.Confidence != ConfidenceLow {
+			if group.match(component) && component.Confidence != ConfidenceLow {
 				names = append(names, component.Name)
 			}
 		}
@@ -1255,13 +1483,17 @@ func stackCategoryOrder(value StackCategory) int {
 
 func appendUniqueEvidence(values []InvestigationEvidence, candidate InvestigationEvidence) []InvestigationEvidence {
 	candidate.Value = truncateEvidence(candidate.Value)
-	key := candidate.Source + "\x00" + candidate.Subject + "\x00" + candidate.Field + "\x00" + candidate.Value
+	key := investigationEvidenceKey(candidate)
 	for _, existing := range values {
-		if existing.Source+"\x00"+existing.Subject+"\x00"+existing.Field+"\x00"+existing.Value == key {
+		if investigationEvidenceKey(existing) == key {
 			return values
 		}
 	}
 	return append(values, candidate)
+}
+
+func investigationEvidenceKey(value InvestigationEvidence) string {
+	return value.Source + "\x00" + value.Subject + "\x00" + value.Field + "\x00" + truncateEvidence(value.Value)
 }
 
 func uniqueEvidence(values []InvestigationEvidence) []InvestigationEvidence {
@@ -1282,12 +1514,25 @@ func truncateEvidence(value string) string {
 
 func cleanHeaderValue(value string) string {
 	value = strings.Map(func(character rune) rune {
-		if character == '\r' || character == '\n' || character == 0 {
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
 			return ' '
 		}
 		return character
 	}, value)
 	return strings.Join(strings.Fields(value), " ")
+}
+
+func sanitizedObservationURL(value *url.URL) string {
+	if value == nil {
+		return ""
+	}
+	clean := *value
+	clean.User = nil
+	clean.RawQuery = ""
+	clean.ForceQuery = false
+	clean.Fragment = ""
+	clean.RawFragment = ""
+	return clean.String()
 }
 
 func firstString(values []string, fallback string) string {

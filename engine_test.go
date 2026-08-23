@@ -246,6 +246,7 @@ func TestEngineInvestigateComposesDiagnosisAndProviderErrors(t *testing.T) {
 	observedDiagnosis := make(chan *DiagnosisReport, 1)
 	investigation := &InvestigationReport{
 		Domain: "example.test", Summary: "Web: WordPress",
+		Findings:       []Finding{{ID: "web.homepage.response", Severity: SeverityPass}},
 		ProviderErrors: []OperationError{{Operation: OperationInvestigate, Provider: "otx", Kind: ErrorRateLimited, Message: "rate limited"}},
 	}
 	engine := NewEngine(EngineOptions{
@@ -258,10 +259,10 @@ func TestEngineInvestigateComposesDiagnosisAndProviderErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if <-observedDiagnosis != diagnosis || report.Registration == nil || report.Diagnosis == nil || report.Investigation == nil || report.Investigation.Summary != "Web: WordPress" || len(report.Findings) != 1 {
+	if <-observedDiagnosis != diagnosis || report.Registration == nil || report.Diagnosis == nil || report.Investigation == nil || report.Investigation.Summary != "Web: WordPress" || len(report.Findings) != 2 {
 		t.Fatalf("unexpected investigation report: %#v", report)
 	}
-	if len(report.Investigation.ProviderErrors) != 0 || len(report.Errors) != 1 || report.Errors[0].Provider != "otx" {
+	if len(report.Investigation.Findings) != 0 || len(report.Investigation.ProviderErrors) != 0 || len(report.Errors) != 1 || report.Errors[0].Provider != "otx" {
 		t.Fatalf("provider errors were not lifted to the report: %#v", report)
 	}
 }

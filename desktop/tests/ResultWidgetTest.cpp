@@ -3,6 +3,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLabel>
 #include <QPlainTextEdit>
 #include <QHeaderView>
 #include <QPushButton>
@@ -137,8 +138,12 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     const QJsonObject component{{QStringLiteral("category"), QStringLiteral("web_application")},
                                 {QStringLiteral("name"), QStringLiteral("WordPress")},
                                 {QStringLiteral("role"), QStringLiteral("CMS")},
+                                {QStringLiteral("version"), QStringLiteral("6.8")},
+                                {QStringLiteral("traits"), QJsonArray{QStringLiteral("CMS")}},
+                                {QStringLiteral("basis"), QJsonArray{QStringLiteral("asset_path"), QStringLiteral("meta")}},
                                 {QStringLiteral("confidence"), QStringLiteral("high")},
                                 {QStringLiteral("summary"), QStringLiteral("WordPress was identified from public homepage markup.")},
+                                {QStringLiteral("evidence_total"), 3},
                                 {QStringLiteral("evidence"), QJsonArray{evidence}}};
     const QJsonObject related{{QStringLiteral("provider"), QStringLiteral("otx")},
                               {QStringLiteral("hostname"), QStringLiteral("neighbor.example")},
@@ -155,9 +160,42 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     const QJsonObject network{{QStringLiteral("address"), QStringLiteral("192.0.2.1")},
                               {QStringLiteral("provider"), QStringLiteral("Example Network")},
                               {QStringLiteral("links"), QJsonArray{ipLink}}};
+    const QJsonObject homepage{
+        {QStringLiteral("url"), QStringLiteral("https://example.com/")},
+        {QStringLiteral("status"), 200},
+        {QStringLiteral("http_version"), QStringLiteral("HTTP/2.0")},
+        {QStringLiteral("content_encoding"), QStringLiteral("br")},
+        {QStringLiteral("decoded_bytes"), 16384},
+        {QStringLiteral("markup_analyzed"), true},
+        {QStringLiteral("html_minification"), QStringLiteral("likely")},
+        {QStringLiteral("assets"), QJsonObject{{QStringLiteral("scripts"), 4},
+                                                  {QStringLiteral("potentially_blocking_scripts"), 1},
+                                                  {QStringLiteral("stylesheets"), 2},
+                                                  {QStringLiteral("images"), 3},
+                                                  {QStringLiteral("third_party_origin_total"), 2}}},
+        {QStringLiteral("metadata"), QJsonObject{{QStringLiteral("title"), true},
+                                                    {QStringLiteral("meta_description"), true},
+                                                    {QStringLiteral("canonical_url"), QStringLiteral("https://example.com/")},
+                                                    {QStringLiteral("viewport"), true},
+                                                    {QStringLiteral("h1_count"), 1},
+                                                    {QStringLiteral("structured_data"), 1}}},
+        {QStringLiteral("security"), QJsonObject{{QStringLiteral("https"), true},
+                                                    {QStringLiteral("hsts"), true},
+                                                    {QStringLiteral("csp"), true},
+                                                    {QStringLiteral("frame_protection"), true},
+                                                    {QStringLiteral("no_sniff"), true}}},
+        {QStringLiteral("accessibility"), QJsonObject{{QStringLiteral("language"), true},
+                                                         {QStringLiteral("images_missing_alt"), 1},
+                                                         {QStringLiteral("form_controls"), 2},
+                                                         {QStringLiteral("form_controls_missing_label"), 1}}},
+    };
+    const QJsonObject homepageFinding{{QStringLiteral("severity"), QStringLiteral("pass")},
+                                       {QStringLiteral("title"), QStringLiteral("Homepage response")},
+                                       {QStringLiteral("summary"), QStringLiteral("The homepage returned successfully.")}};
     const QJsonObject investigation{{QStringLiteral("domain"), QStringLiteral("example.com")},
                                     {QStringLiteral("summary"), QStringLiteral("Web: WordPress")},
                                     {QStringLiteral("components"), QJsonArray{component}},
+                                    {QStringLiteral("homepage"), homepage},
                                     {QStringLiteral("networks"), QJsonArray{network}},
                                     {QStringLiteral("links"), QJsonArray{domainLink}},
                                     {QStringLiteral("related"), QJsonArray{related}},
@@ -165,6 +203,7 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     const QJsonObject report{{QStringLiteral("schema_version"), 5},
                              {QStringLiteral("operation"), QStringLiteral("investigate")},
                              {QStringLiteral("subject"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")}}},
+                             {QStringLiteral("findings"), QJsonArray{homepageFinding}},
                              {QStringLiteral("investigation"), investigation}};
     widget.setReportItem(QJsonObject{{QStringLiteral("input"), QStringLiteral("example.com")},
                                      {QStringLiteral("report"), report}});
@@ -178,7 +217,7 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     for (int group = 0; group < stack->topLevelItemCount(); ++group) {
         for (int row = 0; row < stack->topLevelItem(group)->childCount(); ++row) {
             QTreeWidgetItem *candidate = stack->topLevelItem(group)->child(row);
-            if (candidate->text(1) == QStringLiteral("WordPress"))
+            if (candidate->text(1) == QStringLiteral("WordPress 6.8"))
                 technology = candidate;
         }
     }
@@ -190,6 +229,12 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     QVERIFY(evidenceTable);
     QCOMPARE(evidenceTable->rowCount(), 1);
     QCOMPARE(evidenceTable->item(0, 3)->text(), QStringLiteral("WordPress asset paths"));
+    const QLabel *detailTitle = widget.findChild<QLabel *>(QStringLiteral("stackDetailTitle"));
+    const QLabel *detailSummary = widget.findChild<QLabel *>(QStringLiteral("stackDetailSummary"));
+    QVERIFY(detailTitle && detailSummary);
+    QCOMPARE(detailTitle->text(), QStringLiteral("WordPress 6.8"));
+    QVERIFY(detailSummary->text().contains(QStringLiteral("Basis: asset_path, meta")));
+    QVERIFY(detailSummary->text().contains(QStringLiteral("Showing 1 of 3 evidence signals")));
     for (int group = 0; group < stack->topLevelItemCount(); ++group)
         QVERIFY(stack->topLevelItem(group)->text(0) != QStringLiteral("Investigation links"));
 
@@ -208,10 +253,17 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
 
     const QTreeWidget *overview = widget.findChild<QTreeWidget *>(QStringLiteral("overviewTree"));
     QVERIFY(overview);
-    QVERIFY(overview->topLevelItemCount() >= 2);
+    QVERIFY(overview->topLevelItemCount() >= 3);
     QCOMPARE(overview->topLevelItem(1)->text(0), QStringLiteral("Technology & infrastructure"));
-    QCOMPARE(overview->topLevelItem(1)->child(0)->text(0), QStringLiteral("Web technology"));
+    QCOMPARE(overview->topLevelItem(1)->child(0)->text(0), QStringLiteral("Web platform"));
     QCOMPARE(overview->topLevelItem(1)->child(0)->text(1), QStringLiteral("WordPress"));
+    QCOMPARE(overview->topLevelItem(2)->text(0), QStringLiteral("Homepage observations"));
+    QCOMPARE(overview->topLevelItem(2)->child(0)->text(0), QStringLiteral("Response"));
+    QVERIFY(overview->topLevelItem(2)->child(1)->text(1).contains(QStringLiteral("4 scripts")));
+    const QTableWidget *findings = widget.findChild<QTableWidget *>(QStringLiteral("findingsTable"));
+    QVERIFY(findings);
+    QCOMPARE(findings->rowCount(), 1);
+    QCOMPARE(findings->item(0, 1)->text(), QStringLiteral("Homepage response"));
     const QTabWidget *tabs = widget.findChild<QTabWidget *>();
     QVERIFY(tabs);
     for (const QString &name : {QStringLiteral("Stack"), QStringLiteral("Research"), QStringLiteral("Related")}) {

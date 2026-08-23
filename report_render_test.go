@@ -164,8 +164,16 @@ func TestRenderInvestigationAcrossHumanAndTabularFormats(t *testing.T) {
 		Subject:       Subject{Canonical: "example.test", Kind: SubjectRegistrableDomain},
 		Investigation: &InvestigationReport{
 			Domain: "example.test", Summary: "Web: WordPress · Network: Amazon Web Services · DNS: Cloudflare DNS · Mail: Microsoft 365",
+			Homepage: &HomepageProfile{
+				URL: "https://example.test/", Status: 200, HTTPVersion: "HTTP/2.0", ContentEncoding: "br", DecodedBytes: 16 << 10, MarkupAnalyzed: true,
+				HTMLMinification: HomepageMinificationLikely,
+				Assets:           HomepageAssetProfile{Scripts: 4, PotentiallyBlockingScripts: 1, Stylesheets: 2, Images: 3, ThirdPartyOriginTotal: 2},
+				Metadata:         HomepageMetadataProfile{Title: true, MetaDescription: true, CanonicalURL: "https://example.test/", Viewport: true, H1Count: 1, StructuredData: 1},
+				Security:         HomepageSecurityProfile{HTTPS: true, HSTS: true, CSP: true, FrameProtection: true, NoSniff: true},
+				Accessibility:    HomepageAccessibilityProfile{Language: true, ImagesMissingAlt: 1, FormControls: 2, FormControlsMissingLabel: 1},
+			},
 			Components: []StackComponent{
-				{Category: StackWebApplication, Name: "WordPress", Role: "CMS", Confidence: ConfidenceHigh, Evidence: []InvestigationEvidence{{Source: "http", Field: "markup", Value: "WordPress assets"}}},
+				{Category: StackWebApplication, Name: "WordPress", Role: "CMS", Version: "6.8", Traits: []string{"CMS"}, Basis: []string{"asset_path", "meta"}, Confidence: ConfidenceHigh, EvidenceTotal: 3, Evidence: []InvestigationEvidence{{Source: "http", Field: "markup", Value: "WordPress assets"}}},
 				{Category: StackNetwork, Name: "Amazon Web Services", Role: "Network owner", Confidence: ConfidenceHigh},
 				{Category: StackDNS, Name: "Cloudflare DNS", Role: "Authoritative DNS", Confidence: ConfidenceHigh},
 				{Category: StackMail, Name: "Microsoft 365", Role: "Inbound mail", Confidence: ConfidenceHigh},
@@ -181,7 +189,7 @@ func TestRenderInvestigationAcrossHumanAndTabularFormats(t *testing.T) {
 		if err := RenderReport(&output, report, format, RenderOptions{Width: 100}); err != nil {
 			t.Fatal(err)
 		}
-		for _, marker := range []string{"Stack summary", "WordPress", "Amazon Web Services", "Related", "neighbor.test", "Research links", "AlienVault OTX"} {
+		for _, marker := range []string{"Stack summary", "Homepage observations", "HTML likely", "SEO basics", "Security headers", "Accessibility markers", "WordPress 6.8", "asset_path", "+2 more evidence", "Amazon", "Related", "neighbor.test", "Research links", "AlienVault OTX"} {
 			if !strings.Contains(output.String(), marker) {
 				t.Fatalf("%s output omitted %q:\n%s", format, marker, output.String())
 			}
@@ -199,7 +207,7 @@ func TestRenderInvestigationAcrossHumanAndTabularFormats(t *testing.T) {
 	for index, name := range rows[0] {
 		columns[name] = index
 	}
-	if rows[1][columns["STACK_SUMMARY"]] == "" || !strings.Contains(rows[1][columns["TECHNOLOGIES"]], "WordPress") || rows[1][columns["NETWORK_PROVIDER"]] != "Amazon Web Services" || rows[1][columns["RELATED_COUNT"]] != "7" {
+	if rows[1][columns["STACK_SUMMARY"]] == "" || !strings.Contains(rows[1][columns["TECHNOLOGIES"]], "WordPress") || rows[1][columns["NETWORK_PROVIDER"]] != "Amazon Web Services" || rows[1][columns["RELATED_COUNT"]] != "7" || rows[1][columns["HOMEPAGE_URL"]] != "https://example.test/" || rows[1][columns["HOMEPAGE_STATUS"]] != "200" || !strings.Contains(rows[1][columns["HOMEPAGE_SUMMARY"]], "HTML likely") {
 		t.Fatalf("investigation CSV row = %#v", rows[1])
 	}
 }

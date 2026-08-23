@@ -96,7 +96,7 @@ func (server *Server) handle(rpcRequest request) {
 		server.writeResult(rpcRequest.ID, helloResult{
 			ProtocolVersion:            ProtocolVersion,
 			EngineVersion:              server.version,
-			Capabilities:               []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "investigate", "stack", "related", "research_links", "batch", "batch_retry", "progress", "cancel", "raw", "export", "schema_v5"},
+			Capabilities:               []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "investigate", "stack", "homepage_profile", "related", "research_links", "batch", "batch_retry", "progress", "cancel", "raw", "export", "schema_v5"},
 			InvestigationLinkProviders: whodis.AvailableInvestigationLinkProviders(),
 		})
 	case "parse":
