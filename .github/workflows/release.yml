@@ -6,7 +6,7 @@ on:
       version:
         description: Version identity used by non-publishing preflight packages
         required: true
-        default: 2.5.0
+        default: 2.5.1
   push:
     tags:
       - "v*"
@@ -425,8 +425,9 @@ jobs:
           assets+=(scripts/install.sh scripts/install.ps1)
 
           notes=(--generate-notes)
-          release_notes_file="RELEASE_NOTES_${GITHUB_REF_NAME}.md"
-          if [ -f "$release_notes_file" ]; then
+          release_notes_file=".github/RELEASE_NOTES.md"
+          if [ -f "$release_notes_file" ] && \
+             grep -Fqx "# Whodis ${GITHUB_REF_NAME}" "$release_notes_file"; then
             notes=(--notes-file "$release_notes_file")
           fi
           release_kind=(--latest)

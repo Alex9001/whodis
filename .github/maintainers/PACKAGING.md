@@ -1,15 +1,15 @@
-# Community package handoff
+# Community package publication
 
-GitHub Releases remain the source of truth. The release workflow publishes CLI
+GitHub Releases are the source of truth. The release workflow publishes CLI
 archives, native Linux packages, GUI bundles, checksums, SBOMs, provenance, and
-install scripts. AUR publication stays paused until new maintainer registration
-is available; see [AUR_HANDOFF.md](AUR_HANDOFF.md).
+install scripts. If AUR account registration is unavailable, wait until it
+reopens; see the [AUR publication guide](AUR.md).
 
 After a stable release is published, generate checksum-pinned community
 manifests from its `checksums.txt`:
 
 ```bash
-release=v2.5.0
+release="$(gh release view --repo Alex9001/whodis --json tagName --jq .tagName)"
 package_work="$(mktemp -d)"
 gh release download "$release" --repo Alex9001/whodis \
   --pattern checksums.txt --dir "$package_work"

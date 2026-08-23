@@ -6,8 +6,8 @@
 
 <p align="center">
   <strong>A full, evidence-backed domain investigation suite.</strong><br>
-  See who—and what—is behind a domain: registration, DNS, infrastructure,
-  diagnostics, web technology, related domains, and change over time.
+  Find out who operates a domain and what is behind it: registration, DNS,
+  infrastructure, diagnostics, web technology, related domains, and changes over time.
 </p>
 
 <p align="center">
@@ -66,48 +66,48 @@ tracking without making the simple lookup complicated.
 
 ## A full domain investigation suite
 
-- **Registration and identity** — route domains, IPs, networks, and ASNs to
+- **Registration and identity:** Route domains, IPs, networks, and ASNs to
   the right IANA-published RDAP authority, fall back to WHOIS when appropriate,
   and follow RWhois referrals without making users learn the protocol map.
-- **DNS and delegation** — inventory records, query arbitrary types, compare
+- **DNS and delegation:** Inventory records, query arbitrary types, compare
   resolvers, validate DNSSEC, trace delegation from the root, and perform
   explicit bounded zone transfers.
-- **Infrastructure and service diagnostics** — connect public DNS to network
+- **Infrastructure and service diagnostics:** Connect public DNS to network
   ownership, hosting signals, HTTP, TLS, SMTP, mail policy, reachability, and
   advertised services with scoped findings instead of an opaque score.
-- **Website technology investigation** — identify platforms, versions,
+- **Website technology investigation:** Identify platforms, versions,
   WordPress plugins and themes, commerce, optimization, server and edge
   technology, and homepage delivery signals with confidence and inspectable
   evidence.
-- **Research and relationships** — generate curated manual pivots for public
+- **Research and relationships:** Generate curated manual pivots for public
   sources and, only when requested, add bounded AlienVault OTX passive-DNS
   observations without presenting historical neighbors as ownership claims.
-- **Change tracking and automation** — save sanitized observations, compare
+- **Change tracking and automation:** Save sanitized observations, compare
   meaningful changes, enforce policy, process large batches, and export a
   stable report for scripts and other applications.
 
 ## Built for terminals, desktops, and automation
 
-- **Responsive terminal dashboard** — a spreadsheet-like panel grid uses
+- **Responsive terminal dashboard:** A spreadsheet-like panel grid uses
   the available width without repeating contacts, notices, or nameservers.
-- **Multiple layouts** — dashboard, semantic tree, retro GeekBoys ASCII,
+- **Multiple layouts:** Dashboard, semantic tree, retro GeekBoys ASCII,
   and portable plain text are one switch away.
-- **Structured output** — versioned JSON/YAML, one-row-per-target CSV, and
+- **Structured output:** Versioned JSON/YAML, one-row-per-target CSV, and
   streaming-friendly NDJSON support automation; Markdown makes a portable
   report.
-- **Focused batch tables** — check many targets, select fields such as
+- **Focused batch tables:** Check many targets, select fields such as
   expiration and registrar, and write directly to a file.
-- **Raw source access** — preserve the original RDAP JSON, WHOIS, or RWhois
+- **Raw source access:** Preserve the original RDAP JSON, WHOIS, or RWhois
   response when one unmodified registration lookup is what you need.
-- **Native desktop workbench** — Lookup, DNS Inventory, DNS Query, Compare,
+- **Native desktop workbench:** Lookup, DNS Inventory, DNS Query, Compare,
   Delegation, Diagnose, Stack, Research, Related, Services, Findings, Contacts, and Raw
   views without a browser or a separately installed CLI. Result columns are
   adjustable and remembered per view, while long values wrap instead of being
   clipped or forcing the whole layout sideways.
-- **Help where you work** — concise guides ship inside both applications. Use
+- **Help where you work:** Concise guides ship inside both applications. Use
   `whodis help [topic]` in a terminal or press **F1** in the desktop app; neither
   requires a browser or network connection.
-- **Evidence-backed site profile** — identify platforms, versions, WordPress
+- **Evidence-backed site profile:** Identify platforms, versions, WordPress
   plugins and themes, commerce, optimization, hosting, DNS, and mail, then
   review a score-free homepage delivery, SEO, security-header, and
   accessibility snapshot.
@@ -187,7 +187,7 @@ go install github.com/Alex9001/whodis/v2/cmd/whodis@latest
 Prebuilt CLI archives are published for Linux, macOS, Windows, FreeBSD, and
 OpenBSD on amd64 and supported arm64 targets. Source-built AUR definitions for
 `whodis` and `whodis-gui` are ready; the maintainer's one-time account and key
-steps are in [AUR_HANDOFF.md](AUR_HANDOFF.md).
+steps are in the [AUR publication guide](.github/maintainers/AUR.md).
 
 Each release also carries installable `.deb`, `.rpm`, Alpine Linux `.apk`, and
 Arch Linux packages. An optional non-root multi-architecture container is
@@ -198,7 +198,8 @@ docker run --rm ghcr.io/alex9001/whodis example.com
 ```
 
 Checksum-pinned Homebrew, Scoop, and Nix manifest generation is ready for
-package-channel publication; see [PACKAGING_HANDOFF.md](PACKAGING_HANDOFF.md).
+package-channel publication; see the
+[community package guide](.github/maintainers/PACKAGING.md).
 The README does not claim a channel is live until its upstream page exists.
 
 ### Desktop app
@@ -386,9 +387,9 @@ Local investigation is the default. It reads at most the first 1 MiB of the
 single final homepage response. It does not execute JavaScript, fetch
 referenced assets, crawl additional pages, calculate Lighthouse/Core Web
 Vitals, assign a site grade, scan arbitrary ports, or contact related domains.
-A missing signal means only “not observed in this bounded response”—never proof
-that a product is absent or that a security issue exists. Whodis locally creates
-a curated set of links for AlienVault OTX, VirusTotal, BuiltWith, urlscan.io,
+A missing signal means only “not observed in this bounded response.” It is not
+proof that a product is absent or that a security issue exists. Whodis locally
+creates a curated set of links for AlienVault OTX, VirusTotal, BuiltWith, urlscan.io,
 crt.sh, the Wayback Machine, Shodan, and Censys. It does not contact those
 services until you explicitly open a link. Additional Wappalyzer, Netcraft,
 GreyNoise, AbuseIPDB, BGP.Tools, and IPinfo links are available with
@@ -400,7 +401,8 @@ Research links are separate from enrichment. OTX
 passive-DNS enrichment happens only with `--enrich otx`; discovered public web
 IPs are sent to that service, returned observations are capped, and their
 hostnames are checked against current A/AAAA DNS. `current`, `stale`, and
-`unknown` describe that DNS comparison—not ownership or affiliation.
+`unknown` describe that DNS comparison. They do not establish ownership or
+affiliation.
 
 The optional OTX key comes only from `WHODIS_OTX_API_KEY` and is never written
 to Whodis configuration, reports, snapshots, or logs. Customize harmless

@@ -3,6 +3,7 @@
 #include "AdvancedDialog.h"
 #include "BatchWindow.h"
 #include "EngineClient.h"
+#include "ExternalLinks.h"
 #include "HelpDialog.h"
 #include "ResultWidget.h"
 
@@ -10,7 +11,6 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
-#include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -112,14 +112,14 @@ MainWindow::MainWindow(QWidget *parent)
     auto *helpAction = helpMenu->addAction(tr("&Whodis Help"), this, &MainWindow::openHelp);
     helpAction->setShortcut(QKeySequence::HelpContents);
     helpMenu->addSeparator();
-    helpMenu->addAction(tr("Whodis &Homepage"), this, [] {
-        QDesktopServices::openUrl(QUrl(QStringLiteral("https://cyberbrand.net/whodis/")));
+    helpMenu->addAction(tr("Whodis &Homepage"), this, [this] {
+        ExternalLinks::open(QUrl(QStringLiteral("https://cyberbrand.net/whodis/")), this);
     });
-    helpMenu->addAction(tr("&Online Documentation"), this, [] {
-        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/Alex9001/whodis#readme")));
+    helpMenu->addAction(tr("&Online Documentation"), this, [this] {
+        ExternalLinks::open(QUrl(QStringLiteral("https://github.com/Alex9001/whodis#readme")), this);
     });
-    helpMenu->addAction(tr("Report an &Issue…"), this, [] {
-        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/Alex9001/whodis/issues/new/choose")));
+    helpMenu->addAction(tr("Report an &Issue…"), this, [this] {
+        ExternalLinks::open(QUrl(QStringLiteral("https://github.com/Alex9001/whodis/issues/new/choose")), this);
     });
     helpMenu->addSeparator();
     helpMenu->addAction(tr("About Whodis"), this, [this] {

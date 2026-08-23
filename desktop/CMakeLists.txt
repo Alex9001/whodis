@@ -25,6 +25,8 @@ set(WHODIS_GUI_SOURCES
     src/BatchWindow.h
     src/EngineClient.cpp
     src/EngineClient.h
+    src/ExternalLinks.cpp
+    src/ExternalLinks.h
     src/HelpDialog.cpp
     src/HelpDialog.h
     src/MainWindow.cpp
@@ -114,6 +116,8 @@ if(BUILD_TESTING)
         src/BatchWindow.h
         src/EngineClient.cpp
         src/EngineClient.h
+        src/ExternalLinks.cpp
+        src/ExternalLinks.h
         src/HelpDialog.cpp
         src/HelpDialog.h
         src/MainWindow.cpp

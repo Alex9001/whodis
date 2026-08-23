@@ -1,6 +1,7 @@
 #include "AdvancedDialog.h"
 #include "HelpDialog.h"
 #include "BatchWindow.h"
+#include "ExternalLinks.h"
 #include "MainWindow.h"
 #include "ResultWidget.h"
 
@@ -11,6 +12,7 @@
 #include <QHeaderView>
 #include <QPushButton>
 #include <QPointer>
+#include <QProcessEnvironment>
 #include <QSettings>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -32,7 +34,36 @@ private slots:
     void showsResolverAgreementAndRawSource();
     void loadsAndSearchesOfflineHelp();
     void closingBatchLeavesMainWindowAlive();
+    void stripsAppImagePathsFromExternalLinkEnvironment();
 };
+
+void ResultWidgetTest::stripsAppImagePathsFromExternalLinkEnvironment()
+{
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("APPDIR"), QStringLiteral("/tmp/Whodis.AppDir"));
+    environment.insert(QStringLiteral("APPIMAGE"), QStringLiteral("/tmp/Whodis.AppImage"));
+    environment.insert(QStringLiteral("ARGV0"), QStringLiteral("whodis-gui"));
+    environment.insert(QStringLiteral("PATH"), QStringLiteral("/tmp/Whodis.AppDir/usr/bin:/opt/tools:/usr/bin"));
+    environment.insert(QStringLiteral("LD_LIBRARY_PATH"),
+                       QStringLiteral("/tmp/Whodis.AppDir/usr/lib:/opt/vendor/lib"));
+    environment.insert(QStringLiteral("QT_PLUGIN_PATH"),
+                       QStringLiteral("/tmp/Whodis.AppDir/usr/plugins"));
+    environment.insert(QStringLiteral("XDG_DATA_DIRS"),
+                       QStringLiteral("/tmp/Whodis.AppDir/usr/share:/usr/share"));
+    environment.insert(QStringLiteral("GDK_PIXBUF_MODULE_FILE"),
+                       QStringLiteral("/tmp/Whodis.AppDir/usr/lib/gdk-pixbuf/loaders.cache"));
+
+    const QProcessEnvironment sanitized = ExternalLinks::sanitizedHostEnvironment(
+        environment, QStringLiteral("/tmp/Whodis.AppDir"));
+    QVERIFY(!sanitized.contains(QStringLiteral("APPDIR")));
+    QVERIFY(!sanitized.contains(QStringLiteral("APPIMAGE")));
+    QVERIFY(!sanitized.contains(QStringLiteral("ARGV0")));
+    QCOMPARE(sanitized.value(QStringLiteral("PATH")), QStringLiteral("/opt/tools:/usr/bin"));
+    QCOMPARE(sanitized.value(QStringLiteral("LD_LIBRARY_PATH")), QStringLiteral("/opt/vendor/lib"));
+    QVERIFY(!sanitized.contains(QStringLiteral("QT_PLUGIN_PATH")));
+    QCOMPARE(sanitized.value(QStringLiteral("XDG_DATA_DIRS")), QStringLiteral("/usr/share"));
+    QVERIFY(!sanitized.contains(QStringLiteral("GDK_PIXBUF_MODULE_FILE")));
+}
 
 void ResultWidgetTest::loadsAndSearchesOfflineHelp()
 {

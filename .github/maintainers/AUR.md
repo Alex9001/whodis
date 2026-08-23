@@ -1,4 +1,4 @@
-# AUR publication handoff
+# AUR publication
 
 The source-package templates and automation are ready for two independent AUR
 packages:
@@ -7,14 +7,12 @@ packages:
 - `whodis-gui` installs the Qt desktop app and its private engine. It does not
   depend on the CLI package.
 
-New AUR registrations were paused during the malware response when this handoff
-was last updated. Do not work around that restriction: wait for registrations
-to reopen, then create the maintainer account normally. An AUR account with its
-SSH key registered is the only missing requirement for the first pushes. Both
-packages build from the same stable GitHub source
-archive, but live in separate AUR Git repositories. The application is MIT
-licensed; `packaging/aur/LICENSE` and `packaging/aur-gui/LICENSE` apply 0BSD
-only to the AUR packaging files.
+If new AUR account registration is unavailable, wait for it to reopen rather
+than attempting to work around the restriction. An AUR account with a dedicated
+SSH key is required for the first push. Both packages build from the same
+stable GitHub source archive, but live in separate AUR Git repositories. The
+application is MIT licensed; `packaging/aur/LICENSE` and
+`packaging/aur-gui/LICENSE` apply 0BSD only to the AUR packaging files.
 
 ## Package contract
 
@@ -27,15 +25,19 @@ only to the AUR packaging files.
 - GUI install: `/usr/bin/whodis-gui`, private engine under
   `/usr/libexec/whodis/`, desktop entry, and icon
 - GUI dependency: `qt6-base`
-- Next package target: `2.5.0-1`; use the newest stable release when publishing
-
-The workstation previously had a dedicated key:
-
-- Private key: `~/.ssh/aur_whodis` (mode `0600`; never share it)
-- Public key: `~/.ssh/aur_whodis.pub`
-- Fingerprint: `SHA256:rKZhT6CBWNn+12MULrVWmGMMyR34di3FEsNIWzHQaXc`
+- Package target: the newest stable GitHub release
 
 ## 1. Register the account and key
+
+Keep the publishing key outside the repository. The examples use a dedicated
+key at `~/.ssh/aur_whodis`; choose another path if appropriate. Create it if it
+does not already exist:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C 'whodis AUR publishing' \
+  -f ~/.ssh/aur_whodis
+chmod 600 ~/.ssh/aur_whodis
+```
 
 1. Register and verify the account at <https://aur.archlinux.org/register>.
 2. Sign in, open **My Account**, and add the complete output of:
@@ -51,27 +53,17 @@ The workstation previously had a dedicated key:
    ssh -i ~/.ssh/aur_whodis -o IdentitiesOnly=yes aur@aur.archlinux.org
    ```
 
-A successful SSH test prints an AUR greeting and disconnects. If the key files
-are missing, make a replacement, register its public half, and update the
-fingerprint recorded above:
-
-```bash
-ssh-keygen -t ed25519 -N '' -C 'whodis AUR publishing' \
-  -f ~/.ssh/aur_whodis
-chmod 600 ~/.ssh/aur_whodis
-```
-
-Never commit, paste, or upload the private key. Only the `.pub` half is public.
+A successful SSH test prints an AUR greeting and disconnects. Never commit,
+paste, or upload the private key. Only the `.pub` half is public.
 
 ## 2. Select a release
 
-Use the newest stable release containing the GUI source. The current package
-target is `v2.5.0`; replace it with a newer stable release if one exists when
-the account is ready. Do not use a prerelease because automatic AUR publication
-deliberately ignores prerelease tags.
+Use the newest stable release containing the GUI source. Do not use a
+prerelease because automatic AUR publication deliberately ignores prerelease
+tags.
 
 ```bash
-release_tag=v2.5.0
+release_tag="$(gh release view --repo Alex9001/whodis --json tagName --jq .tagName)"
 release_version=${release_tag#v}
 gh release view "$release_tag" --repo Alex9001/whodis
 ```

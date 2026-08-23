@@ -1,7 +1,8 @@
 #include "HelpDialog.h"
 
+#include "ExternalLinks.h"
+
 #include <QCloseEvent>
-#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QHBoxLayout>
@@ -175,5 +176,5 @@ void HelpDialog::showSelectedTopic()
 void HelpDialog::openLink(const QUrl &url)
 {
     if (url.scheme() == QStringLiteral("https"))
-        QDesktopServices::openUrl(url);
+        ExternalLinks::open(url, this);
 }

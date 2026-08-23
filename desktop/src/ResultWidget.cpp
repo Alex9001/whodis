@@ -1,11 +1,11 @@
 #include "ResultWidget.h"
 
 #include "AdaptiveItemView.h"
+#include "ExternalLinks.h"
 
 #include <QComboBox>
 #include <QClipboard>
 #include <QDateTime>
-#include <QDesktopServices>
 #include <QGuiApplication>
 #include <QHash>
 #include <QJsonArray>
@@ -1301,7 +1301,7 @@ void ResultWidget::openSelectedResearchLink()
     const QTreeWidgetItem *item = m_research->currentItem();
     const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
     if (url.isValid() && url.scheme() == QStringLiteral("https") && !url.host().isEmpty() && url.userInfo().isEmpty())
-        QDesktopServices::openUrl(url);
+        ExternalLinks::open(url, this);
 }
 
 void ResultWidget::refreshViews()
