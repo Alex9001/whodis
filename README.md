@@ -26,13 +26,28 @@
   <a href="https://github.com/Alex9001/whodis/issues">Issues</a>
 </p>
 
-<p align="center"><strong>One command. The identity behind the domain.</strong></p>
+<p align="center"><strong>One engine. Use it your way.</strong></p>
 
-![Whodis terminal dashboard showing an automatic RDAP lookup for cyberbrand.net](docs/whodis-cli.png)
+<table>
+  <tr>
+    <th width="60%">Terminal</th>
+    <th width="40%">Native desktop</th>
+  </tr>
+  <tr>
+    <td><img src="docs/whodis-cli.png" alt="Whodis terminal dashboard showing an automatic RDAP lookup for cyberbrand.net"></td>
+    <td><img src="docs/whodis-gui-registration.png" alt="Whodis native desktop registration view for cyberbrand.net"></td>
+  </tr>
+  <tr>
+    <td>Fast in shells, scripts, SSH sessions, and servers.</td>
+    <td>Native controls on Linux, Windows, and macOS.</td>
+  </tr>
+</table>
 
 `whodis cyberbrand.net` discovers the authoritative source automatically and
-turns the result into a readable terminal workspace. Start there for the
-original question. Go deeper when you need the whole story.
+turns the result into a readable terminal workspace. The separately packaged
+desktop application presents the same normalized investigation engine through
+focused native views. Start with the original question; go deeper when you
+need the whole story.
 
 ## One target. The answer you need
 
@@ -110,11 +125,8 @@ tracking without making the simple lookup complicated.
 The CLI stays small for shells, scripts, SSH sessions, and servers. The
 separately packaged native desktop application exposes the same engine through
 focused registration, DNS, diagnosis, investigation, research, findings,
-batch, and raw-data views.
-
-<p align="center"><strong>Registration overview</strong> · Live RDAP lookup for <code>cyberbrand.net</code></p>
-
-![Whodis registration lookup for cyberbrand.net](docs/whodis-gui-registration.png)
+batch, and raw-data views. The registration view appears beside the terminal
+at the top of this page; the examples below show deeper desktop workflows.
 
 <table>
   <tr>
