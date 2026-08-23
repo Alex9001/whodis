@@ -1,16 +1,21 @@
 #include "ResultWidget.h"
 
+#include "AdaptiveItemView.h"
+
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
-#include <QHeaderView>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QPushButton>
+#include <QSettings>
+#include <QSplitter>
 #include <QStackedLayout>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -19,6 +24,9 @@
 #include <QVBoxLayout>
 
 namespace {
+constexpr int StackKindRole = Qt::UserRole;
+constexpr int StackPayloadRole = Qt::UserRole + 1;
+
 QString joined(const QJsonValue &value)
 {
     if (value.isString())
@@ -50,6 +58,27 @@ QTreeWidgetItem *addGroup(QTreeWidget *tree, const QString &label)
     return group;
 }
 
+QTreeWidgetItem *addStackGroup(QTreeWidget *tree, const QString &label)
+{
+    QTreeWidgetItem *group = addGroup(tree, label);
+    group->setFlags(group->flags() & ~Qt::ItemIsSelectable);
+    return group;
+}
+
+void setStackPayload(QTreeWidgetItem *item, const QString &kind, const QJsonObject &payload)
+{
+    item->setData(0, StackKindRole, kind);
+    item->setData(0, StackPayloadRole,
+                  QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+}
+
+QJsonObject stackPayload(const QTreeWidgetItem *item)
+{
+    if (!item)
+        return {};
+    return QJsonDocument::fromJson(item->data(0, StackPayloadRole).toString().toUtf8()).object();
+}
+
 void configureTable(QTableWidget *table, const QStringList &headers)
 {
     table->setColumnCount(headers.size());
@@ -58,8 +87,6 @@ void configureTable(QTableWidget *table, const QStringList &headers)
     table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     table->setSortingEnabled(true);
     table->setAlternatingRowColors(true);
-    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    table->horizontalHeader()->setStretchLastSection(true);
 }
 
 QJsonObject reportDNS(const QJsonObject &report)
@@ -265,6 +292,13 @@ ResultWidget::ResultWidget(QWidget *parent)
     , m_services(new QTableWidget(this))
     , m_findings(new QTableWidget(this))
     , m_stack(new QTreeWidget(this))
+    , m_stackPage(new QWidget(this))
+    , m_stackSplitter(new QSplitter(Qt::Vertical, m_stackPage))
+    , m_stackDetailTitle(new QLabel(m_stackPage))
+    , m_stackDetailSummary(new QLabel(m_stackPage))
+    , m_evidence(new QTableWidget(m_stackPage))
+    , m_stackActions(new QWidget(m_stackPage))
+    , m_stackActionsLayout(new QHBoxLayout(m_stackActions))
     , m_related(new QTableWidget(this))
     , m_errors(new QTableWidget(this))
     , m_contacts(new QTableWidget(this))
@@ -277,38 +311,85 @@ ResultWidget::ResultWidget(QWidget *parent)
 
     m_overview->setObjectName(QStringLiteral("overviewTree"));
     m_stack->setObjectName(QStringLiteral("stackTree"));
+    m_stackPage->setObjectName(QStringLiteral("stackPage"));
+    m_evidence->setObjectName(QStringLiteral("stackEvidenceTable"));
+    m_stackDetailTitle->setObjectName(QStringLiteral("stackDetailTitle"));
+    m_stackDetailSummary->setObjectName(QStringLiteral("stackDetailSummary"));
     m_related->setObjectName(QStringLiteral("relatedTable"));
+    m_dns->setObjectName(QStringLiteral("dnsTable"));
+    m_compare->setObjectName(QStringLiteral("compareTable"));
+    m_delegation->setObjectName(QStringLiteral("delegationTable"));
+    m_services->setObjectName(QStringLiteral("servicesTable"));
+    m_findings->setObjectName(QStringLiteral("findingsTable"));
+    m_errors->setObjectName(QStringLiteral("errorsTable"));
+    m_contacts->setObjectName(QStringLiteral("contactsTable"));
 
     m_overview->setColumnCount(2);
     m_overview->setHeaderLabels({tr("Field"), tr("Value")});
     m_overview->setRootIsDecorated(true);
     m_overview->setAlternatingRowColors(true);
-    m_overview->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_overview->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    AdaptiveItemView::configure(m_overview, QStringLiteral("result/layout-v1/overview"), {2, 5});
 
     configureTable(m_dns, {tr("Type"), tr("Name"), tr("TTL"), tr("Value")});
-    m_dns->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_dns->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_dns->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_dns->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    AdaptiveItemView::configure(m_dns, QStringLiteral("result/layout-v1/dns"), {1, 3, 1, 6});
 
     configureTable(m_compare, {tr("Query"), tr("Resolver"), tr("Result"), tr("Details")});
+    AdaptiveItemView::configure(m_compare, QStringLiteral("result/layout-v1/compare"), {3, 3, 2, 5});
     configureTable(m_delegation, {tr("Hop"), tr("Zone"), tr("Server"), tr("Result"), tr("Nameservers"), tr("Addresses")});
+    AdaptiveItemView::configure(m_delegation, QStringLiteral("result/layout-v1/delegation"), {1, 2, 3, 2, 4, 4});
     configureTable(m_services, {tr("Category"), tr("Endpoint"), tr("Result"), tr("Details")});
+    AdaptiveItemView::configure(m_services, QStringLiteral("result/layout-v1/services"), {2, 4, 2, 5});
     configureTable(m_findings, {tr("Result"), tr("Check"), tr("Summary")});
-    m_stack->setColumnCount(5);
-    m_stack->setHeaderLabels({tr("Layer"), tr("Technology"), tr("Role"), tr("Confidence"), tr("Evidence")});
+    AdaptiveItemView::configure(m_findings, QStringLiteral("result/layout-v1/findings"), {1, 3, 7});
+    m_stack->setColumnCount(4);
+    m_stack->setHeaderLabels({tr("Layer"), tr("Technology"), tr("Role"), tr("Confidence")});
     m_stack->setRootIsDecorated(true);
     m_stack->setAlternatingRowColors(true);
-    m_stack->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_stack->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_stack->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_stack->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    m_stack->header()->setSectionResizeMode(4, QHeaderView::Stretch);
+    AdaptiveItemView::configure(m_stack, QStringLiteral("result/layout-v1/stack"), {2, 4, 4, 2});
+
+    configureTable(m_evidence, {tr("Source"), tr("Subject"), tr("Field"), tr("Value")});
+    m_evidence->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    AdaptiveItemView::configure(m_evidence, QStringLiteral("result/layout-v1/stack-evidence"), {2, 3, 3, 7});
+
     configureTable(m_related, {tr("Hostname"), tr("Observed IP"), tr("First seen"), tr("Last seen"), tr("Now"), tr("Current DNS"), tr("Source")});
+    AdaptiveItemView::configure(m_related, QStringLiteral("result/layout-v1/related"), {4, 3, 3, 3, 2, 4, 2});
     m_related->setContextMenuPolicy(Qt::CustomContextMenu);
     configureTable(m_errors, {tr("Operation"), tr("Kind"), tr("Message")});
+    AdaptiveItemView::configure(m_errors, QStringLiteral("result/layout-v1/errors"), {2, 2, 7});
     configureTable(m_contacts, {tr("Role"), tr("Name"), tr("Handle"), tr("Email"), tr("Phone"), tr("Organization")});
+    AdaptiveItemView::configure(m_contacts, QStringLiteral("result/layout-v1/contacts"), {2, 3, 2, 4, 3, 4});
+
+    QFont detailTitleFont = m_stackDetailTitle->font();
+    detailTitleFont.setBold(true);
+    m_stackDetailTitle->setFont(detailTitleFont);
+    m_stackDetailTitle->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_stackDetailSummary->setWordWrap(true);
+    m_stackDetailSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_stackActionsLayout->setContentsMargins(0, 0, 0, 0);
+    m_stackActionsLayout->setAlignment(Qt::AlignLeft);
+
+    auto *detailPage = new QWidget(m_stackSplitter);
+    auto *detailLayout = new QVBoxLayout(detailPage);
+    detailLayout->setContentsMargins(8, 8, 8, 8);
+    detailLayout->addWidget(m_stackDetailTitle);
+    detailLayout->addWidget(m_stackDetailSummary);
+    detailLayout->addWidget(m_evidence, 1);
+    detailLayout->addWidget(m_stackActions);
+    m_stackSplitter->addWidget(m_stack);
+    m_stackSplitter->addWidget(detailPage);
+    m_stackSplitter->setStretchFactor(0, 3);
+    m_stackSplitter->setStretchFactor(1, 2);
+    m_stackSplitter->setSizes({420, 240});
+    auto *stackPageLayout = new QVBoxLayout(m_stackPage);
+    stackPageLayout->setContentsMargins(0, 0, 0, 0);
+    stackPageLayout->addWidget(m_stackSplitter);
+    QSettings settings;
+    m_stackSplitter->restoreState(settings.value(QStringLiteral("result/layout-v1/stack-splitter")).toByteArray());
+    connect(m_stackSplitter, &QSplitter::splitterMoved, this, [this] {
+        QSettings settings;
+        settings.setValue(QStringLiteral("result/layout-v1/stack-splitter"), m_stackSplitter->saveState());
+    });
+    clearStackDetails();
 
     m_rawPage = new QWidget(this);
     auto *rawLayout = new QVBoxLayout(m_rawPage);
@@ -323,7 +404,7 @@ ResultWidget::ResultWidget(QWidget *parent)
     });
 
     m_tabs->addTab(m_overview, tr("Overview"));
-    m_tabs->addTab(m_stack, tr("Stack"));
+    m_tabs->addTab(m_stackPage, tr("Stack"));
     m_tabs->addTab(m_related, tr("Related"));
     m_tabs->addTab(m_dns, tr("DNS"));
     m_tabs->addTab(m_compare, tr("Compare"));
@@ -334,8 +415,16 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_tabs->addTab(m_contacts, tr("Contacts"));
     m_tabs->addTab(m_rawPage, tr("Raw"));
 
+    connect(m_stack, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem *current) { showStackDetails(current); });
     connect(m_stack, &QTreeWidget::itemDoubleClicked, this, [](QTreeWidgetItem *item) {
-        const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
+        const QJsonObject payload = stackPayload(item);
+        QUrl url(payload.value(QStringLiteral("url")).toString());
+        if (url.isEmpty()) {
+            const QJsonArray links = payload.value(QStringLiteral("links")).toArray();
+            if (!links.isEmpty())
+                url = QUrl(links.first().toObject().value(QStringLiteral("url")).toString());
+        }
         if (url.isValid() && url.scheme() == QStringLiteral("https"))
             QDesktopServices::openUrl(url);
     });
@@ -366,6 +455,7 @@ void ResultWidget::clearResult()
     m_services->setRowCount(0);
     m_findings->setRowCount(0);
     m_stack->clear();
+    clearStackDetails();
     m_related->setRowCount(0);
     m_errors->setRowCount(0);
     m_contacts->setRowCount(0);
@@ -384,7 +474,7 @@ void ResultWidget::setItem(const QJsonObject &item)
     populateContacts(result);
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
     m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
-    m_tabs->setTabVisible(m_tabs->indexOf(m_stack), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_stackPage), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_related), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_compare), false);
@@ -394,6 +484,8 @@ void ResultWidget::setItem(const QJsonObject &item)
     m_tabs->setTabVisible(m_tabs->indexOf(m_errors), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_contacts), m_contacts->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_rawPage), m_rawSource->count() > 0);
+    m_tabs->setCurrentWidget(m_overview);
+    refreshViews();
     if (auto *stack = qobject_cast<QStackedLayout *>(layout()))
         stack->setCurrentWidget(m_tabs);
 }
@@ -404,6 +496,7 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     m_item = item;
     const QJsonObject report = item.value(QStringLiteral("report")).toObject();
     const QJsonObject registration = report.value(QStringLiteral("registration")).toObject();
+    const QJsonObject investigation = report.value(QStringLiteral("investigation")).toObject();
     if (!registration.isEmpty()) {
         QJsonObject presentation = registration;
         presentation.insert(QStringLiteral("query"), report.value(QStringLiteral("subject")));
@@ -417,6 +510,7 @@ void ResultWidget::setReportItem(const QJsonObject &item)
         addValue(operation, tr("Action"), report.value(QStringLiteral("operation")).toString());
         addValue(operation, tr("Retrieved"), report.value(QStringLiteral("observed_at")).toString());
     }
+    populateInvestigationOverview(investigation);
     populateReportDNS(report);
     populateCompare(report);
     populateDelegation(report);
@@ -427,7 +521,7 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
 
     m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
-    m_tabs->setTabVisible(m_tabs->indexOf(m_stack), m_stack->topLevelItemCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_stackPage), m_stack->topLevelItemCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_related), m_related->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_compare), m_compare->rowCount() > 0);
@@ -437,8 +531,8 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     m_tabs->setTabVisible(m_tabs->indexOf(m_errors), m_errors->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_contacts), m_contacts->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_rawPage), m_rawSource->count() > 0);
-    if (m_stack->topLevelItemCount() > 0)
-        m_tabs->setCurrentWidget(m_stack);
+    if (!investigation.isEmpty())
+        m_tabs->setCurrentWidget(m_overview);
     else if (m_errors->rowCount() > 0)
         m_tabs->setCurrentWidget(m_errors);
     else if (m_findings->rowCount() > 0)
@@ -447,6 +541,7 @@ void ResultWidget::setReportItem(const QJsonObject &item)
         m_tabs->setCurrentWidget(m_dns);
     else
         m_tabs->setCurrentWidget(m_overview);
+    refreshViews();
     if (auto *stack = qobject_cast<QStackedLayout *>(layout()))
         stack->setCurrentWidget(m_tabs);
 }
@@ -545,6 +640,76 @@ void ResultWidget::populateOverview(const QJsonObject &result)
             addValue(entry, tr("Links"), joined(notice.value(QStringLiteral("links"))));
         }
     }
+}
+
+void ResultWidget::populateInvestigationOverview(const QJsonObject &investigation)
+{
+    if (investigation.isEmpty())
+        return;
+
+    struct CategorySummary {
+        QString label;
+        QStringList keys;
+    };
+    const QList<CategorySummary> categories{
+        {tr("Web technology"), {QStringLiteral("web_application"), QStringLiteral("framework")}},
+        {tr("Server / edge"), {QStringLiteral("web_server"), QStringLiteral("edge")}},
+        {tr("Hosting"), {QStringLiteral("hosting")}},
+        {tr("Network owner"), {QStringLiteral("network")}},
+        {tr("DNS provider"), {QStringLiteral("dns")}},
+        {tr("Mail"), {QStringLiteral("mail")}},
+        {tr("Analytics / security"), {QStringLiteral("analytics"), QStringLiteral("security")}},
+        {tr("Other"), {QStringLiteral("other")}},
+    };
+    QList<QStringList> values(categories.size());
+    for (const QJsonValue &value : investigation.value(QStringLiteral("components")).toArray()) {
+        const QJsonObject component = value.toObject();
+        const QString confidence = component.value(QStringLiteral("confidence")).toString().trimmed().toLower();
+        if (confidence != QStringLiteral("high") && confidence != QStringLiteral("medium"))
+            continue;
+        const QString name = component.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty())
+            continue;
+        const QString category = component.value(QStringLiteral("category")).toString().trimmed().toLower();
+        int categoryIndex = categories.size() - 1;
+        for (int index = 0; index < categories.size(); ++index) {
+            if (categories.at(index).keys.contains(category)) {
+                categoryIndex = index;
+                break;
+            }
+        }
+        bool duplicate = false;
+        for (const QString &existing : values.at(categoryIndex)) {
+            if (existing.compare(name, Qt::CaseInsensitive) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate)
+            values[categoryIndex].append(name);
+    }
+
+    auto *group = addGroup(m_overview, tr("Technology & infrastructure"));
+    for (int index = 0; index < categories.size(); ++index) {
+        const QStringList names = values.at(index);
+        if (names.isEmpty())
+            continue;
+        QString display = names.mid(0, 3).join(QStringLiteral(", "));
+        if (names.size() > 3)
+            display += tr(" +%1").arg(names.size() - 3);
+        auto *row = new QTreeWidgetItem(group, {categories.at(index).label, display});
+        row->setToolTip(1, names.join(QLatin1Char('\n')));
+    }
+    if (group->childCount() == 0)
+        addValue(group, tr("Profile"), investigation.value(QStringLiteral("summary")).toString());
+    if (group->childCount() == 0) {
+        delete group;
+        return;
+    }
+
+    const int currentIndex = m_overview->indexOfTopLevelItem(group);
+    QTreeWidgetItem *detached = m_overview->takeTopLevelItem(currentIndex);
+    m_overview->insertTopLevelItem(qMin(1, m_overview->topLevelItemCount()), detached);
 }
 
 void ResultWidget::populateDNS(const QJsonObject &result)
@@ -745,6 +910,7 @@ void ResultWidget::populateServices(const QJsonObject &report)
 void ResultWidget::populateInvestigation(const QJsonObject &report)
 {
     m_stack->clear();
+    clearStackDetails();
     m_related->setSortingEnabled(false);
     m_related->setRowCount(0);
     const QJsonObject investigation = report.value(QStringLiteral("investigation")).toObject();
@@ -753,10 +919,8 @@ void ResultWidget::populateInvestigation(const QJsonObject &report)
         return;
     }
 
-    auto *summary = addGroup(m_stack, tr("Summary"));
-    addValue(summary, investigation.value(QStringLiteral("domain")).toString(), investigation.value(QStringLiteral("summary")).toString());
-
     QHash<QString, QTreeWidgetItem *> categories;
+    QTreeWidgetItem *firstLeaf = nullptr;
     for (const QJsonValue &value : investigation.value(QStringLiteral("components")).toArray()) {
         const QJsonObject component = value.toObject();
         const QString categoryKey = component.value(QStringLiteral("category")).toString();
@@ -766,72 +930,53 @@ void ResultWidget::populateInvestigation(const QJsonObject &report)
             label.replace(QLatin1Char('_'), QLatin1Char(' '));
             if (!label.isEmpty())
                 label[0] = label.at(0).toUpper();
-            group = addGroup(m_stack, label);
+            group = addStackGroup(m_stack, label);
             categories.insert(categoryKey, group);
-        }
-        QStringList evidenceSummary;
-        const QJsonArray evidence = component.value(QStringLiteral("evidence")).toArray();
-        for (const QJsonValue &evidenceValue : evidence) {
-            const QJsonObject observation = evidenceValue.toObject();
-            evidenceSummary.append((observation.value(QStringLiteral("source")).toString()
-                                    + QStringLiteral(" ") + observation.value(QStringLiteral("field")).toString()
-                                    + QStringLiteral(": ") + observation.value(QStringLiteral("value")).toString()).trimmed());
         }
         auto *technology = new QTreeWidgetItem(group, {QString(), component.value(QStringLiteral("name")).toString(),
                                                        component.value(QStringLiteral("role")).toString(),
-                                                       component.value(QStringLiteral("confidence")).toString().toUpper(),
-                                                       evidenceSummary.join(QStringLiteral("; "))});
-        for (const QJsonValue &evidenceValue : evidence) {
-            const QJsonObject observation = evidenceValue.toObject();
-            const QString subject = observation.value(QStringLiteral("subject")).toString();
-            new QTreeWidgetItem(technology, {tr("Evidence"), observation.value(QStringLiteral("source")).toString(),
-                                             observation.value(QStringLiteral("field")).toString(), QString(),
-                                             (subject.isEmpty() ? QString() : subject + QStringLiteral(": "))
-                                                 + observation.value(QStringLiteral("value")).toString()});
-        }
+                                                       component.value(QStringLiteral("confidence")).toString().toUpper()});
+        setStackPayload(technology, QStringLiteral("component"), component);
+        if (!firstLeaf)
+            firstLeaf = technology;
     }
 
     const QJsonArray networks = investigation.value(QStringLiteral("networks")).toArray();
     if (!networks.isEmpty()) {
-        auto *group = addGroup(m_stack, tr("Network attribution"));
+        auto *group = addStackGroup(m_stack, tr("Network attribution"));
         for (const QJsonValue &value : networks) {
             const QJsonObject network = value.toObject();
-            QStringList details;
-            const QString owner = network.value(QStringLiteral("operator")).toString(network.value(QStringLiteral("network_name")).toString());
-            if (!owner.isEmpty())
-                details.append(tr("Registered operator: %1").arg(owner));
-            if (!joined(network.value(QStringLiteral("ptr"))).isEmpty())
-                details.append(QStringLiteral("PTR: ") + joined(network.value(QStringLiteral("ptr"))));
-            if (!joined(network.value(QStringLiteral("cidr"))).isEmpty())
-                details.append(QStringLiteral("CIDR: ") + joined(network.value(QStringLiteral("cidr"))));
             auto *networkItem = new QTreeWidgetItem(group, {network.value(QStringLiteral("address")).toString(), network.value(QStringLiteral("provider")).toString(),
-                                                     tr("Network owner"), QStringLiteral("HIGH"), details.join(QStringLiteral(" · "))});
-            for (const QJsonValue &linkValue : network.value(QStringLiteral("links")).toArray()) {
-                const QJsonObject link = linkValue.toObject();
-                auto *linkItem = new QTreeWidgetItem(networkItem, {tr("Open"), link.value(QStringLiteral("label")).toString(),
-                                                                   tr("Manual pivot"), QString(), link.value(QStringLiteral("url")).toString()});
-                linkItem->setData(0, Qt::UserRole, link.value(QStringLiteral("url")).toString());
-            }
+                                                     tr("Network owner"), QStringLiteral("HIGH")});
+            setStackPayload(networkItem, QStringLiteral("network"), network);
+            if (!firstLeaf)
+                firstLeaf = networkItem;
         }
     }
 
     const QJsonArray links = investigation.value(QStringLiteral("links")).toArray();
     if (!links.isEmpty()) {
-        auto *group = addGroup(m_stack, tr("Investigation links (double-click to open)"));
+        auto *group = addStackGroup(m_stack, tr("Investigation links"));
         for (const QJsonValue &value : links) {
             const QJsonObject link = value.toObject();
             auto *item = new QTreeWidgetItem(group, {link.value(QStringLiteral("label")).toString(), link.value(QStringLiteral("value")).toString(),
-                                                     tr("Manual pivot"), QString(), link.value(QStringLiteral("url")).toString()});
-            item->setData(0, Qt::UserRole, link.value(QStringLiteral("url")).toString());
+                                                     tr("Manual pivot"), QString()});
+            setStackPayload(item, QStringLiteral("link"), link);
+            if (!firstLeaf)
+                firstLeaf = item;
         }
     }
 
     const QJsonArray warnings = investigation.value(QStringLiteral("warnings")).toArray();
     if (!warnings.isEmpty()) {
-        auto *group = addGroup(m_stack, tr("Notes"));
+        auto *group = addStackGroup(m_stack, tr("Notes"));
         group->setExpanded(false);
-        for (const QJsonValue &value : warnings)
-            new QTreeWidgetItem(group, {tr("Note"), QString(), QString(), QString(), value.toString()});
+        for (const QJsonValue &value : warnings) {
+            auto *item = new QTreeWidgetItem(group, {tr("Note"), value.toString(), QString(), QString()});
+            setStackPayload(item, QStringLiteral("warning"), {{QStringLiteral("message"), value.toString()}});
+            if (!firstLeaf)
+                firstLeaf = item;
+        }
     }
 
     const QJsonArray related = investigation.value(QStringLiteral("related")).toArray();
@@ -851,6 +996,110 @@ void ResultWidget::populateInvestigation(const QJsonObject &report)
                              ? tr("Showing %1 of %2 passive observations. These are not ownership claims.").arg(related.size()).arg(total)
                              : tr("Passive observations are historical provider data, not ownership claims."));
     m_related->setSortingEnabled(true);
+    if (firstLeaf)
+        m_stack->setCurrentItem(firstLeaf);
+    AdaptiveItemView::refresh(m_stack);
+    AdaptiveItemView::refresh(m_related);
+}
+
+void ResultWidget::clearStackDetails()
+{
+    m_stackDetailTitle->setText(tr("Details"));
+    m_stackDetailSummary->setText(tr("Select a technology, network, link, or note to see its details."));
+    m_evidence->setSortingEnabled(false);
+    m_evidence->setRowCount(0);
+    m_evidence->setSortingEnabled(true);
+    m_evidence->setVisible(false);
+    while (QLayoutItem *item = m_stackActionsLayout->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    m_stackActions->setVisible(false);
+}
+
+void ResultWidget::showStackDetails(QTreeWidgetItem *item)
+{
+    const QString kind = item ? item->data(0, StackKindRole).toString() : QString();
+    const QJsonObject payload = stackPayload(item);
+    if (kind.isEmpty() || payload.isEmpty()) {
+        clearStackDetails();
+        return;
+    }
+
+    clearStackDetails();
+    m_evidence->setSortingEnabled(false);
+    const auto addEvidence = [this](const QString &source, const QString &subject,
+                                    const QString &field, const QString &value) {
+        if (value.trimmed().isEmpty())
+            return;
+        const int row = m_evidence->rowCount();
+        m_evidence->insertRow(row);
+        m_evidence->setItem(row, 0, new QTableWidgetItem(source));
+        m_evidence->setItem(row, 1, new QTableWidgetItem(subject));
+        m_evidence->setItem(row, 2, new QTableWidgetItem(field));
+        m_evidence->setItem(row, 3, new QTableWidgetItem(value));
+    };
+    const auto addLink = [this](const QJsonObject &link) {
+        const QUrl url(link.value(QStringLiteral("url")).toString());
+        if (!url.isValid() || url.scheme() != QStringLiteral("https"))
+            return;
+        const QString label = link.value(QStringLiteral("label")).toString(tr("Open link"));
+        auto *button = new QPushButton(label, m_stackActions);
+        button->setToolTip(url.toString());
+        connect(button, &QPushButton::clicked, this, [url] { QDesktopServices::openUrl(url); });
+        m_stackActionsLayout->addWidget(button);
+    };
+
+    if (kind == QStringLiteral("component")) {
+        m_stackDetailTitle->setText(payload.value(QStringLiteral("name")).toString());
+        QString summary = payload.value(QStringLiteral("summary")).toString();
+        if (summary.isEmpty())
+            summary = payload.value(QStringLiteral("role")).toString();
+        m_stackDetailSummary->setText(summary);
+        for (const QJsonValue &value : payload.value(QStringLiteral("evidence")).toArray()) {
+            const QJsonObject evidence = value.toObject();
+            addEvidence(evidence.value(QStringLiteral("source")).toString(),
+                        evidence.value(QStringLiteral("subject")).toString(),
+                        evidence.value(QStringLiteral("field")).toString(),
+                        evidence.value(QStringLiteral("value")).toString());
+        }
+    } else if (kind == QStringLiteral("network")) {
+        const QString address = payload.value(QStringLiteral("address")).toString();
+        const QString provider = payload.value(QStringLiteral("provider")).toString();
+        m_stackDetailTitle->setText(provider.isEmpty() ? address : address + QStringLiteral(" — ") + provider);
+        const QString owner = payload.value(QStringLiteral("operator")).toString(payload.value(QStringLiteral("network_name")).toString());
+        m_stackDetailSummary->setText(owner.isEmpty() ? tr("Public network attribution") : tr("Registered operator: %1").arg(owner));
+        addEvidence(payload.value(QStringLiteral("source")).toString(), address, tr("Provider"), provider);
+        addEvidence(payload.value(QStringLiteral("source")).toString(), address, tr("Operator"), owner);
+        addEvidence(payload.value(QStringLiteral("source")).toString(), address, QStringLiteral("PTR"), joined(payload.value(QStringLiteral("ptr"))));
+        addEvidence(payload.value(QStringLiteral("source")).toString(), address, QStringLiteral("CIDR"), joined(payload.value(QStringLiteral("cidr"))));
+        addEvidence(payload.value(QStringLiteral("source")).toString(), address, tr("Country"), payload.value(QStringLiteral("country")).toString());
+        for (const QJsonValue &value : payload.value(QStringLiteral("links")).toArray())
+            addLink(value.toObject());
+    } else if (kind == QStringLiteral("link")) {
+        m_stackDetailTitle->setText(payload.value(QStringLiteral("label")).toString());
+        m_stackDetailSummary->setText(tr("Manual investigation pivot. Whodis opens it only when you choose to."));
+        addEvidence(tr("Link"), payload.value(QStringLiteral("value")).toString(), tr("Type"), payload.value(QStringLiteral("type")).toString());
+        addEvidence(tr("Link"), payload.value(QStringLiteral("value")).toString(), QStringLiteral("URL"), payload.value(QStringLiteral("url")).toString());
+        addLink(payload);
+    } else if (kind == QStringLiteral("warning")) {
+        m_stackDetailTitle->setText(tr("Note"));
+        m_stackDetailSummary->setText(payload.value(QStringLiteral("message")).toString());
+    }
+
+    m_evidence->setSortingEnabled(true);
+    m_evidence->setVisible(m_evidence->rowCount() > 0);
+    m_stackActions->setVisible(m_stackActionsLayout->count() > 0);
+    AdaptiveItemView::refresh(m_evidence);
+}
+
+void ResultWidget::refreshViews()
+{
+    AdaptiveItemView::refresh(m_overview);
+    AdaptiveItemView::refresh(m_stack);
+    for (QTableWidget *table : {m_dns, m_compare, m_delegation, m_services, m_findings,
+                                m_evidence, m_related, m_errors, m_contacts})
+        AdaptiveItemView::refresh(table);
 }
 
 void ResultWidget::populateFindings(const QJsonObject &report)

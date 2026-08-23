@@ -15,6 +15,8 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Widgets)
 
 set(WHODIS_GUI_SOURCES
+    src/AdaptiveItemView.cpp
+    src/AdaptiveItemView.h
     src/Appearance.cpp
     src/Appearance.h
     src/AdvancedDialog.cpp
@@ -102,6 +104,8 @@ if(BUILD_TESTING)
     find_package(Qt6 6.2 REQUIRED COMPONENTS Test)
     qt_add_executable(whodis-gui-tests
         tests/ResultWidgetTest.cpp
+        src/AdaptiveItemView.cpp
+        src/AdaptiveItemView.h
         src/ResultWidget.cpp
         src/ResultWidget.h
         resources/resources.qrc

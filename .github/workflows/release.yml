@@ -6,7 +6,7 @@ on:
       version:
         description: Version identity used by non-publishing preflight packages
         required: true
-        default: 2.1.0
+        default: 2.2.0
   push:
     tags:
       - "v*"

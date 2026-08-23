@@ -49,7 +49,9 @@ stable machine-readable report.
   response when one unmodified registration lookup is what you need.
 - **Native desktop workbench** — Lookup, DNS Inventory, DNS Query, Compare,
   Delegation, Diagnose, Stack, Related, Services, Findings, Contacts, and Raw
-  views without a browser or a separately installed CLI.
+  views without a browser or a separately installed CLI. Result columns are
+  adjustable and remembered per view, while long values wrap instead of being
+  clipped or forcing the whole layout sideways.
 
 ## See it in action
 
@@ -274,8 +276,12 @@ Each detected component has a category, role, `high`/`medium`/`low`
 confidence, and the exact bounded evidence behind it. Whodis deliberately
 separates a network owner such as Amazon from a managed hosting provider, and
 does not call a lone `autodiscover` record Microsoft 365 or cPanel. A compact
-summary is followed by evidence tables in terminal output; the desktop app uses
-dedicated **Stack** and **Related** tabs.
+summary is followed by evidence tables in terminal output. In the desktop app,
+the **Overview** immediately summarizes web technology, server/edge, hosting,
+network, DNS, mail, and analytics/security findings. The **Stack** view uses a
+clean master/detail layout: select one technology, network, link, or note to
+see its wrapped summary and evidence below, without repetitive evidence rows.
+The **Related** view keeps passive observations separate from stack claims.
 
 Local investigation is the default. It does not execute JavaScript, crawl the
 site, scan arbitrary ports, or contact related domains. A configurable HTTPS

@@ -11,6 +11,14 @@ Overview, Stack, Related, DNS, Compare, Delegation, Services, Findings,
 Contacts, and Raw tabs. The separate batch workspace also supports Investigate
 through the same operation engine and exports CSV, TSV, or JSON.
 
+Result and batch tables use wrapped, user-adjustable columns. Widths are saved
+independently for each view, and row heights adapt when a column changes. An
+investigation opens on Overview with a categorized technology and
+infrastructure summary. Stack is a master/detail workspace: category headings
+organize selectable findings, while one lower pane shows the selected summary,
+evidence, and explicit manual-pivot buttons. Its splitter position is also
+remembered.
+
 Investigate is local by default. Its Advanced-dialog OTX checkbox is an
 explicit, session-only third-party opt-in and is never restored automatically.
 Harmless related-result, pivot-link, and endpoint preferences may be saved; an

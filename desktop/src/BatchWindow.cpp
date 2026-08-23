@@ -1,5 +1,6 @@
 #include "BatchWindow.h"
 
+#include "AdaptiveItemView.h"
 #include "EngineClient.h"
 #include "ResultWidget.h"
 
@@ -8,7 +9,6 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -101,14 +101,8 @@ BatchWindow::BatchWindow(EngineClient *engine, const QJsonObject &options, QWidg
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setSortingEnabled(true);
     m_table->setAlternatingRowColors(true);
-    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
-    m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
-    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
-    m_table->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Stretch);
+    m_table->setObjectName(QStringLiteral("batchResultsTable"));
+    AdaptiveItemView::configure(m_table, QStringLiteral("batch/layout-v1/results"), {4, 2, 3, 4, 2, 6, 2, 5});
 
     auto *splitter = new QSplitter(Qt::Vertical, this);
     auto *top = new QWidget(splitter);
@@ -214,6 +208,7 @@ void BatchWindow::beginLookup(const QStringList &targets)
         for (int column = 2; column < m_table->columnCount(); ++column)
             m_table->setItem(row, column, new QTableWidgetItem);
     }
+    AdaptiveItemView::refresh(m_table);
     m_token.clear();
     m_result->clearResult();
     m_progress->setRange(0, targets.size());
@@ -397,6 +392,7 @@ void BatchWindow::updateRow(int index, const QJsonObject &item)
     for (const QJsonValue &value : errors)
         errorMessages.append(value.toObject().value(QStringLiteral("message")).toString());
     m_table->item(row, 7)->setText(errorMessages.join(QStringLiteral("; ")));
+    AdaptiveItemView::refreshRow(m_table, row);
 }
 
 int BatchWindow::rowForIndex(int index) const
@@ -421,6 +417,7 @@ void BatchWindow::finishLookup(bool canceled)
     m_retry->setEnabled(failures > 0);
     m_export->setEnabled(!m_token.isEmpty());
     m_table->setSortingEnabled(true);
+    AdaptiveItemView::refresh(m_table);
     statusBar()->showMessage(canceled ? tr("Batch canceled.") : tr("Batch complete: %1 failures.").arg(failures), 7000);
 }
 

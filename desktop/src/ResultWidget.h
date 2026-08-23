@@ -4,11 +4,15 @@
 #include <QWidget>
 
 class QComboBox;
+class QHBoxLayout;
 class QLabel;
 class QPlainTextEdit;
+class QPushButton;
+class QSplitter;
 class QTableWidget;
 class QTabWidget;
 class QTreeWidget;
+class QTreeWidgetItem;
 
 class ResultWidget final : public QWidget
 {
@@ -33,6 +37,7 @@ signals:
 
 private:
     void populateOverview(const QJsonObject &result);
+    void populateInvestigationOverview(const QJsonObject &investigation);
     void populateDNS(const QJsonObject &result);
     void populateReportDNS(const QJsonObject &report);
     void populateCompare(const QJsonObject &report);
@@ -43,6 +48,9 @@ private:
     void populateErrors(const QJsonObject &report);
     void populateContacts(const QJsonObject &result);
     void populateRaw(const QJsonArray &sources);
+    void clearStackDetails();
+    void showStackDetails(QTreeWidgetItem *item);
+    void refreshViews();
 
     QTabWidget *m_tabs;
     QTreeWidget *m_overview;
@@ -52,6 +60,13 @@ private:
     QTableWidget *m_services;
     QTableWidget *m_findings;
     QTreeWidget *m_stack;
+    QWidget *m_stackPage;
+    QSplitter *m_stackSplitter;
+    QLabel *m_stackDetailTitle;
+    QLabel *m_stackDetailSummary;
+    QTableWidget *m_evidence;
+    QWidget *m_stackActions;
+    QHBoxLayout *m_stackActionsLayout;
     QTableWidget *m_related;
     QTableWidget *m_errors;
     QTableWidget *m_contacts;

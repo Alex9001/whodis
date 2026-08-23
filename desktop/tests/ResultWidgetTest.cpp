@@ -3,6 +3,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPlainTextEdit>
+#include <QHeaderView>
+#include <QSettings>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTreeWidget>
@@ -16,6 +18,7 @@ private slots:
     void displaysTargetAndDNS();
     void displaysSchemaV5WorkbenchTabs();
     void displaysInvestigationStackAndRelatedTabs();
+    void wrapsAndRemembersAdjustableColumns();
     void deduplicatesEquivalentTimelineAndDNSRows();
     void showsResolverAgreementAndRawSource();
 };
@@ -102,6 +105,7 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
                                 {QStringLiteral("name"), QStringLiteral("WordPress")},
                                 {QStringLiteral("role"), QStringLiteral("CMS")},
                                 {QStringLiteral("confidence"), QStringLiteral("high")},
+                                {QStringLiteral("summary"), QStringLiteral("WordPress was identified from public homepage markup.")},
                                 {QStringLiteral("evidence"), QJsonArray{evidence}}};
     const QJsonObject related{{QStringLiteral("provider"), QStringLiteral("otx")},
                               {QStringLiteral("hostname"), QStringLiteral("neighbor.example")},
@@ -120,9 +124,33 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
                                      {QStringLiteral("report"), report}});
 
     QCOMPARE(widget.relatedRowCount(), 1);
-    const QTreeWidget *stack = widget.findChild<QTreeWidget *>(QStringLiteral("stackTree"));
+    QTreeWidget *stack = widget.findChild<QTreeWidget *>(QStringLiteral("stackTree"));
     QVERIFY(stack);
-    QVERIFY(stack->topLevelItemCount() >= 2);
+    QCOMPARE(stack->columnCount(), 4);
+    QVERIFY(stack->topLevelItemCount() >= 1);
+    QTreeWidgetItem *technology = nullptr;
+    for (int group = 0; group < stack->topLevelItemCount(); ++group) {
+        for (int row = 0; row < stack->topLevelItem(group)->childCount(); ++row) {
+            QTreeWidgetItem *candidate = stack->topLevelItem(group)->child(row);
+            if (candidate->text(1) == QStringLiteral("WordPress"))
+                technology = candidate;
+        }
+    }
+    QVERIFY(technology);
+    QCOMPARE(technology->childCount(), 0);
+    stack->setCurrentItem(technology);
+    QCoreApplication::processEvents();
+    const QTableWidget *evidenceTable = widget.findChild<QTableWidget *>(QStringLiteral("stackEvidenceTable"));
+    QVERIFY(evidenceTable);
+    QCOMPARE(evidenceTable->rowCount(), 1);
+    QCOMPARE(evidenceTable->item(0, 3)->text(), QStringLiteral("WordPress asset paths"));
+
+    const QTreeWidget *overview = widget.findChild<QTreeWidget *>(QStringLiteral("overviewTree"));
+    QVERIFY(overview);
+    QVERIFY(overview->topLevelItemCount() >= 2);
+    QCOMPARE(overview->topLevelItem(1)->text(0), QStringLiteral("Technology & infrastructure"));
+    QCOMPARE(overview->topLevelItem(1)->child(0)->text(0), QStringLiteral("Web technology"));
+    QCOMPARE(overview->topLevelItem(1)->child(0)->text(1), QStringLiteral("WordPress"));
     const QTabWidget *tabs = widget.findChild<QTabWidget *>();
     QVERIFY(tabs);
     for (const QString &name : {QStringLiteral("Stack"), QStringLiteral("Related")}) {
@@ -134,7 +162,38 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
         QVERIFY(index >= 0);
         QVERIFY(tabs->isTabVisible(index));
     }
-    QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("Stack"));
+    QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("Overview"));
+}
+
+void ResultWidgetTest::wrapsAndRemembersAdjustableColumns()
+{
+    QSettings settings;
+    settings.remove(QStringLiteral("result/layout-v1/dns"));
+    {
+        ResultWidget widget;
+        QCoreApplication::processEvents();
+        const QTreeWidget *overview = widget.findChild<QTreeWidget *>(QStringLiteral("overviewTree"));
+        const QTableWidget *dns = widget.findChild<QTableWidget *>(QStringLiteral("dnsTable"));
+        QVERIFY(overview);
+        QVERIFY(dns);
+        QVERIFY(overview->wordWrap());
+        QCOMPARE(overview->textElideMode(), Qt::ElideNone);
+        QCOMPARE(overview->header()->sectionResizeMode(0), QHeaderView::Interactive);
+        QVERIFY(dns->wordWrap());
+        QCOMPARE(dns->textElideMode(), Qt::ElideNone);
+        QCOMPARE(dns->horizontalHeader()->sectionResizeMode(3), QHeaderView::Interactive);
+        dns->horizontalHeader()->resizeSection(3, 137);
+        QCOMPARE(dns->horizontalHeader()->sectionSize(3), 137);
+        QTest::qWait(100);
+    }
+    settings.sync();
+    {
+        ResultWidget widget;
+        const QTableWidget *dns = widget.findChild<QTableWidget *>(QStringLiteral("dnsTable"));
+        QVERIFY(dns);
+        QCOMPARE(dns->horizontalHeader()->sectionSize(3), 137);
+    }
+    settings.remove(QStringLiteral("result/layout-v1/dns"));
 }
 
 void ResultWidgetTest::deduplicatesEquivalentTimelineAndDNSRows()
