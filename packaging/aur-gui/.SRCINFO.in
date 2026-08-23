@@ -1,5 +1,5 @@
 pkgbase = whodis-gui
-	pkgdesc = Native Qt interface for the Whodis RDAP, WHOIS, RWhois, and DNS client
+	pkgdesc = Native interface for evidence-backed domain investigation with Whodis
 	pkgver = @PKGVER@
 	pkgrel = 1
 	url = https://github.com/Alex9001/whodis
