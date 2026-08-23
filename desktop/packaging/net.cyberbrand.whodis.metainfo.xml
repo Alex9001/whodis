@@ -4,13 +4,14 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Whodis</name>
-  <summary>Inspect domain registration, DNS, services, and website stacks</summary>
+  <summary>Investigate domain identity, infrastructure, services, and technology</summary>
   <description>
     <p>
-      Whodis is a readable WHOIS alternative for the RDAP era. It discovers
-      the appropriate RDAP, WHOIS, or RWhois authority and combines that data
-      with DNS inventory, bounded diagnostics, evidence-backed technology and
-      infrastructure profiling, and a score-free homepage audit.
+      Whodis is a full, evidence-backed domain investigation suite. It starts
+      with the appropriate RDAP, WHOIS, or RWhois authority, then connects that
+      identity to DNS inventory, bounded service diagnostics, infrastructure
+      attribution, technology profiling, research pivots, change tracking, and
+      a score-free homepage audit.
     </p>
     <p>
       The native desktop application provides registration, DNS query,

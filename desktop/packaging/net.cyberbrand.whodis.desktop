@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Whodis
-Comment=Domain registration, DNS, diagnostics, and stack investigation
+Comment=Investigate domain identity, DNS, services, and web technology
 Exec=whodis-gui
 Icon=net.cyberbrand.whodis
 Terminal=false

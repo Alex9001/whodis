@@ -5,8 +5,9 @@
 <h1 align="center">whodis</h1>
 
 <p align="center">
-  <strong>A WHOIS alternative that actually understands modern domain infrastructure.</strong><br>
-  Whodis starts with authoritative RDAP, falls back to WHOIS when needed, follows RWhois referrals, and turns the result into something you can read.
+  <strong>A full, evidence-backed domain investigation suite.</strong><br>
+  See who—and what—is behind a domain: registration, DNS, infrastructure,
+  diagnostics, web technology, related domains, and change over time.
 </p>
 
 <p align="center">
@@ -25,20 +26,56 @@
   <a href="https://github.com/Alex9001/whodis/issues">Issues</a>
 </p>
 
-Classic `whois` gives you a protocol-era text dump. Whodis accepts a
-domain, IP address, network, or ASN, discovers the right RDAP, WHOIS, or RWhois
-authority, and organizes the answer into a responsive terminal dashboard. It
-also grows into a full domain workstation when you need it: inventory DNS,
-compare resolvers, verify DNSSEC, trace delegation, diagnose web and mail
-service, profile a site's technology and infrastructure with explainable
-evidence, save snapshots, detect changes, enforce health policy, or export a
-stable machine-readable report.
+<p align="center"><strong>One command. The identity behind the domain.</strong></p>
 
-## Output made for humans—and scripts
+![Whodis terminal dashboard showing an automatic RDAP lookup for cyberbrand.net](docs/whodis-cli.png)
 
-- **Responsive terminal dashboard** — a spreadsheet-like panel grid that uses
+`whodis cyberbrand.net` discovers the authoritative source automatically and
+turns the result into a readable terminal workspace. Start there for the
+original question. Go deeper when you need the whole story.
+
+## One target. The answer you need
+
+Whodis accepts a domain, IP address, network, or ASN. Registration identity is
+the effortless default; focused operations add DNS, service health,
+infrastructure attribution, technology evidence, research pivots, and change
+tracking without making the simple lookup complicated.
+
+| Question | Command | What Whodis shows |
+|---|---|---|
+| Who manages it? | `whodis cyberbrand.net` | Authoritative RDAP, WHOIS, or RWhois registration, status, dates, contacts, and nameservers |
+| What is published? | `whodis inspect cyberbrand.net` | Registration plus a practical public-DNS inventory |
+| Is it configured and reachable? | `whodis diagnose cyberbrand.net` | DNS, delegation, web, TLS, mail, and advertised-service findings |
+| What is behind the site? | `whodis investigate cyberbrand.net` | Hosting and network attribution, technology stack, homepage observations, research links, and evidence |
+| What changed or needs attention? | `whodis diff …` / `whodis check …` | Semantic changes and deterministic policy results for automation or monitoring |
+
+## A full domain investigation suite
+
+- **Registration and identity** — route domains, IPs, networks, and ASNs to
+  the right IANA-published RDAP authority, fall back to WHOIS when appropriate,
+  and follow RWhois referrals without making users learn the protocol map.
+- **DNS and delegation** — inventory records, query arbitrary types, compare
+  resolvers, validate DNSSEC, trace delegation from the root, and perform
+  explicit bounded zone transfers.
+- **Infrastructure and service diagnostics** — connect public DNS to network
+  ownership, hosting signals, HTTP, TLS, SMTP, mail policy, reachability, and
+  advertised services with scoped findings instead of an opaque score.
+- **Website technology investigation** — identify platforms, versions,
+  WordPress plugins and themes, commerce, optimization, server and edge
+  technology, and homepage delivery signals with confidence and inspectable
+  evidence.
+- **Research and relationships** — generate curated manual pivots for public
+  sources and, only when requested, add bounded AlienVault OTX passive-DNS
+  observations without presenting historical neighbors as ownership claims.
+- **Change tracking and automation** — save sanitized observations, compare
+  meaningful changes, enforce policy, process large batches, and export a
+  stable report for scripts and other applications.
+
+## Built for terminals, desktops, and automation
+
+- **Responsive terminal dashboard** — a spreadsheet-like panel grid uses
   the available width without repeating contacts, notices, or nameservers.
-- **Multiple personalities** — dashboard, semantic tree, retro GeekBoys ASCII,
+- **Multiple layouts** — dashboard, semantic tree, retro GeekBoys ASCII,
   and portable plain text are one switch away.
 - **Structured output** — versioned JSON/YAML, one-row-per-target CSV, and
   streaming-friendly NDJSON support automation; Markdown makes a portable
@@ -57,7 +94,23 @@ stable machine-readable report.
   review a score-free homepage delivery, SEO, security-header, and
   accessibility snapshot.
 
-## See it in action
+<table>
+  <tr>
+    <th width="50%">Semantic tree</th>
+    <th width="50%">GeekBoys retro ASCII</th>
+  </tr>
+  <tr>
+    <td><img src="docs/whodis-cli-tree.png" alt="Whodis semantic tree output for palantir.com"></td>
+    <td><img src="docs/whodis-cli-geekboys.png" alt="Whodis GeekBoys ASCII output for geekboys.org"></td>
+  </tr>
+</table>
+
+## Native desktop when you want it
+
+The CLI stays small for shells, scripts, SSH sessions, and servers. The
+separately packaged native desktop application exposes the same engine through
+focused registration, DNS, diagnosis, investigation, research, findings,
+batch, and raw-data views.
 
 <p align="center"><strong>Registration overview</strong> · Live RDAP lookup for <code>cyberbrand.net</code></p>
 
@@ -78,9 +131,8 @@ stable machine-readable report.
 
 ![Whodis batch lookup showing four completed domain checks](docs/whodis-gui-batch.png)
 
-The terminal dashboard rearranges the same normalized data into a wide mosaic
-or a narrow single-column view. Long registry notices are deduplicated and
-summarized; `--details` expands them.
+The GUI and every terminal renderer consume the same normalized report. Long
+registry notices are deduplicated and summarized; `--details` expands them.
 
 ## Install
 
@@ -398,6 +450,8 @@ Run the interactive wizard:
 ```bash
 whodis config
 ```
+
+![Whodis interactive configuration wizard showing output format and color choices](docs/whodis-cli-config.png)
 
 It configures output layout, color, notice detail, DNS resolver and DNSSEC
 defaults, the manual research-link preset and related-result limit, plus the
