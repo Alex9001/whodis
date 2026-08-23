@@ -27,7 +27,7 @@ only to the AUR packaging files.
 - GUI install: `/usr/bin/whodis-gui`, private engine under
   `/usr/libexec/whodis/`, desktop entry, and icon
 - GUI dependency: `qt6-base`
-- Next package target: `2.0.1-1`; use the newest stable release when publishing
+- Next package target: `2.1.0-1`; use the newest stable release when publishing
 
 The workstation previously had a dedicated key:
 
@@ -66,12 +66,12 @@ Never commit, paste, or upload the private key. Only the `.pub` half is public.
 ## 2. Select a release
 
 Use the newest stable release containing the GUI source. The current package
-target is `v2.0.1`; replace it with a newer stable release if one exists when
+target is `v2.1.0`; replace it with a newer stable release if one exists when
 the account is ready. Do not use a prerelease because automatic AUR publication
 deliberately ignores prerelease tags.
 
 ```bash
-release_tag=v2.0.1
+release_tag=v2.1.0
 release_version=${release_tag#v}
 gh release view "$release_tag" --repo Alex9001/whodis
 ```
