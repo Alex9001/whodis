@@ -30,17 +30,13 @@ jobs:
           - runner: ubuntu-22.04
             arch: amd64
             tool_arch: x86_64
-            linuxdeploy_asset: 497463883
             linuxdeploy_sha256: 421ca71d5c69ea97c6309276232990d43df1dcece0edfaa26bbf926ff96ed12e
-            qt_plugin_asset: 421996681
-            qt_plugin_sha256: be1b7e166bf9975cfb694ebe6759ba40502ffc6196440d3e64aa90c4dbd67e9f
+            qt_plugin_sha256: cfc1055b2b9dbc08412b579f20990b7b41a17b61beaa5847dc9477c96c9e9617
           - runner: ubuntu-22.04-arm
             arch: arm64
             tool_arch: aarch64
-            linuxdeploy_asset: 497463664
             linuxdeploy_sha256: 9f04c4c2a8b69c392c4bbcc1a88bdd4d0a8ac03f587cf5242814cb7ae47b78e5
-            qt_plugin_asset: 421996594
-            qt_plugin_sha256: 5525e6c49c3c774c02b8864d2acc2ae4c5c0ccc3327f7dce626deaa36348e5c6
+            qt_plugin_sha256: d5b5a9020065cefda8c7af7c9500f686b23640eac50c88201a81752c6ee2e49c
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -53,16 +49,15 @@ jobs:
           sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libgl1-mesa-dev libfuse2 file weston xauth xvfb
       - name: Install linuxdeploy
         env:
-          GH_TOKEN: ${{ github.token }}
-          LINUXDEPLOY_ASSET: ${{ matrix.linuxdeploy_asset }}
           LINUXDEPLOY_SHA256: ${{ matrix.linuxdeploy_sha256 }}
-          QT_PLUGIN_ASSET: ${{ matrix.qt_plugin_asset }}
           QT_PLUGIN_SHA256: ${{ matrix.qt_plugin_sha256 }}
         run: |
-          gh api -H 'Accept: application/octet-stream' \
-            "repos/linuxdeploy/linuxdeploy/releases/assets/$LINUXDEPLOY_ASSET" > linuxdeploy
-          gh api -H 'Accept: application/octet-stream' \
-            "repos/linuxdeploy/linuxdeploy-plugin-qt/releases/assets/$QT_PLUGIN_ASSET" > linuxdeploy-plugin-qt
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output linuxdeploy \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.tool_arch }}.AppImage"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output linuxdeploy-plugin-qt \
+            "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${{ matrix.tool_arch }}.AppImage"
           printf '%s  %s\n' "$LINUXDEPLOY_SHA256" linuxdeploy | sha256sum --check --strict
           printf '%s  %s\n' "$QT_PLUGIN_SHA256" linuxdeploy-plugin-qt | sha256sum --check --strict
           chmod +x linuxdeploy linuxdeploy-plugin-qt
