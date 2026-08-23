@@ -78,6 +78,8 @@ type cliOptions struct {
 	remote            bool
 	enrichments       []string
 	relatedLimit      int
+	linkProviders     []string
+	linkProvidersSet  bool
 	investigationLink string
 	otxEndpoint       string
 	color             string
@@ -243,6 +245,9 @@ func runEngineTask(inputs []string, options cliOptions, format whodis.Format, co
 		if options.relatedLimit == 0 {
 			options.relatedLimit = config.RelatedLimit
 		}
+		if !options.linkProvidersSet {
+			options.linkProviders = append([]string(nil), config.ResearchLinks...)
+		}
 		if options.investigationLink == "" {
 			options.investigationLink = config.InvestigationLink
 		}
@@ -275,7 +280,7 @@ func runEngineTask(inputs []string, options cliOptions, format whodis.Format, co
 		if operation == whodis.OperationInvestigate {
 			request.Investigation = whodis.InvestigationOptions{
 				DNS: dnsOptions, Enrichments: append([]string(nil), options.enrichments...),
-				RelatedLimit: options.relatedLimit, ExternalLinkTemplate: options.investigationLink,
+				RelatedLimit: options.relatedLimit, LinkProviders: append([]string(nil), options.linkProviders...), ExternalLinkTemplate: options.investigationLink,
 				OTXEndpoint: options.otxEndpoint, OTXToken: runtime.getenv("WHODIS_OTX_API_KEY"),
 			}
 		}
@@ -648,6 +653,16 @@ func parseArgs(args []string) (cliOptions, error) {
 				return options, err
 			}
 			options.investigationLink = strings.TrimSpace(v)
+		case "--research-links":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.linkProviders = splitCommaValues(v)
+			if len(options.linkProviders) == 0 {
+				return options, fmt.Errorf("--research-links requires core, all, off, or provider IDs")
+			}
+			options.linkProvidersSet = true
 		case "--otx-endpoint":
 			v, err := value()
 			if err != nil {
@@ -811,6 +826,17 @@ func parseFieldList(value string, appendField func(whodis.ProjectionField)) erro
 	return nil
 }
 
+func splitCommaValues(value string) []string {
+	var result []string
+	for _, entry := range strings.Split(value, ",") {
+		entry = strings.ToLower(strings.TrimSpace(entry))
+		if entry != "" {
+			result = append(result, entry)
+		}
+	}
+	return result
+}
+
 func validateCLIOptions(options cliOptions) error {
 	if options.protocol == whodis.ProtocolRWHOIS && strings.TrimSpace(options.server) == "" && !options.help {
 		return fmt.Errorf("rwhois requires --server")
@@ -836,8 +862,8 @@ func validateCLIOptions(options cliOptions) error {
 	if (options.trace || options.remote) && options.task != taskDiagnose {
 		return fmt.Errorf("--trace and --remote require diagnose")
 	}
-	if (len(options.enrichments) > 0 || options.relatedLimit > 0 || options.investigationLink != "" || options.otxEndpoint != "") && options.task != taskInvestigate {
-		return fmt.Errorf("--enrich, --related-limit, --investigation-link, and --otx-endpoint require investigate")
+	if (len(options.enrichments) > 0 || options.relatedLimit > 0 || options.linkProvidersSet || options.investigationLink != "" || options.otxEndpoint != "") && options.task != taskInvestigate {
+		return fmt.Errorf("--enrich, --related-limit, --research-links, --investigation-link, and --otx-endpoint require investigate")
 	}
 	for _, provider := range options.enrichments {
 		if provider != "otx" {
@@ -846,7 +872,7 @@ func validateCLIOptions(options cliOptions) error {
 	}
 	if options.task == taskInvestigate {
 		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{
-			RelatedLimit: options.relatedLimit, ExternalLinkTemplate: options.investigationLink, OTXEndpoint: options.otxEndpoint,
+			RelatedLimit: options.relatedLimit, LinkProviders: options.linkProviders, ExternalLinkTemplate: options.investigationLink, OTXEndpoint: options.otxEndpoint,
 		}); err != nil {
 			return err
 		}
@@ -1330,8 +1356,10 @@ DNS:
 Investigation (explicit third-party enrichment is off by default):
       --enrich otx         query OTX passive DNS for discovered public web addresses
       --related-limit <n>  retain 1-100 related observations (default: 25)
+      --research-links <selection>
+                           core, all, off, or comma-separated provider IDs
       --investigation-link <template|off>
-                           HTTPS pivot containing {type} and {value}
+                           optional custom HTTPS pivot containing {type} and {value}
       --otx-endpoint <url> override the OTX API base URL
 
 Environment:
@@ -1366,7 +1394,7 @@ func runCompletion(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	commands := "lookup registration inspect dns diagnose investigate check snapshot diff expires get config help completion"
-	options := "--format --dashboard --tree --geekboys --plain --json --yaml --csv --ndjson --markdown --raw --output --input --jobs --timeout --color --details --summary --force --save --label --active --passive --against --snapshot --scrutiny --policy --webhook-env --webhook-file --live --allow-snapshot-endpoints --include-ttl --server --strict --try-both --refresh --allow-private --allow-insecure-http --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret-env --tsig-secret-file --tsig-algorithm --globalping --from --limit --trace --remote --enrich --related-limit --investigation-link --otx-endpoint --help --version"
+	options := "--format --dashboard --tree --geekboys --plain --json --yaml --csv --ndjson --markdown --raw --output --input --jobs --timeout --color --details --summary --force --save --label --active --passive --against --snapshot --scrutiny --policy --webhook-env --webhook-file --live --allow-snapshot-endpoints --include-ttl --server --strict --try-both --refresh --allow-private --allow-insecure-http --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret-env --tsig-secret-file --tsig-algorithm --globalping --from --limit --trace --remote --enrich --related-limit --research-links --investigation-link --otx-endpoint --help --version"
 	switch strings.ToLower(args[0]) {
 	case "bash":
 		fmt.Fprintf(stdout, `_whodis_complete() {
@@ -1513,13 +1541,19 @@ labelled current, stale, or unknown.
 Options:
   --enrich otx                       opt in to OTX passive-DNS enrichment
   --related-limit <1-100>            maximum related observations (default: 25)
-  --investigation-link <template>    HTTPS pivot containing {type} and {value}, or off
+  --research-links <selection>       core, all, off, or comma-separated provider IDs
+  --investigation-link <template>    optional custom HTTPS pivot containing {type} and {value}, or off
   --otx-endpoint <url>               override the OTX API base URL
   --timeout <duration>               complete investigation budget (default: 30s)
 
 Example: whodis investigate example.com --dashboard
+         whodis investigate example.com --research-links all
          whodis investigate example.com --enrich otx --json
 `)
+	fmt.Fprintln(writer, "\nResearch link providers:")
+	for _, provider := range whodis.AvailableInvestigationLinkProviders() {
+		fmt.Fprintf(writer, "  %-13s %-4s %s (%s)\n", provider.ID, provider.Tier, provider.Purpose, strings.Join(provider.Targets, ", "))
+	}
 }
 
 func printProtocolsUsage(writer io.Writer) {
@@ -1581,8 +1615,10 @@ func printAdvancedUsage(writer io.Writer) {
       --limit <count>       Globalping probe limit, 1-10
       --enrich otx         opt in to passive-DNS enrichment for investigate
       --related-limit <n>  retain 1-100 related observations
+      --research-links <selection>
+                           core, all, off, or comma-separated provider IDs
       --investigation-link <template|off>
-                           HTTPS pivot containing {type} and {value}
+                           optional custom HTTPS pivot containing {type} and {value}
       --otx-endpoint <url> override the OTX API base URL
       --server <endpoint>   explicit server, with rdap/whois/rwhois
       --strict              do not fall back to another registration protocol

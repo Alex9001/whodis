@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
 #include <QProcess>
@@ -19,7 +20,7 @@ public:
     void cancel(const QString &requestId);
 
 signals:
-    void engineReady(const QString &version, int protocolVersion);
+    void engineReady(const QString &version, int protocolVersion, const QJsonArray &investigationLinkProviders);
     void engineUnavailable(const QString &message);
     void responseReceived(const QString &requestId, const QString &method, const QJsonValue &result);
     void requestFailed(const QString &requestId, const QString &method, const QString &message);

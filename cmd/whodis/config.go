@@ -45,6 +45,7 @@ type userConfig struct {
 	DNSSEC            *bool    `json:"dnssec,omitempty"`
 	Scrutiny          string   `json:"scrutiny,omitempty"`
 	CheckActive       *bool    `json:"check_active,omitempty"`
+	ResearchLinks     []string `json:"research_links,omitempty"`
 	InvestigationLink string   `json:"investigation_link,omitempty"`
 	RelatedLimit      int      `json:"related_limit,omitempty"`
 	OTXEndpoint       string   `json:"otx_endpoint,omitempty"`
@@ -172,11 +173,11 @@ func removeUserConfig(runtime cliRuntime) error {
 }
 
 func configIsEmpty(config userConfig) bool {
-	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil && len(config.DNSResolvers) == 0 && strings.TrimSpace(config.ResolverStrategy) == "" && config.DNSSEC == nil && strings.TrimSpace(config.Scrutiny) == "" && config.CheckActive == nil && strings.TrimSpace(config.InvestigationLink) == "" && config.RelatedLimit == 0 && strings.TrimSpace(config.OTXEndpoint) == ""
+	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil && len(config.DNSResolvers) == 0 && strings.TrimSpace(config.ResolverStrategy) == "" && config.DNSSEC == nil && strings.TrimSpace(config.Scrutiny) == "" && config.CheckActive == nil && len(config.ResearchLinks) == 0 && strings.TrimSpace(config.InvestigationLink) == "" && config.RelatedLimit == 0 && strings.TrimSpace(config.OTXEndpoint) == ""
 }
 
 func configsEqual(left, right userConfig) bool {
-	if left.Format != right.Format || left.Color != right.Color || left.ResolverStrategy != right.ResolverStrategy || left.Scrutiny != right.Scrutiny || left.InvestigationLink != right.InvestigationLink || left.RelatedLimit != right.RelatedLimit || left.OTXEndpoint != right.OTXEndpoint || strings.Join(left.DNSResolvers, "\x00") != strings.Join(right.DNSResolvers, "\x00") {
+	if left.Format != right.Format || left.Color != right.Color || left.ResolverStrategy != right.ResolverStrategy || left.Scrutiny != right.Scrutiny || left.InvestigationLink != right.InvestigationLink || left.RelatedLimit != right.RelatedLimit || left.OTXEndpoint != right.OTXEndpoint || strings.Join(left.DNSResolvers, "\x00") != strings.Join(right.DNSResolvers, "\x00") || strings.Join(left.ResearchLinks, "\x00") != strings.Join(right.ResearchLinks, "\x00") {
 		return false
 	}
 	if !equalOptionalBool(left.Details, right.Details) || !equalOptionalBool(left.DNSSEC, right.DNSSEC) || !equalOptionalBool(left.CheckActive, right.CheckActive) {
@@ -277,7 +278,7 @@ func validateUserConfig(config userConfig) error {
 		}
 	}
 	if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{
-		RelatedLimit: config.RelatedLimit, ExternalLinkTemplate: config.InvestigationLink, OTXEndpoint: config.OTXEndpoint,
+		RelatedLimit: config.RelatedLimit, LinkProviders: config.ResearchLinks, ExternalLinkTemplate: config.InvestigationLink, OTXEndpoint: config.OTXEndpoint,
 	}); err != nil {
 		return err
 	}
@@ -299,7 +300,7 @@ func canonicalUserConfig(config userConfig) (userConfig, error) {
 	}
 	canonical := userConfig{
 		Details: config.Details, DNSResolvers: append([]string(nil), config.DNSResolvers...), DNSSEC: config.DNSSEC, CheckActive: config.CheckActive,
-		InvestigationLink: strings.TrimSpace(config.InvestigationLink), RelatedLimit: config.RelatedLimit, OTXEndpoint: strings.TrimRight(strings.TrimSpace(config.OTXEndpoint), "/"),
+		ResearchLinks: append([]string(nil), config.ResearchLinks...), InvestigationLink: strings.TrimSpace(config.InvestigationLink), RelatedLimit: config.RelatedLimit, OTXEndpoint: strings.TrimRight(strings.TrimSpace(config.OTXEndpoint), "/"),
 	}
 	if format != "auto" {
 		canonical.Format = format
@@ -319,6 +320,12 @@ func canonicalUserConfig(config userConfig) (userConfig, error) {
 	}
 	if strings.EqualFold(canonical.InvestigationLink, "default") || strings.EqualFold(canonical.InvestigationLink, "auto") {
 		canonical.InvestigationLink = ""
+	}
+	if len(canonical.ResearchLinks) == 1 && (strings.EqualFold(canonical.ResearchLinks[0], "default") || strings.EqualFold(canonical.ResearchLinks[0], "auto")) {
+		canonical.ResearchLinks = nil
+	}
+	if len(canonical.ResearchLinks) == 1 && strings.EqualFold(canonical.ResearchLinks[0], "core") && strings.TrimSpace(canonical.InvestigationLink) == "" {
+		canonical.ResearchLinks = nil
 	}
 	if canonical.RelatedLimit == 25 {
 		canonical.RelatedLimit = 0
@@ -411,6 +418,11 @@ func configValue(config userConfig, key string) (string, error) {
 			return "default", nil
 		}
 		return config.InvestigationLink, nil
+	case "research-links":
+		if len(config.ResearchLinks) == 0 {
+			return "core", nil
+		}
+		return strings.Join(config.ResearchLinks, ","), nil
 	case "related-limit":
 		if config.RelatedLimit == 0 {
 			return "25", nil
@@ -522,10 +534,33 @@ func setConfigValue(config *userConfig, key, value string) error {
 			config.InvestigationLink = ""
 			return nil
 		}
-		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{ExternalLinkTemplate: value}); err != nil {
+		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{LinkProviders: config.ResearchLinks, ExternalLinkTemplate: value}); err != nil {
 			return err
 		}
 		config.InvestigationLink = value
+		return nil
+	case "research-links":
+		value = strings.TrimSpace(value)
+		if strings.EqualFold(value, "default") || strings.EqualFold(value, "auto") {
+			config.ResearchLinks = nil
+			return nil
+		}
+		if strings.EqualFold(value, "core") {
+			if strings.TrimSpace(config.InvestigationLink) != "" && !strings.EqualFold(strings.TrimSpace(config.InvestigationLink), "off") {
+				config.ResearchLinks = []string{"core"}
+			} else {
+				config.ResearchLinks = nil
+			}
+			return nil
+		}
+		selection := splitCommaValues(value)
+		if len(selection) == 0 {
+			return fmt.Errorf("research-links requires core, all, off, or provider IDs")
+		}
+		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{LinkProviders: selection, ExternalLinkTemplate: config.InvestigationLink}); err != nil {
+			return err
+		}
+		config.ResearchLinks = selection
 		return nil
 	case "related-limit":
 		if strings.EqualFold(strings.TrimSpace(value), "default") || strings.EqualFold(strings.TrimSpace(value), "auto") {
@@ -554,7 +589,7 @@ func setConfigValue(config *userConfig, key, value string) error {
 		config.OTXEndpoint = value
 		return nil
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, check-mode, investigation-link, related-limit, or otx-endpoint", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, check-mode, research-links, investigation-link, related-limit, or otx-endpoint", key)
 	}
 }
 
@@ -578,12 +613,14 @@ func unsetConfigValue(config *userConfig, key string) error {
 		config.CheckActive = nil
 	case "investigation-link":
 		config.InvestigationLink = ""
+	case "research-links":
+		config.ResearchLinks = nil
 	case "related-limit":
 		config.RelatedLimit = 0
 	case "otx-endpoint":
 		config.OTXEndpoint = ""
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, check-mode, investigation-link, related-limit, or otx-endpoint", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, check-mode, research-links, investigation-link, related-limit, or otx-endpoint", key)
 	}
 	return nil
 }
@@ -656,7 +693,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "get":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|research-links|investigation-link|related-limit|otx-endpoint")
 			return 2
 		}
 		config, exists, err := loadUserConfig(runtime)
@@ -680,7 +717,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "set":
 		if len(args) != 3 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint <value>")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|research-links|investigation-link|related-limit|otx-endpoint <value>")
 			return 2
 		}
 		if err := setConfigValue(&userConfig{}, args[1], args[2]); err != nil {
@@ -696,7 +733,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "unset":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|research-links|investigation-link|related-limit|otx-endpoint")
 			return 2
 		}
 		if err := unsetConfigValue(&userConfig{}, args[1]); err != nil {
@@ -771,6 +808,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	scrutiny, _ := parsePersistentScrutiny(config.Scrutiny)
 	checkMode := persistentCheckMode(config.CheckActive)
 	relatedLimit, _ := configValue(config, "related-limit")
+	researchLinks, _ := configValue(config, "research-links")
 	investigationLink, _ := configValue(config, "investigation-link")
 	scanner := bufio.NewScanner(runtime.stdin)
 
@@ -861,9 +899,26 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	investigationLink, cancelled, err = promptWizardConfigValue(scanner, stdout, 10, 10, "Investigation pivot link", "investigation-link", investigationLink, "Enter default, off, or an HTTPS URL containing {type} and {value}.")
+	researchChoice := strings.ToLower(researchLinks)
+	if researchChoice != "core" && researchChoice != "all" && researchChoice != "off" {
+		researchChoice = "custom"
+	}
+	researchChoice, cancelled, err = promptWizardChoice(scanner, stdout, 10, 10, "Manual research links", researchChoice, []wizardChoice{
+		{value: "core", label: "Core", description: "balanced domain and IP research services"},
+		{value: "all", label: "All", description: "include every built-in research service"},
+		{value: "off", label: "Off", description: "do not include manual third-party links"},
+		{value: "custom", label: "Custom", description: "choose comma-separated provider IDs"},
+	})
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
 		return wizardExitCode(err)
+	}
+	if researchChoice == "custom" {
+		researchLinks, cancelled, err = promptWizardConfigValue(scanner, stdout, 10, 10, "Research link providers", "research-links", researchLinks, "Enter comma-separated IDs from whodis help investigate.")
+		if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+			return wizardExitCode(err)
+		}
+	} else {
+		researchLinks = researchChoice
 	}
 
 	draft := config
@@ -902,7 +957,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
-	if err := setConfigValue(&draft, "investigation-link", investigationLink); err != nil {
+	if err := setConfigValue(&draft, "research-links", researchLinks); err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
@@ -922,7 +977,10 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	fmt.Fprintf(stdout, "  Scrutiny: %s\n", wizardDisplayValue(scrutiny))
 	fmt.Fprintf(stdout, "  Check mode: %s\n", wizardDisplayValue(checkMode))
 	fmt.Fprintf(stdout, "  Related limit: %s\n", wizardDisplayValue(relatedLimit))
-	fmt.Fprintf(stdout, "  Investigation link: %s\n", wizardDisplayValue(investigationLink))
+	fmt.Fprintf(stdout, "  Research links: %s\n", wizardDisplayValue(researchLinks))
+	if investigationLink != "default" {
+		fmt.Fprintf(stdout, "  Custom research link: %s\n", wizardDisplayValue(investigationLink))
+	}
 	fmt.Fprintf(stdout, "  File   : %s\n", path)
 	confirmed, cancelled, err := promptWizardConfirmation(scanner, stdout)
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
@@ -1104,11 +1162,12 @@ func printConfigUsage(writer io.Writer) {
   whodis config set dnssec auto|on|off
   whodis config set scrutiny basic|standard|strict
   whodis config set check-mode passive|active
+  whodis config set research-links core|all|off|<id>[,<id>...]
   whodis config set investigation-link default|off|<https-template>
   whodis config set related-limit default|1..100
   whodis config set otx-endpoint default|<https-url>
-  whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint
-  whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint
+  whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|research-links|investigation-link|related-limit|otx-endpoint
+  whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|research-links|investigation-link|related-limit|otx-endpoint
   whodis config reset
   whodis config path
 `)

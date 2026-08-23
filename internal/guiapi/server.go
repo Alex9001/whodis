@@ -52,7 +52,7 @@ type Server struct {
 	group       sync.WaitGroup
 }
 
-// NewServerWithEngine constructs a protocol-v4 server with an explicitly
+// NewServerWithEngine constructs a protocol-v5 server with an explicitly
 // injected operation engine. The caller owns the engine and all streams.
 func NewServerWithEngine(version string, engine engineRunner, input io.Reader, output, logs io.Writer) *Server {
 	return &Server{
@@ -94,9 +94,10 @@ func (server *Server) handle(rpcRequest request) {
 	switch rpcRequest.Method {
 	case "hello":
 		server.writeResult(rpcRequest.ID, helloResult{
-			ProtocolVersion: ProtocolVersion,
-			EngineVersion:   server.version,
-			Capabilities:    []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "investigate", "stack", "related", "batch", "batch_retry", "progress", "cancel", "raw", "export", "schema_v5"},
+			ProtocolVersion:            ProtocolVersion,
+			EngineVersion:              server.version,
+			Capabilities:               []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "investigate", "stack", "related", "research_links", "batch", "batch_retry", "progress", "cancel", "raw", "export", "schema_v5"},
+			InvestigationLinkProviders: whodis.AvailableInvestigationLinkProviders(),
 		})
 	case "parse":
 		var params parseParams
@@ -236,7 +237,7 @@ func validateRunParams(params runParams) error {
 	if err := whodis.ValidateInvestigationOptions(params.Investigation); err != nil {
 		return fmt.Errorf("invalid investigation options: %w", err)
 	}
-	if params.Operation != whodis.OperationInvestigate && (len(params.Investigation.Enrichments) > 0 || params.Investigation.RelatedLimit != 0 || strings.TrimSpace(params.Investigation.ExternalLinkTemplate) != "" || strings.TrimSpace(params.Investigation.OTXEndpoint) != "") {
+	if params.Operation != whodis.OperationInvestigate && (len(params.Investigation.Enrichments) > 0 || params.Investigation.RelatedLimit != 0 || len(params.Investigation.LinkProviders) > 0 || strings.TrimSpace(params.Investigation.ExternalLinkTemplate) != "" || strings.TrimSpace(params.Investigation.OTXEndpoint) != "") {
 		return fmt.Errorf("investigation options require the investigate operation")
 	}
 	for _, provider := range params.Investigation.Enrichments {

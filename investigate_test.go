@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -227,12 +228,65 @@ func TestServerHeaderClassifiesKnownEdgeServices(t *testing.T) {
 }
 
 func TestInvestigationLinkRequiresSafeTemplate(t *testing.T) {
-	link, err := resolveInvestigationLink(defaultInvestigationLink, "ip", "2001:db8::1")
+	link, err := resolveInvestigationLink("https://intel.example/{type}/{value}", "ip", "2001:db8::1")
 	if err != nil || !strings.Contains(link.URL, "2001:db8::1") && !strings.Contains(link.URL, "2001:db8:%3A1") {
 		t.Fatalf("link = %#v, %v", link, err)
 	}
 	if _, err := resolveInvestigationLink("file:///tmp/{value}", "ip", "192.0.2.1"); err == nil {
 		t.Fatal("unsafe link template was accepted")
+	}
+}
+
+func TestInvestigationLinkCatalogIsTypedSafeAndDeterministic(t *testing.T) {
+	providers := AvailableInvestigationLinkProviders()
+	if len(providers) != 14 || providers[0].ID != "otx" || providers[len(providers)-1].ID != "ipinfo" {
+		t.Fatalf("provider catalog = %#v", providers)
+	}
+	seen := make(map[string]bool)
+	for _, provider := range providers {
+		if seen[provider.ID] || provider.ID == "" || provider.Label == "" || provider.Purpose == "" || len(provider.Targets) == 0 {
+			t.Fatalf("invalid provider descriptor = %#v", provider)
+		}
+		seen[provider.ID] = true
+	}
+	providers[0].Targets[0] = "mutated"
+	if AvailableInvestigationLinkProviders()[0].Targets[0] != "domain" {
+		t.Fatal("provider catalog returned mutable target storage")
+	}
+
+	core, err := selectedInvestigationLinkDefinitions(nil)
+	if err != nil || len(core) != 8 {
+		t.Fatalf("core definitions = %d, %v", len(core), err)
+	}
+	domainLinks := buildInvestigationLinks(core, "domain", "example.com")
+	ipv4Links := buildInvestigationLinks(core, "ip", "8.8.8.8")
+	ipv6Links := buildInvestigationLinks(core, "ip", "2606:4700:4700::1111")
+	if len(domainLinks) != 6 || len(ipv4Links) != 4 || len(ipv6Links) != 3 {
+		t.Fatalf("core links = domain:%d ipv4:%d ipv6:%d", len(domainLinks), len(ipv4Links), len(ipv6Links))
+	}
+	for _, link := range append(append(domainLinks, ipv4Links...), ipv6Links...) {
+		parsed, parseErr := url.Parse(link.URL)
+		if parseErr != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+			t.Fatalf("unsafe generated link = %#v, %v", link, parseErr)
+		}
+	}
+	if domainLinks[4].URL != "https://crt.sh/?q=%25.example.com" || ipv4Links[3].URL != "https://platform.censys.io/search?q=8.8.8.8" {
+		t.Fatalf("typed URL builders = (%q, %q)", domainLinks[4].URL, ipv4Links[3].URL)
+	}
+}
+
+func TestInvestigationLinkSelectionValidation(t *testing.T) {
+	for _, selection := range [][]string{{"all", "otx"}, {"core", "virustotal"}, {"off", "otx"}, {"unknown"}} {
+		if err := ValidateInvestigationOptions(InvestigationOptions{LinkProviders: selection}); err == nil {
+			t.Fatalf("invalid selection accepted: %#v", selection)
+		}
+	}
+	if err := ValidateInvestigationOptions(InvestigationOptions{LinkProviders: []string{"off"}, ExternalLinkTemplate: "off"}); err == nil {
+		t.Fatal("conflicting off controls were accepted")
+	}
+	selected, err := selectedInvestigationLinkDefinitions([]string{"ipinfo,otx", "ipinfo"})
+	if err != nil || len(selected) != 2 || selected[0].provider.ID != "otx" || selected[1].provider.ID != "ipinfo" {
+		t.Fatalf("explicit selection = %#v, %v", selected, err)
 	}
 }
 

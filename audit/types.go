@@ -46,8 +46,9 @@ type ReplayDiagnoseOptions struct {
 }
 
 type ReplayInvestigationOptions struct {
-	RelatedLimit         int    `json:"related_limit,omitempty" yaml:"related_limit,omitempty"`
-	ExternalLinkTemplate string `json:"external_link_template,omitempty" yaml:"external_link_template,omitempty"`
+	RelatedLimit         int      `json:"related_limit,omitempty" yaml:"related_limit,omitempty"`
+	LinkProviders        []string `json:"link_providers,omitempty" yaml:"link_providers,omitempty"`
+	ExternalLinkTemplate string   `json:"external_link_template,omitempty" yaml:"external_link_template,omitempty"`
 }
 
 // ReplayOptions controls exceptional network configuration restored from a

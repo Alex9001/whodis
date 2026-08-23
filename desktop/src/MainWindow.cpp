@@ -123,7 +123,9 @@ MainWindow::MainWindow(QWidget *parent)
         m_target->setText(target);
         startOperation(QStringLiteral("investigate"));
     });
-    connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int) {
+    connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int, const QJsonArray &linkProviders) {
+        m_advanced->setInvestigationLinkProviders(linkProviders);
+        m_result->setInvestigationLinkProviders(linkProviders);
         statusBar()->showMessage(tr("Engine %1 ready").arg(version), 3000);
         scheduleValidation();
         updateActionState();

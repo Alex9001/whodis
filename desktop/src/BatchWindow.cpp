@@ -129,7 +129,7 @@ BatchWindow::BatchWindow(EngineClient *engine, const QJsonObject &options, QWidg
     connect(m_retry, &QPushButton::clicked, this, &BatchWindow::retryFailed);
     connect(m_export, &QPushButton::clicked, this, &BatchWindow::exportResults);
     connect(m_table, &QTableWidget::itemSelectionChanged, this, &BatchWindow::showSelectedResult);
-    connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int) {
+    connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int, const QJsonArray &) {
         statusBar()->showMessage(tr("Engine %1 ready").arg(version), 3000);
         m_start->setEnabled(true);
     });

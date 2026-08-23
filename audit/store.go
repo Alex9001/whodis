@@ -215,7 +215,7 @@ func validateSnapshot(snapshot Snapshot) error {
 			return fmt.Errorf("snapshot request %d contains an unsafe replay operation", index)
 		}
 		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{
-			RelatedLimit: request.Investigation.RelatedLimit, ExternalLinkTemplate: request.Investigation.ExternalLinkTemplate,
+			RelatedLimit: request.Investigation.RelatedLimit, LinkProviders: append([]string(nil), request.Investigation.LinkProviders...), ExternalLinkTemplate: request.Investigation.ExternalLinkTemplate,
 		}); err != nil {
 			return fmt.Errorf("snapshot request %d has invalid investigation options: %w", index, err)
 		}

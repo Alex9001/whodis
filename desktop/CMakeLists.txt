@@ -106,6 +106,8 @@ if(BUILD_TESTING)
         tests/ResultWidgetTest.cpp
         src/AdaptiveItemView.cpp
         src/AdaptiveItemView.h
+        src/AdvancedDialog.cpp
+        src/AdvancedDialog.h
         src/ResultWidget.cpp
         src/ResultWidget.h
         resources/resources.qrc

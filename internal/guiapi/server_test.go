@@ -55,7 +55,7 @@ func TestServerHelloParseAndRun(t *testing.T) {
 	}
 }
 
-func TestServerProtocolV4Run(t *testing.T) {
+func TestServerProtocolV5Run(t *testing.T) {
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":"hello-1","method":"hello"}`,
 		`{"jsonrpc":"2.0","id":"run-1","method":"run","params":{"targets":["example.test"],"operation":"dns.query","dns":{"types":["A"]}}}`,
@@ -72,10 +72,10 @@ func TestServerProtocolV4Run(t *testing.T) {
 	var hello struct {
 		Result helloResult `json:"result"`
 	}
-	if err := json.Unmarshal([]byte(lines[0]), &hello); err != nil || hello.Result.ProtocolVersion != 4 {
+	if err := json.Unmarshal([]byte(lines[0]), &hello); err != nil || hello.Result.ProtocolVersion != 5 {
 		t.Fatalf("hello = (%+v, %v)", hello, err)
 	}
-	if !containsString(hello.Result.Capabilities, "investigate") || !containsString(hello.Result.Capabilities, "schema_v5") {
+	if !containsString(hello.Result.Capabilities, "investigate") || !containsString(hello.Result.Capabilities, "research_links") || !containsString(hello.Result.Capabilities, "schema_v5") || len(hello.Result.InvestigationLinkProviders) < 10 {
 		t.Fatalf("hello capabilities = %#v", hello.Result.Capabilities)
 	}
 	var completed struct {
@@ -99,7 +99,9 @@ func TestValidateRunParamsKeepsEnrichmentExplicitAndInvestigationOnly(t *testing
 	}
 	invalid := []runParams{
 		{Targets: []string{"example.test"}, Operation: whodis.OperationRegistration, Investigation: whodis.InvestigationOptions{RelatedLimit: 25}},
+		{Targets: []string{"example.test"}, Operation: whodis.OperationRegistration, Investigation: whodis.InvestigationOptions{LinkProviders: []string{"all"}}},
 		{Targets: []string{"example.test"}, Operation: whodis.OperationInvestigate, Investigation: whodis.InvestigationOptions{Enrichments: []string{"unknown"}}},
+		{Targets: []string{"example.test"}, Operation: whodis.OperationInvestigate, Investigation: whodis.InvestigationOptions{LinkProviders: []string{"unknown"}}},
 		{Targets: []string{"example.test"}, Operation: whodis.OperationInvestigate, Investigation: whodis.InvestigationOptions{ExternalLinkTemplate: "http://unsafe.example/{type}/{value}"}},
 	}
 	for _, params := range invalid {

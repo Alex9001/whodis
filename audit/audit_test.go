@@ -105,10 +105,10 @@ func TestSnapshotRejectsUnsafeReplayOperations(t *testing.T) {
 func TestSnapshotInvestigationReplayIsLocalAndSchemaV4RemainsReadable(t *testing.T) {
 	base := snapshotFixture(t, 300, nil)
 	base.Requests[0].Operation = whodis.OperationInvestigate
-	base.Requests[0].Investigation = ReplayInvestigationOptions{RelatedLimit: 40, ExternalLinkTemplate: "off"}
+	base.Requests[0].Investigation = ReplayInvestigationOptions{RelatedLimit: 40, LinkProviders: []string{"otx", "virustotal"}}
 	base.Batch.Reports[0].Operation = whodis.OperationInvestigate
 	requests, err := base.RequestsForReplay()
-	if err != nil || len(requests) != 1 || requests[0].Investigation.RelatedLimit != 40 || requests[0].Investigation.ExternalLinkTemplate != "off" || len(requests[0].Investigation.Enrichments) != 0 || requests[0].Investigation.OTXEndpoint != "" || requests[0].Investigation.OTXToken != "" {
+	if err != nil || len(requests) != 1 || requests[0].Investigation.RelatedLimit != 40 || strings.Join(requests[0].Investigation.LinkProviders, ",") != "otx,virustotal" || len(requests[0].Investigation.Enrichments) != 0 || requests[0].Investigation.OTXEndpoint != "" || requests[0].Investigation.OTXToken != "" {
 		t.Fatalf("local investigation replay = %#v, %v", requests, err)
 	}
 

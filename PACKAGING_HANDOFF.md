@@ -9,7 +9,7 @@ After a stable release is published, generate checksum-pinned community
 manifests from its `checksums.txt`:
 
 ```bash
-release=v2.2.0
+release=v2.3.0
 package_work="$(mktemp -d)"
 gh release download "$release" --repo Alex9001/whodis \
   --pattern checksums.txt --dir "$package_work"

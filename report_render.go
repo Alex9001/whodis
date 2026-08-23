@@ -289,7 +289,7 @@ func renderInvestigationReport(builder *strings.Builder, report *InvestigationRe
 		for _, link := range links {
 			rows = append(rows, []string{link.Label, link.Type, link.Value, link.URL})
 		}
-		writeReportTable(builder, "Investigation links (open manually)", []string{"Link", "Type", "Value", "URL"}, rows, width)
+		writeReportTable(builder, "Research links (open manually)", []string{"Service", "Type", "Target", "URL"}, rows, width)
 	}
 	if len(report.Warnings) > 0 {
 		rows := make([][]string, 0, len(report.Warnings))
@@ -669,7 +669,7 @@ func renderInvestigationMarkdown(builder *strings.Builder, investigation *Invest
 		}
 	}
 	if links := allInvestigationLinks(investigation); len(links) > 0 {
-		builder.WriteString("\n### Investigation links\n\n")
+		builder.WriteString("\n### Research links\n\n")
 		for _, link := range links {
 			fmt.Fprintf(builder, "- [%s](%s) — `%s`\n", markdownCell(link.Label), link.URL, markdownCell(link.Value))
 		}

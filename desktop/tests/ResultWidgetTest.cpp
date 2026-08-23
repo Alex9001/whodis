@@ -1,9 +1,11 @@
+#include "AdvancedDialog.h"
 #include "ResultWidget.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPlainTextEdit>
 #include <QHeaderView>
+#include <QPushButton>
 #include <QSettings>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -18,10 +20,35 @@ private slots:
     void displaysTargetAndDNS();
     void displaysSchemaV5WorkbenchTabs();
     void displaysInvestigationStackAndRelatedTabs();
+    void serializesResearchLinkSelection();
     void wrapsAndRemembersAdjustableColumns();
     void deduplicatesEquivalentTimelineAndDNSRows();
     void showsResolverAgreementAndRawSource();
 };
+
+void ResultWidgetTest::serializesResearchLinkSelection()
+{
+    AdvancedDialog dialog;
+    dialog.setInvestigationLinkProviders(QJsonArray{
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("otx")},
+                    {QStringLiteral("label"), QStringLiteral("AlienVault OTX")},
+                    {QStringLiteral("purpose"), QStringLiteral("Threat context")},
+                    {QStringLiteral("tier"), QStringLiteral("core")},
+                    {QStringLiteral("targets"), QJsonArray{QStringLiteral("domain"), QStringLiteral("ipv4")}}},
+    });
+    dialog.setOptions(QJsonObject{{QStringLiteral("investigation"), QJsonObject{
+        {QStringLiteral("link_providers"), QJsonArray{QStringLiteral("all")}},
+    }}});
+    QCOMPARE(dialog.options().value(QStringLiteral("investigation")).toObject()
+                 .value(QStringLiteral("link_providers")).toArray().first().toString(), QStringLiteral("all"));
+
+    dialog.setOptions(QJsonObject{{QStringLiteral("investigation"), QJsonObject{
+        {QStringLiteral("external_link_template"), QStringLiteral("off")},
+    }}});
+    const QJsonObject disabled = dialog.options().value(QStringLiteral("investigation")).toObject();
+    QCOMPARE(disabled.value(QStringLiteral("external_link_template")).toString(), QStringLiteral("off"));
+    QVERIFY(!disabled.contains(QStringLiteral("link_providers")));
+}
 
 void ResultWidgetTest::displaysTargetAndDNS()
 {
@@ -98,6 +125,12 @@ void ResultWidgetTest::displaysSchemaV5WorkbenchTabs()
 void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
 {
     ResultWidget widget;
+    widget.setInvestigationLinkProviders(QJsonArray{
+        QJsonObject{{QStringLiteral("label"), QStringLiteral("BuiltWith")},
+                    {QStringLiteral("purpose"), QStringLiteral("Technology profile")}},
+        QJsonObject{{QStringLiteral("label"), QStringLiteral("Shodan")},
+                    {QStringLiteral("purpose"), QStringLiteral("Observed services")}},
+    });
     const QJsonObject evidence{{QStringLiteral("source"), QStringLiteral("http")},
                                {QStringLiteral("field"), QStringLiteral("homepage markup")},
                                {QStringLiteral("value"), QStringLiteral("WordPress asset paths")}};
@@ -111,9 +144,22 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
                               {QStringLiteral("hostname"), QStringLiteral("neighbor.example")},
                               {QStringLiteral("address"), QStringLiteral("192.0.2.1")},
                               {QStringLiteral("current"), QStringLiteral("stale")}};
+    const QJsonObject domainLink{{QStringLiteral("label"), QStringLiteral("BuiltWith")},
+                                 {QStringLiteral("type"), QStringLiteral("domain")},
+                                 {QStringLiteral("value"), QStringLiteral("example.com")},
+                                 {QStringLiteral("url"), QStringLiteral("https://builtwith.com/example.com")}};
+    const QJsonObject ipLink{{QStringLiteral("label"), QStringLiteral("Shodan")},
+                             {QStringLiteral("type"), QStringLiteral("ip")},
+                             {QStringLiteral("value"), QStringLiteral("192.0.2.1")},
+                             {QStringLiteral("url"), QStringLiteral("https://www.shodan.io/host/192.0.2.1")}};
+    const QJsonObject network{{QStringLiteral("address"), QStringLiteral("192.0.2.1")},
+                              {QStringLiteral("provider"), QStringLiteral("Example Network")},
+                              {QStringLiteral("links"), QJsonArray{ipLink}}};
     const QJsonObject investigation{{QStringLiteral("domain"), QStringLiteral("example.com")},
                                     {QStringLiteral("summary"), QStringLiteral("Web: WordPress")},
                                     {QStringLiteral("components"), QJsonArray{component}},
+                                    {QStringLiteral("networks"), QJsonArray{network}},
+                                    {QStringLiteral("links"), QJsonArray{domainLink}},
                                     {QStringLiteral("related"), QJsonArray{related}},
                                     {QStringLiteral("related_total"), 7}};
     const QJsonObject report{{QStringLiteral("schema_version"), 5},
@@ -144,6 +190,21 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     QVERIFY(evidenceTable);
     QCOMPARE(evidenceTable->rowCount(), 1);
     QCOMPARE(evidenceTable->item(0, 3)->text(), QStringLiteral("WordPress asset paths"));
+    for (int group = 0; group < stack->topLevelItemCount(); ++group)
+        QVERIFY(stack->topLevelItem(group)->text(0) != QStringLiteral("Investigation links"));
+
+    QTreeWidget *research = widget.findChild<QTreeWidget *>(QStringLiteral("researchTree"));
+    QVERIFY(research);
+    QCOMPARE(research->topLevelItemCount(), 2);
+    QCOMPARE(research->topLevelItem(0)->text(0), QStringLiteral("Domain — example.com"));
+    QCOMPARE(research->topLevelItem(0)->child(0)->text(0), QStringLiteral("BuiltWith"));
+    QCOMPARE(research->topLevelItem(0)->child(0)->text(1), QStringLiteral("Technology profile"));
+    research->setCurrentItem(research->topLevelItem(1)->child(0));
+    QCoreApplication::processEvents();
+    const QPushButton *openResearch = widget.findChild<QPushButton *>(QStringLiteral("openResearchButton"));
+    const QPushButton *copyResearch = widget.findChild<QPushButton *>(QStringLiteral("copyResearchButton"));
+    QVERIFY(openResearch && openResearch->isEnabled());
+    QVERIFY(copyResearch && copyResearch->isEnabled());
 
     const QTreeWidget *overview = widget.findChild<QTreeWidget *>(QStringLiteral("overviewTree"));
     QVERIFY(overview);
@@ -153,7 +214,7 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     QCOMPARE(overview->topLevelItem(1)->child(0)->text(1), QStringLiteral("WordPress"));
     const QTabWidget *tabs = widget.findChild<QTabWidget *>();
     QVERIFY(tabs);
-    for (const QString &name : {QStringLiteral("Stack"), QStringLiteral("Related")}) {
+    for (const QString &name : {QStringLiteral("Stack"), QStringLiteral("Research"), QStringLiteral("Related")}) {
         int index = -1;
         for (int candidate = 0; candidate < tabs->count(); ++candidate) {
             if (tabs->tabText(candidate) == name)

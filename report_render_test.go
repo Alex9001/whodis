@@ -173,7 +173,7 @@ func TestRenderInvestigationAcrossHumanAndTabularFormats(t *testing.T) {
 			Networks:     []NetworkObservation{{Address: "192.0.2.1", Provider: "Amazon Web Services", Operator: "Amazon Technologies Inc."}},
 			Related:      []RelatedObservation{{Provider: "otx", Hostname: "neighbor.test", Address: "192.0.2.1", Current: RelatedStale}},
 			RelatedTotal: 7,
-			Links:        []InvestigationLink{{Label: "Open in AlienVault OTX", Type: "domain", Value: "example.test", URL: "https://otx.alienvault.com/indicator/domain/example.test"}},
+			Links:        []InvestigationLink{{Label: "AlienVault OTX", Type: "domain", Value: "example.test", URL: "https://otx.alienvault.com/indicator/domain/example.test"}},
 		},
 	}
 	for _, format := range []Format{FormatPretty, FormatPlain, FormatMarkdown} {
@@ -181,7 +181,7 @@ func TestRenderInvestigationAcrossHumanAndTabularFormats(t *testing.T) {
 		if err := RenderReport(&output, report, format, RenderOptions{Width: 100}); err != nil {
 			t.Fatal(err)
 		}
-		for _, marker := range []string{"Stack summary", "WordPress", "Amazon Web Services", "Related", "neighbor.test", "AlienVault OTX"} {
+		for _, marker := range []string{"Stack summary", "WordPress", "Amazon Web Services", "Related", "neighbor.test", "Research links", "AlienVault OTX"} {
 			if !strings.Contains(output.String(), marker) {
 				t.Fatalf("%s output omitted %q:\n%s", format, marker, output.String())
 			}

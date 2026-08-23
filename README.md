@@ -48,7 +48,7 @@ stable machine-readable report.
 - **Raw source access** — preserve the original RDAP JSON, WHOIS, or RWhois
   response when one unmodified registration lookup is what you need.
 - **Native desktop workbench** — Lookup, DNS Inventory, DNS Query, Compare,
-  Delegation, Diagnose, Stack, Related, Services, Findings, Contacts, and Raw
+  Delegation, Diagnose, Stack, Research, Related, Services, Findings, Contacts, and Raw
   views without a browser or a separately installed CLI. Result columns are
   adjustable and remembered per view, while long values wrap instead of being
   clipped or forcing the whole layout sideways.
@@ -269,6 +269,7 @@ registration. Web fingerprints use the MIT-licensed `wappalyzergo` engine.
 ```bash
 whodis investigate example.com
 whodis investigate example.com --markdown -o profile.md
+whodis investigate example.com --research-links all
 whodis investigate example.com --enrich otx --related-limit 50 --json
 ```
 
@@ -279,13 +280,23 @@ does not call a lone `autodiscover` record Microsoft 365 or cPanel. A compact
 summary is followed by evidence tables in terminal output. In the desktop app,
 the **Overview** immediately summarizes web technology, server/edge, hosting,
 network, DNS, mail, and analytics/security findings. The **Stack** view uses a
-clean master/detail layout: select one technology, network, link, or note to
+clean master/detail layout: select one technology, network, or note to
 see its wrapped summary and evidence below, without repetitive evidence rows.
-The **Related** view keeps passive observations separate from stack claims.
+The dedicated **Research** view keeps manual third-party pivots out of the
+evidence tree, grouped under the domain and each public IP. The **Related**
+view keeps passive observations separate from stack claims.
 
 Local investigation is the default. It does not execute JavaScript, crawl the
-site, scan arbitrary ports, or contact related domains. A configurable HTTPS
-pivot link is displayed for manual use but never opened by the CLI. OTX
+site, scan arbitrary ports, or contact related domains. Whodis locally creates
+a curated set of links for AlienVault OTX, VirusTotal, BuiltWith, urlscan.io,
+crt.sh, the Wayback Machine, Shodan, and Censys. It does not contact those
+services until you explicitly open a link. Additional Wappalyzer, Netcraft,
+GreyNoise, AbuseIPDB, BGP.Tools, and IPinfo links are available with
+`--research-links all`; use `off` or a comma-separated provider list for an
+exact selection. Some services may require their own account or impose their
+own usage limits.
+
+Research links are separate from enrichment. OTX
 passive-DNS enrichment happens only with `--enrich otx`; discovered public web
 IPs are sent to that service, returned observations are capped, and their
 hostnames are checked against current A/AAAA DNS. `current`, `stale`, and
@@ -293,8 +304,10 @@ hostnames are checked against current A/AAAA DNS. `current`, `stale`, and
 
 The optional OTX key comes only from `WHODIS_OTX_API_KEY` and is never written
 to Whodis configuration, reports, snapshots, or logs. Customize harmless
-defaults with `whodis config set related-limit`, `investigation-link`, and
-`otx-endpoint`. Enrichment opt-in itself is never persisted.
+defaults with `whodis config set related-limit`, `research-links`,
+`investigation-link`, and `otx-endpoint`. `investigation-link` remains an
+optional custom HTTPS template containing `{type}` and `{value}`. Enrichment
+opt-in itself is never persisted.
 
 ## Snapshots, change detection, and policy checks
 
@@ -367,8 +380,8 @@ whodis config
 ```
 
 It configures output layout, color, notice detail, DNS resolver and DNSSEC
-defaults, investigation link and related-result limit, plus the scrutiny and
-passive/active mode used by `whodis check`.
+defaults, the manual research-link preset and related-result limit, plus the
+scrutiny and passive/active mode used by `whodis check`.
 Press Enter to retain a choice or review everything before saving. Direct
 commands are available for automation:
 
@@ -456,7 +469,7 @@ err = whodis.RenderReport(os.Stdout, report, whodis.FormatJSON, whodis.RenderOpt
 `Report` schema version 5 keeps registration, DNS, diagnosis, investigation,
 findings, and provider-scoped errors independent, so one failed registry,
 probe, or enrichment does not erase useful results. Schema v5 adds explainable
-stack components, network attribution, manual pivot links, and bounded related
+stack components, network attribution, curated manual research links, and bounded related
 observations. Snapshot replay continues to read schema-v4 snapshots.
 Diagnostic findings are aggregated once at report level instead of being
 duplicated inside the diagnosis payload.
@@ -465,9 +478,10 @@ incrementally with bounded work and progress callbacks. Registration, DNS,
 Diagnose, Investigation, and named Enrichment providers are interfaces for
 embedding and deterministic tests.
 
-The native GUI's private newline-delimited JSON-RPC protocol is version 4 and
+The native GUI's private newline-delimited JSON-RPC protocol is version 5 and
 carries schema-v5 reports through the same operation engine as the CLI, plus
-progress, cancellation, short-lived in-memory result tokens, and exports. See
+progress, cancellation, the research-provider catalog, short-lived in-memory
+result tokens, and exports. See
 [MIGRATING_TO_V2.md](MIGRATING_TO_V2.md) when upgrading an embedded v1 client.
 
 ## Development and release integrity

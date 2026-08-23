@@ -4,11 +4,14 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QHeaderView>
+#include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -26,6 +29,8 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     , m_trace(new QCheckBox(tr("Include a local network path trace in Diagnose"), this))
     , m_otx(new QCheckBox(tr("Use AlienVault OTX passive DNS in Investigate (shares discovered IPs)"), this))
     , m_relatedLimit(new QSpinBox(this))
+    , m_researchLinksSummary(new QLabel(this))
+    , m_researchLinksButton(new QPushButton(tr("Choose…"), this))
     , m_investigationLink(new QLineEdit(this))
     , m_otxEndpoint(new QLineEdit(this))
     , m_buttons(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this))
@@ -51,7 +56,7 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     m_timeout->setSuffix(tr(" seconds"));
     m_relatedLimit->setRange(1, 100);
     m_relatedLimit->setValue(25);
-    m_investigationLink->setPlaceholderText(tr("Default AlienVault link, off, or HTTPS template"));
+    m_investigationLink->setPlaceholderText(tr("Optional HTTPS template or off"));
     m_investigationLink->setToolTip(tr("Custom links must contain {type} and {value}. They are shown but never opened automatically."));
     m_otxEndpoint->setPlaceholderText(QStringLiteral("https://otx.alienvault.com/api/v1"));
     m_otxEndpoint->setToolTip(tr("Optional OTX-compatible API base URL. API keys are read only from WHODIS_OTX_API_KEY."));
@@ -67,7 +72,13 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     form->addRow(QString(), m_trace);
     form->addRow(QString(), m_otx);
     form->addRow(tr("Related results:"), m_relatedLimit);
-    form->addRow(tr("Investigation link:"), m_investigationLink);
+    auto *researchLinks = new QWidget(this);
+    auto *researchLinksLayout = new QHBoxLayout(researchLinks);
+    researchLinksLayout->setContentsMargins(0, 0, 0, 0);
+    researchLinksLayout->addWidget(m_researchLinksSummary, 1);
+    researchLinksLayout->addWidget(m_researchLinksButton);
+    form->addRow(tr("Research services:"), researchLinks);
+    form->addRow(tr("Custom research link:"), m_investigationLink);
     form->addRow(tr("OTX endpoint:"), m_otxEndpoint);
     form->addRow(tr("Timeout:"), m_timeout);
     form->addRow(QString(), m_refresh);
@@ -81,6 +92,7 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
 
     connect(m_protocol, &QComboBox::currentIndexChanged, this, &AdvancedDialog::updateState);
     connect(m_server, &QLineEdit::textChanged, this, &AdvancedDialog::updateState);
+    connect(m_researchLinksButton, &QPushButton::clicked, this, &AdvancedDialog::chooseResearchLinks);
     connect(m_investigationLink, &QLineEdit::textChanged, this, &AdvancedDialog::updateState);
     connect(m_otxEndpoint, &QLineEdit::textChanged, this, &AdvancedDialog::updateState);
     connect(m_buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -117,6 +129,12 @@ QJsonObject AdvancedDialog::options() const
     if (m_refresh->isChecked())
         result.insert(QStringLiteral("refresh_bootstrap"), true);
     QJsonObject investigation{{QStringLiteral("related_limit"), m_relatedLimit->value()}};
+    if (!m_researchLinks.isEmpty() && m_investigationLink->text().trimmed().compare(QStringLiteral("off"), Qt::CaseInsensitive) != 0) {
+        QJsonArray linkProviders;
+        for (const QString &provider : m_researchLinks)
+            linkProviders.append(provider);
+        investigation.insert(QStringLiteral("link_providers"), linkProviders);
+    }
     if (!m_investigationLink->text().trimmed().isEmpty())
         investigation.insert(QStringLiteral("external_link_template"), m_investigationLink->text().trimmed());
     if (!m_otxEndpoint->text().trimmed().isEmpty())
@@ -161,6 +179,16 @@ void AdvancedDialog::setOptions(const QJsonObject &options)
     const QJsonObject investigation = options.value(QStringLiteral("investigation")).toObject();
     m_relatedLimit->setValue(investigation.value(QStringLiteral("related_limit")).toInt(25));
     m_investigationLink->setText(investigation.value(QStringLiteral("external_link_template")).toString());
+    m_researchLinks.clear();
+    if (investigation.contains(QStringLiteral("link_providers"))) {
+        for (const QJsonValue &value : investigation.value(QStringLiteral("link_providers")).toArray()) {
+            if (!value.toString().trimmed().isEmpty())
+                m_researchLinks.append(value.toString().trimmed().toLower());
+        }
+    }
+    if (m_researchLinks.isEmpty() && m_investigationLink->text().trimmed().isEmpty()) {
+        m_researchLinks.append(QStringLiteral("core"));
+    }
     m_otxEndpoint->setText(investigation.value(QStringLiteral("otx_endpoint")).toString());
     bool otx = false;
     for (const QJsonValue &value : investigation.value(QStringLiteral("enrichments")).toArray())
@@ -168,6 +196,126 @@ void AdvancedDialog::setOptions(const QJsonObject &options)
     m_otx->setChecked(otx);
     m_timeout->setValue(qMax(1, options.value(QStringLiteral("timeout_ms")).toInt(15000) / 1000));
     m_refresh->setChecked(options.value(QStringLiteral("refresh_bootstrap")).toBool());
+    updateState();
+}
+
+void AdvancedDialog::setInvestigationLinkProviders(const QJsonArray &providers)
+{
+    m_investigationLinkProviders = providers;
+    updateState();
+}
+
+void AdvancedDialog::chooseResearchLinks()
+{
+    if (m_investigationLinkProviders.isEmpty())
+        return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Research services"));
+    dialog.resize(720, 480);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *note = new QLabel(tr("Whodis creates these links locally. A service receives the domain or IP only when you explicitly open its link."), &dialog);
+    note->setWordWrap(true);
+    layout->addWidget(note);
+
+    auto *tree = new QTreeWidget(&dialog);
+    tree->setColumnCount(3);
+    tree->setHeaderLabels({tr("Service"), tr("Targets"), tr("What it adds")});
+    tree->setRootIsDecorated(true);
+    tree->setAlternatingRowColors(true);
+    tree->header()->setStretchLastSection(true);
+    QTreeWidgetItem *coreGroup = new QTreeWidgetItem(tree, {tr("Core")});
+    QTreeWidgetItem *moreGroup = new QTreeWidgetItem(tree, {tr("More")});
+    for (QTreeWidgetItem *group : {coreGroup, moreGroup}) {
+        QFont font = group->font(0);
+        font.setBold(true);
+        group->setFont(0, font);
+        group->setFlags(group->flags() & ~Qt::ItemIsSelectable);
+        group->setExpanded(true);
+    }
+
+    QStringList selected;
+    if (m_researchLinks.contains(QStringLiteral("all"), Qt::CaseInsensitive)) {
+        for (const QJsonValue &value : m_investigationLinkProviders)
+            selected.append(value.toObject().value(QStringLiteral("id")).toString());
+    } else if (!m_researchLinks.contains(QStringLiteral("off"), Qt::CaseInsensitive)) {
+        if (m_researchLinks.contains(QStringLiteral("core"), Qt::CaseInsensitive)) {
+            for (const QJsonValue &value : m_investigationLinkProviders) {
+                const QJsonObject provider = value.toObject();
+                if (provider.value(QStringLiteral("tier")).toString() == QStringLiteral("core"))
+                    selected.append(provider.value(QStringLiteral("id")).toString());
+            }
+        } else {
+            selected = m_researchLinks;
+        }
+    }
+
+    for (const QJsonValue &value : m_investigationLinkProviders) {
+        const QJsonObject provider = value.toObject();
+        QTreeWidgetItem *group = provider.value(QStringLiteral("tier")).toString() == QStringLiteral("core") ? coreGroup : moreGroup;
+        QStringList targets;
+        for (const QJsonValue &target : provider.value(QStringLiteral("targets")).toArray())
+            targets.append(target.toString().toUpper());
+        auto *item = new QTreeWidgetItem(group, {provider.value(QStringLiteral("label")).toString(), targets.join(QStringLiteral(", ")), provider.value(QStringLiteral("purpose")).toString()});
+        item->setData(0, Qt::UserRole, provider.value(QStringLiteral("id")).toString());
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, selected.contains(provider.value(QStringLiteral("id")).toString(), Qt::CaseInsensitive) ? Qt::Checked : Qt::Unchecked);
+    }
+    tree->resizeColumnToContents(0);
+    tree->resizeColumnToContents(1);
+    layout->addWidget(tree, 1);
+
+    auto *presets = new QHBoxLayout;
+    auto *core = new QPushButton(tr("Core defaults"), &dialog);
+    auto *all = new QPushButton(tr("Select all"), &dialog);
+    auto *none = new QPushButton(tr("Select none"), &dialog);
+    presets->addWidget(core);
+    presets->addWidget(all);
+    presets->addWidget(none);
+    presets->addStretch();
+    layout->addLayout(presets);
+    const auto setChecks = [tree](bool includeCore, bool includeMore) {
+        for (int groupIndex = 0; groupIndex < tree->topLevelItemCount(); ++groupIndex) {
+            QTreeWidgetItem *group = tree->topLevelItem(groupIndex);
+            const bool checked = groupIndex == 0 ? includeCore : includeMore;
+            for (int index = 0; index < group->childCount(); ++index)
+                group->child(index)->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
+        }
+    };
+    connect(core, &QPushButton::clicked, &dialog, [setChecks] { setChecks(true, false); });
+    connect(all, &QPushButton::clicked, &dialog, [setChecks] { setChecks(true, true); });
+    connect(none, &QPushButton::clicked, &dialog, [setChecks] { setChecks(false, false); });
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    QStringList chosen;
+    QStringList coreIDs;
+    QStringList allIDs;
+    for (int groupIndex = 0; groupIndex < tree->topLevelItemCount(); ++groupIndex) {
+        QTreeWidgetItem *group = tree->topLevelItem(groupIndex);
+        for (int index = 0; index < group->childCount(); ++index) {
+            QTreeWidgetItem *item = group->child(index);
+            const QString id = item->data(0, Qt::UserRole).toString();
+            allIDs.append(id);
+            if (groupIndex == 0)
+                coreIDs.append(id);
+            if (item->checkState(0) == Qt::Checked)
+                chosen.append(id);
+        }
+    }
+    if (chosen.isEmpty())
+        m_researchLinks = {QStringLiteral("off")};
+    else if (chosen == allIDs)
+        m_researchLinks = {QStringLiteral("all")};
+    else if (chosen == coreIDs)
+        m_researchLinks = {QStringLiteral("core")};
+    else
+        m_researchLinks = chosen;
     updateState();
 }
 
@@ -189,8 +337,22 @@ void AdvancedDialog::updateState()
             && endpoint.userInfo().isEmpty() && endpoint.query().isEmpty() && endpoint.fragment().isEmpty());
     const bool serverValid = protocol != QStringLiteral("rwhois") || !m_server->text().trimmed().isEmpty();
     const bool valid = serverValid && linkValid && endpointValid;
+    const bool linksDisabled = linkText.compare(QStringLiteral("off"), Qt::CaseInsensitive) == 0;
+    m_researchLinksButton->setEnabled(!m_investigationLinkProviders.isEmpty() && !linksDisabled);
+    if (linksDisabled)
+        m_researchLinksSummary->setText(tr("Off"));
+    else if (m_researchLinks.contains(QStringLiteral("all"), Qt::CaseInsensitive))
+        m_researchLinksSummary->setText(tr("All services"));
+    else if (m_researchLinks.contains(QStringLiteral("off"), Qt::CaseInsensitive))
+        m_researchLinksSummary->setText(tr("Off"));
+    else if (m_researchLinks.contains(QStringLiteral("core"), Qt::CaseInsensitive))
+        m_researchLinksSummary->setText(tr("Core services"));
+    else if (!m_researchLinks.isEmpty())
+        m_researchLinksSummary->setText(tr("Custom (%1)").arg(m_researchLinks.size()));
+    else
+        m_researchLinksSummary->setText(tr("Custom link only"));
     m_buttons->button(QDialogButtonBox::Ok)->setEnabled(valid);
     m_buttons->button(QDialogButtonBox::Ok)->setToolTip(!serverValid ? tr("RWhois requires a direct server.")
-                                                          : !linkValid ? tr("The investigation link must be off or an HTTPS template containing {type} and {value}.")
+                                                          : !linkValid ? tr("The custom research link must be off or an HTTPS template containing {type} and {value}.")
                                                                        : !endpointValid ? tr("The OTX endpoint must be an HTTPS URL without credentials, query, or fragment.") : QString());
 }

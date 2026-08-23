@@ -115,16 +115,18 @@ func TestParseArgsStructuredDNSAndDiagnose(t *testing.T) {
 }
 
 func TestParseArgsInvestigateAndExplicitEnrichment(t *testing.T) {
-	options, err := parseArgs([]string{"investigate", "example.com", "example.net", "--enrich", "otx", "--related-limit", "40", "--investigation-link", "https://intel.example/{type}/{value}", "--otx-endpoint", "https://otx.example/api/v1"})
+	options, err := parseArgs([]string{"investigate", "example.com", "example.net", "--enrich", "otx", "--related-limit", "40", "--research-links", "otx,virustotal", "--investigation-link", "https://intel.example/{type}/{value}", "--otx-endpoint", "https://otx.example/api/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.task != taskInvestigate || len(options.targets) != 2 || options.timeout != 30*time.Second || options.relatedLimit != 40 || strings.Join(options.enrichments, ",") != "otx" || options.otxEndpoint != "https://otx.example/api/v1" {
+	if options.task != taskInvestigate || len(options.targets) != 2 || options.timeout != 30*time.Second || options.relatedLimit != 40 || strings.Join(options.enrichments, ",") != "otx" || strings.Join(options.linkProviders, ",") != "otx,virustotal" || options.otxEndpoint != "https://otx.example/api/v1" {
 		t.Fatalf("investigate options = %#v", options)
 	}
 	for _, args := range [][]string{
 		{"example.com", "--enrich", "otx"},
 		{"investigate", "example.com", "--enrich", "unknown"},
+		{"investigate", "example.com", "--research-links", "all,otx"},
+		{"example.com", "--research-links", "core"},
 		{"investigate", "example.com", "--enrich", "otx", "--save"},
 		{"investigate", "example.com", "--investigation-link", "http://unsafe.example/{type}/{value}"},
 		{"investigate", "example.com", "--otx-endpoint", "http://unsafe.example/api"},

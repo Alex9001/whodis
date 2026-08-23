@@ -56,7 +56,7 @@ func sanitizeRequest(request whodis.Request) ReplayRequest {
 		Operation: request.Operation, Target: request.Target, Timeout: timeout,
 		Registration: RegistrationOptions{Protocol: request.Registration.Protocol, Fallback: request.Registration.Fallback, Server: sanitizeSnapshotEndpoint(request.Registration.Server), RefreshBootstrap: request.Registration.RefreshBootstrap},
 		DNS:          dns, Diagnose: ReplayDiagnoseOptions{Trace: request.Diagnose.Trace, Remote: request.Diagnose.Remote, MaxAddresses: request.Diagnose.MaxAddresses},
-		Investigation: ReplayInvestigationOptions{RelatedLimit: request.Investigation.RelatedLimit, ExternalLinkTemplate: request.Investigation.ExternalLinkTemplate},
+		Investigation: ReplayInvestigationOptions{RelatedLimit: request.Investigation.RelatedLimit, LinkProviders: append([]string(nil), request.Investigation.LinkProviders...), ExternalLinkTemplate: request.Investigation.ExternalLinkTemplate},
 	}
 }
 
@@ -153,7 +153,7 @@ func (snapshot Snapshot) RequestsForReplayWithOptions(options ReplayOptions) ([]
 			Operation: saved.Operation, Target: saved.Target, Timeout: timeout, DNS: saved.DNS,
 			Registration:  whodis.LookupOptions{Protocol: saved.Registration.Protocol, Fallback: saved.Registration.Fallback, Server: saved.Registration.Server, Timeout: timeout, RefreshBootstrap: saved.Registration.RefreshBootstrap},
 			Diagnose:      whodis.DiagnoseOptions{DNS: saved.DNS, Timeout: timeout, Trace: saved.Diagnose.Trace, Remote: saved.Diagnose.Remote, MaxAddresses: saved.Diagnose.MaxAddresses},
-			Investigation: whodis.InvestigationOptions{DNS: saved.DNS, RelatedLimit: saved.Investigation.RelatedLimit, ExternalLinkTemplate: saved.Investigation.ExternalLinkTemplate},
+			Investigation: whodis.InvestigationOptions{DNS: saved.DNS, RelatedLimit: saved.Investigation.RelatedLimit, LinkProviders: append([]string(nil), saved.Investigation.LinkProviders...), ExternalLinkTemplate: saved.Investigation.ExternalLinkTemplate},
 		}
 	}
 	return requests, nil

@@ -27,7 +27,6 @@ const (
 	maximumInvestigationBody        = 1 << 20
 	maximumEnrichmentResponse       = 4 << 20
 	defaultOTXEndpoint              = "https://otx.alienvault.com/api/v1"
-	defaultInvestigationLink        = "https://otx.alienvault.com/indicator/{type}/{value}"
 	maximumInvestigationRedirects   = 5
 	maximumRelatedValidationWorkers = 8
 )
@@ -98,6 +97,17 @@ type InvestigationLink struct {
 	URL   string `json:"url" yaml:"url"`
 }
 
+// InvestigationLinkProvider describes one locally generated manual research
+// pivot. Targets are domain, ipv4, and/or ipv6. Building a link never contacts
+// the provider.
+type InvestigationLinkProvider struct {
+	ID      string   `json:"id" yaml:"id"`
+	Label   string   `json:"label" yaml:"label"`
+	Purpose string   `json:"purpose" yaml:"purpose"`
+	Tier    string   `json:"tier" yaml:"tier"`
+	Targets []string `json:"targets" yaml:"targets"`
+}
+
 // NetworkObservation attributes one public web address without conflating the
 // network operator with the site's customer-facing hosting provider.
 type NetworkObservation struct {
@@ -146,6 +156,7 @@ type InvestigationOptions struct {
 	DNS                  DNSOptions   `json:"dns,omitempty" yaml:"dns,omitempty"`
 	Enrichments          []string     `json:"enrichments,omitempty" yaml:"enrichments,omitempty"`
 	RelatedLimit         int          `json:"related_limit,omitempty" yaml:"related_limit,omitempty"`
+	LinkProviders        []string     `json:"link_providers,omitempty" yaml:"link_providers,omitempty"`
 	ExternalLinkTemplate string       `json:"external_link_template,omitempty" yaml:"external_link_template,omitempty"`
 	OTXEndpoint          string       `json:"otx_endpoint,omitempty" yaml:"otx_endpoint,omitempty"`
 	OTXToken             string       `json:"-" yaml:"-"`
@@ -193,6 +204,12 @@ func ValidateInvestigationOptions(options InvestigationOptions) error {
 			return fmt.Errorf("invalid investigation link template: %w", err)
 		}
 	}
+	if _, err := selectedInvestigationLinkDefinitions(options.LinkProviders); err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(options.ExternalLinkTemplate), "off") && len(options.LinkProviders) > 0 {
+		return fmt.Errorf("external link template off conflicts with link providers")
+	}
 	if endpoint := strings.TrimSpace(options.OTXEndpoint); endpoint != "" {
 		parsed, err := url.Parse(endpoint)
 		if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Scheme != "https" || parsed.RawQuery != "" || parsed.Fragment != "" {
@@ -239,15 +256,24 @@ func (provider *nativeInvestigationProvider) Investigate(ctx context.Context, su
 		return nil, lookupError(ErrorInvalidInput, fmt.Sprintf("related limit must be between 1 and %d", maximumRelatedLimit), nil)
 	}
 	template := strings.TrimSpace(options.ExternalLinkTemplate)
-	if template == "" {
-		template = defaultInvestigationLink
+	linkDefinitions, linkErr := selectedInvestigationLinkDefinitions(options.LinkProviders)
+	if linkErr != nil {
+		return nil, lookupError(ErrorInvalidInput, "invalid research links", linkErr)
+	}
+	// Preserve the pre-catalog behavior for saved custom templates: when no
+	// provider selection is present, the custom template replaces the default.
+	if template != "" && !strings.EqualFold(template, "off") && len(options.LinkProviders) == 0 {
+		linkDefinitions = nil
 	}
 	if !strings.EqualFold(template, "off") {
-		link, err := resolveInvestigationLink(template, "domain", domain)
-		if err != nil {
-			return nil, lookupError(ErrorInvalidInput, "invalid investigation link template", err)
+		report.Links = append(report.Links, buildInvestigationLinks(linkDefinitions, "domain", domain)...)
+		if template != "" {
+			link, err := resolveInvestigationLink(template, "domain", domain)
+			if err != nil {
+				return nil, lookupError(ErrorInvalidInput, "invalid investigation link template", err)
+			}
+			report.Links = append(report.Links, link)
 		}
-		report.Links = append(report.Links, link)
 	}
 
 	records := diagnosisRecords(diagnosis)
@@ -266,7 +292,7 @@ func (provider *nativeInvestigationProvider) Investigate(ctx context.Context, su
 	}()
 	go func() {
 		defer group.Done()
-		networks, networkWarnings = provider.inspectNetworks(ctx, addresses, options.DNS, template)
+		networks, networkWarnings = provider.inspectNetworks(ctx, addresses, options.DNS, linkDefinitions, template)
 	}()
 	group.Wait()
 	report.Networks = networks
@@ -440,7 +466,7 @@ func readLimitedBody(body io.Reader, maximum int64) ([]byte, error) {
 	return payload, nil
 }
 
-func (provider *nativeInvestigationProvider) inspectNetworks(ctx context.Context, addresses []string, dnsOptions DNSOptions, template string) ([]NetworkObservation, []string) {
+func (provider *nativeInvestigationProvider) inspectNetworks(ctx context.Context, addresses []string, dnsOptions DNSOptions, linkDefinitions []investigationLinkDefinition, template string) ([]NetworkObservation, []string) {
 	type completed struct {
 		observation NetworkObservation
 		warnings    []string
@@ -493,8 +519,11 @@ func (provider *nativeInvestigationProvider) inspectNetworks(ctx context.Context
 				}
 			}
 			if !strings.EqualFold(strings.TrimSpace(template), "off") {
-				if link, linkErr := resolveInvestigationLink(template, "ip", address); linkErr == nil {
-					observation.Links = append(observation.Links, link)
+				observation.Links = append(observation.Links, buildInvestigationLinks(linkDefinitions, "ip", address)...)
+				if strings.TrimSpace(template) != "" {
+					if link, customErr := resolveInvestigationLink(template, "ip", address); customErr == nil {
+						observation.Links = append(observation.Links, link)
+					}
 				}
 			}
 			results <- completed{observation: observation, warnings: warnings}
@@ -553,6 +582,240 @@ func canonicalNetworkProvider(operator, network string) string {
 	return strings.TrimSpace(operator)
 }
 
+type investigationLinkDefinition struct {
+	provider InvestigationLinkProvider
+	build    func(targetType, value string) (string, bool)
+}
+
+var investigationLinkDefinitions = []investigationLinkDefinition{
+	{
+		provider: InvestigationLinkProvider{ID: "otx", Label: "AlienVault OTX", Purpose: "Threat context and passive DNS", Tier: "core", Targets: []string{"domain", "ipv4", "ipv6"}},
+		build: func(targetType, value string) (string, bool) {
+			indicatorType := "domain"
+			if targetType == "ip" {
+				address, err := netip.ParseAddr(value)
+				if err != nil {
+					return "", false
+				}
+				indicatorType = "IPv4"
+				if address.Is6() {
+					indicatorType = "IPv6"
+				}
+			}
+			return "https://otx.alienvault.com/indicator/" + indicatorType + "/" + url.PathEscape(value), true
+		},
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "virustotal", Label: "VirusTotal", Purpose: "Reputation, relationships, and passive DNS", Tier: "core", Targets: []string{"domain", "ipv4", "ipv6"}},
+		build: func(targetType, value string) (string, bool) {
+			kind := "domain"
+			if targetType == "ip" {
+				kind = "ip-address"
+			}
+			return "https://www.virustotal.com/gui/" + kind + "/" + url.PathEscape(value), true
+		},
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "builtwith", Label: "BuiltWith", Purpose: "Current and historical technology profile", Tier: "core", Targets: []string{"domain"}},
+		build:    domainInvestigationLink("https://builtwith.com/", ""),
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "urlscan", Label: "urlscan.io", Purpose: "Historical scans, requests, and screenshots", Tier: "core", Targets: []string{"domain"}},
+		build:    domainInvestigationLink("https://urlscan.io/domain/", ""),
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "crtsh", Label: "crt.sh", Purpose: "Certificate transparency and subdomain clues", Tier: "core", Targets: []string{"domain"}},
+		build: func(targetType, value string) (string, bool) {
+			if targetType != "domain" {
+				return "", false
+			}
+			return investigationQueryURL("https://crt.sh/", "q", "%."+value), true
+		},
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "wayback", Label: "Wayback Machine", Purpose: "Historical website captures", Tier: "core", Targets: []string{"domain"}},
+		build: func(targetType, value string) (string, bool) {
+			if targetType != "domain" {
+				return "", false
+			}
+			return "https://web.archive.org/web/*/https://" + value + "/*", true
+		},
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "shodan", Label: "Shodan", Purpose: "Observed internet-facing services and banners", Tier: "core", Targets: []string{"ipv4"}},
+		build:    ipv4InvestigationLink("https://www.shodan.io/host/"),
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "censys", Label: "Censys", Purpose: "Host, service, and certificate search", Tier: "core", Targets: []string{"ipv4", "ipv6"}},
+		build: func(targetType, value string) (string, bool) {
+			if targetType != "ip" {
+				return "", false
+			}
+			return investigationQueryURL("https://platform.censys.io/search", "q", value), true
+		},
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "wappalyzer", Label: "Wappalyzer Lookup", Purpose: "Additional web technology lookup", Tier: "more", Targets: []string{"domain"}},
+		build:    domainInvestigationLink("https://www.wappalyzer.com/lookup/", "/"),
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "netcraft", Label: "Netcraft Site Report", Purpose: "Hosting, technology, and site history", Tier: "more", Targets: []string{"domain"}},
+		build: func(targetType, value string) (string, bool) {
+			if targetType != "domain" {
+				return "", false
+			}
+			return investigationQueryURL("https://sitereport.netcraft.com/", "url", "https://"+value), true
+		},
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "greynoise", Label: "GreyNoise", Purpose: "Observed internet scanner activity", Tier: "more", Targets: []string{"ipv4"}},
+		build:    ipv4InvestigationLink("https://viz.greynoise.io/ip/"),
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "abuseipdb", Label: "AbuseIPDB", Purpose: "Community abuse reports", Tier: "more", Targets: []string{"ipv4", "ipv6"}},
+		build:    ipInvestigationLink("https://www.abuseipdb.com/check/"),
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "bgptools", Label: "BGP.Tools", Purpose: "Prefix, ASN, and routing context", Tier: "more", Targets: []string{"ipv4", "ipv6"}},
+		build: func(targetType, value string) (string, bool) {
+			if targetType != "ip" {
+				return "", false
+			}
+			return investigationQueryURL("https://bgp.tools/prefix-selector", "ip", value), true
+		},
+	},
+	{
+		provider: InvestigationLinkProvider{ID: "ipinfo", Label: "IPinfo", Purpose: "Network and geographic context", Tier: "more", Targets: []string{"ipv4", "ipv6"}},
+		build:    ipInvestigationLink("https://ipinfo.io/"),
+	},
+}
+
+// AvailableInvestigationLinkProviders returns the manual-link catalog in its
+// stable display order. The returned values do not expose executable builders.
+func AvailableInvestigationLinkProviders() []InvestigationLinkProvider {
+	providers := make([]InvestigationLinkProvider, 0, len(investigationLinkDefinitions))
+	for _, definition := range investigationLinkDefinitions {
+		provider := definition.provider
+		provider.Targets = append([]string(nil), provider.Targets...)
+		providers = append(providers, provider)
+	}
+	return providers
+}
+
+func domainInvestigationLink(prefix, suffix string) func(string, string) (string, bool) {
+	return func(targetType, value string) (string, bool) {
+		if targetType != "domain" {
+			return "", false
+		}
+		return prefix + url.PathEscape(value) + suffix, true
+	}
+}
+
+func ipInvestigationLink(prefix string) func(string, string) (string, bool) {
+	return func(targetType, value string) (string, bool) {
+		if targetType != "ip" {
+			return "", false
+		}
+		if _, err := netip.ParseAddr(value); err != nil {
+			return "", false
+		}
+		return prefix + url.PathEscape(value), true
+	}
+}
+
+func ipv4InvestigationLink(prefix string) func(string, string) (string, bool) {
+	return func(targetType, value string) (string, bool) {
+		if targetType != "ip" {
+			return "", false
+		}
+		address, err := netip.ParseAddr(value)
+		if err != nil || !address.Is4() {
+			return "", false
+		}
+		return prefix + url.PathEscape(value), true
+	}
+}
+
+func investigationQueryURL(base, key, value string) string {
+	parsed, _ := url.Parse(base)
+	query := parsed.Query()
+	query.Set(key, value)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func selectedInvestigationLinkDefinitions(selection []string) ([]investigationLinkDefinition, error) {
+	requested := make(map[string]bool)
+	for _, item := range selection {
+		for _, value := range strings.Split(item, ",") {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value != "" {
+				requested[value] = true
+			}
+		}
+	}
+	if len(requested) == 0 || requested["core"] {
+		if len(requested) > 1 {
+			return nil, fmt.Errorf("research link preset core cannot be combined with provider names")
+		}
+		return investigationLinkDefinitionsForTier("core"), nil
+	}
+	if requested["all"] {
+		if len(requested) > 1 {
+			return nil, fmt.Errorf("research link preset all cannot be combined with provider names")
+		}
+		return append([]investigationLinkDefinition(nil), investigationLinkDefinitions...), nil
+	}
+	if requested["off"] {
+		if len(requested) > 1 {
+			return nil, fmt.Errorf("research link preset off cannot be combined with provider names")
+		}
+		return nil, nil
+	}
+	known := make(map[string]bool, len(investigationLinkDefinitions))
+	for _, definition := range investigationLinkDefinitions {
+		known[definition.provider.ID] = true
+	}
+	for id := range requested {
+		if !known[id] {
+			return nil, fmt.Errorf("unknown research link provider %q", id)
+		}
+	}
+	selected := make([]investigationLinkDefinition, 0, len(requested))
+	for _, definition := range investigationLinkDefinitions {
+		if requested[definition.provider.ID] {
+			selected = append(selected, definition)
+		}
+	}
+	return selected, nil
+}
+
+func investigationLinkDefinitionsForTier(tier string) []investigationLinkDefinition {
+	var selected []investigationLinkDefinition
+	for _, definition := range investigationLinkDefinitions {
+		if definition.provider.Tier == tier {
+			selected = append(selected, definition)
+		}
+	}
+	return selected
+}
+
+func buildInvestigationLinks(definitions []investigationLinkDefinition, targetType, value string) []InvestigationLink {
+	links := make([]InvestigationLink, 0, len(definitions))
+	for _, definition := range definitions {
+		resolved, supported := definition.build(targetType, value)
+		if !supported {
+			continue
+		}
+		parsed, err := url.Parse(resolved)
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+			continue
+		}
+		links = append(links, InvestigationLink{Label: definition.provider.Label, Type: targetType, Value: value, URL: parsed.String()})
+	}
+	return links
+}
+
 func resolveInvestigationLink(template, targetType, value string) (InvestigationLink, error) {
 	template = strings.TrimSpace(template)
 	if !strings.Contains(template, "{type}") || !strings.Contains(template, "{value}") {
@@ -564,9 +827,9 @@ func resolveInvestigationLink(template, targetType, value string) (Investigation
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
 		return InvestigationLink{}, errors.New("template must resolve to an HTTPS URL without credentials")
 	}
-	label := "Open in investigation service"
+	label := "Custom research service"
 	if strings.EqualFold(parsed.Hostname(), "otx.alienvault.com") {
-		label = "Open in AlienVault OTX"
+		label = "AlienVault OTX"
 	}
 	return InvestigationLink{Label: label, Type: targetType, Value: value, URL: parsed.String()}, nil
 }

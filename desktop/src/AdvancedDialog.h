@@ -1,12 +1,16 @@
 #pragma once
 
 #include <QDialog>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QStringList>
 
 class QCheckBox;
 class QComboBox;
 class QDialogButtonBox;
 class QLineEdit;
+class QLabel;
+class QPushButton;
 class QSpinBox;
 
 class AdvancedDialog final : public QDialog
@@ -18,9 +22,11 @@ public:
     QJsonObject options() const;
     QJsonObject persistentOptions() const;
     void setOptions(const QJsonObject &options);
+    void setInvestigationLinkProviders(const QJsonArray &providers);
 
 private slots:
     void updateState();
+    void chooseResearchLinks();
 
 private:
     QComboBox *m_protocol;
@@ -35,7 +41,11 @@ private:
     QCheckBox *m_trace;
     QCheckBox *m_otx;
     QSpinBox *m_relatedLimit;
+    QLabel *m_researchLinksSummary;
+    QPushButton *m_researchLinksButton;
     QLineEdit *m_investigationLink;
     QLineEdit *m_otxEndpoint;
     QDialogButtonBox *m_buttons;
+    QJsonArray m_investigationLinkProviders;
+    QStringList m_researchLinks{QStringLiteral("core")};
 };

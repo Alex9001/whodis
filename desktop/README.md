@@ -7,7 +7,7 @@ private helper; users do not need to install or run the CLI.
 The main window exposes Registration, Inspect, selectable DNS Query, Diagnose,
 and Investigate actions. Resolver comparison, iterative delegation tracing, and
 explicit zone transfer live under Tools. Results open only the relevant
-Overview, Stack, Related, DNS, Compare, Delegation, Services, Findings,
+Overview, Stack, Research, Related, DNS, Compare, Delegation, Services, Findings,
 Contacts, and Raw tabs. The separate batch workspace also supports Investigate
 through the same operation engine and exports CSV, TSV, or JSON.
 
@@ -16,12 +16,17 @@ independently for each view, and row heights adapt when a column changes. An
 investigation opens on Overview with a categorized technology and
 infrastructure summary. Stack is a master/detail workspace: category headings
 organize selectable findings, while one lower pane shows the selected summary,
-evidence, and explicit manual-pivot buttons. Its splitter position is also
-remembered.
+and evidence. Its splitter position is also remembered. Research links live in
+their own adjustable, wrapped view grouped by domain and public IP, with one
+native Open/Copy action instead of repeated buttons.
 
-Investigate is local by default. Its Advanced-dialog OTX checkbox is an
+Investigate is local by default. The Core research-link catalog is generated
+locally, and no listed service receives a domain or IP until the user opens its
+link. Advanced offers Core, All, Off, and individual persistent provider
+choices. Its OTX checkbox is an
 explicit, session-only third-party opt-in and is never restored automatically.
-Harmless related-result, pivot-link, and endpoint preferences may be saved; an
+Harmless related-result, research-link, custom-template, and endpoint
+preferences may be saved; an
 OTX API key is read only from `WHODIS_OTX_API_KEY`.
 
 Qt Widgets deliberately uses the active platform style. Windows receives

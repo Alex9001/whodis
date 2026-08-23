@@ -6,7 +6,7 @@ import (
 	"github.com/Alex9001/whodis/v2"
 )
 
-const ProtocolVersion = 4
+const ProtocolVersion = 5
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -35,9 +35,10 @@ type rpcError struct {
 }
 
 type helloResult struct {
-	ProtocolVersion int      `json:"protocol_version"`
-	EngineVersion   string   `json:"engine_version"`
-	Capabilities    []string `json:"capabilities"`
+	ProtocolVersion            int                                `json:"protocol_version"`
+	EngineVersion              string                             `json:"engine_version"`
+	Capabilities               []string                           `json:"capabilities"`
+	InvestigationLinkProviders []whodis.InvestigationLinkProvider `json:"investigation_link_providers"`
 }
 
 type parseParams struct {

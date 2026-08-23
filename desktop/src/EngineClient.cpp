@@ -8,7 +8,7 @@
 #include <QStandardPaths>
 
 namespace {
-constexpr int supportedProtocolVersion = 4;
+constexpr int supportedProtocolVersion = 5;
 }
 
 EngineClient::EngineClient(QObject *parent)
@@ -177,7 +177,8 @@ void EngineClient::processLine(const QByteArray &line)
             return;
         }
         m_ready = true;
-        emit engineReady(hello.value(QStringLiteral("engine_version")).toString(), protocolVersion);
+        emit engineReady(hello.value(QStringLiteral("engine_version")).toString(), protocolVersion,
+                         hello.value(QStringLiteral("investigation_link_providers")).toArray());
     }
     emit responseReceived(id, method, result);
 }

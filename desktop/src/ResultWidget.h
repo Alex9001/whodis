@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QWidget>
 
@@ -24,6 +26,7 @@ public:
     void clearResult();
     void setItem(const QJsonObject &item);
     void setReportItem(const QJsonObject &item);
+    void setInvestigationLinkProviders(const QJsonArray &providers);
     void showDNSTab();
     QString copyText() const;
     QString currentTarget() const;
@@ -45,11 +48,14 @@ private:
     void populateServices(const QJsonObject &report);
     void populateFindings(const QJsonObject &report);
     void populateInvestigation(const QJsonObject &report);
+    void populateResearch(const QJsonObject &report);
     void populateErrors(const QJsonObject &report);
     void populateContacts(const QJsonObject &result);
     void populateRaw(const QJsonArray &sources);
     void clearStackDetails();
     void showStackDetails(QTreeWidgetItem *item);
+    void updateResearchActions();
+    void openSelectedResearchLink();
     void refreshViews();
 
     QTabWidget *m_tabs;
@@ -65,8 +71,10 @@ private:
     QLabel *m_stackDetailTitle;
     QLabel *m_stackDetailSummary;
     QTableWidget *m_evidence;
-    QWidget *m_stackActions;
-    QHBoxLayout *m_stackActionsLayout;
+    QTreeWidget *m_research;
+    QWidget *m_researchPage;
+    QPushButton *m_openResearch;
+    QPushButton *m_copyResearch;
     QTableWidget *m_related;
     QTableWidget *m_errors;
     QTableWidget *m_contacts;
@@ -75,4 +83,5 @@ private:
     QWidget *m_rawPage;
     QLabel *m_emptyLabel;
     QJsonObject m_item;
+    QHash<QString, QString> m_researchPurposes;
 };

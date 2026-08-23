@@ -184,17 +184,17 @@ func TestConfigAcceptsLegacyFormatAndDetailsAliases(t *testing.T) {
 
 func TestConfigWizardSavesAllPreferences(t *testing.T) {
 	directory := t.TempDir()
-	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "3\n2\n3\n2\n4\n2\n3\n2\n50\noff\ny\n"), "config")
+	code, stdout, stderr := runCLIForTest(t, wizardRuntime(directory, "3\n2\n3\n2\n4\n2\n3\n2\n50\n3\ny\n"), "config")
 	if code != 0 || stderr != "" {
 		t.Fatalf("wizard = (%d, %q, %q), want success", code, stdout, stderr)
 	}
-	for _, text := range []string{"Whodis preferences", "1/10  Output format", "2/10  Color", "3/10  Registry notices", "4/10  Default DNS resolver", "5/10  Multiple resolver behavior", "6/10  DNSSEC requests", "7/10  Check scrutiny", "8/10  Default check mode", "9/10  Related-domain display limit", "10/10  Investigation pivot link", "Review", "Saved preferences to"} {
+	for _, text := range []string{"Whodis preferences", "1/10  Output format", "2/10  Color", "3/10  Registry notices", "4/10  Default DNS resolver", "5/10  Multiple resolver behavior", "6/10  DNSSEC requests", "7/10  Check scrutiny", "8/10  Default check mode", "9/10  Related-domain display limit", "10/10  Manual research links", "Review", "Saved preferences to"} {
 		if !strings.Contains(stdout, text) {
 			t.Errorf("wizard output missing %q:\n%s", text, stdout)
 		}
 	}
 	config, exists, err := loadUserConfig(testRuntime(directory, nil, false))
-	if err != nil || !exists || config.Format != "tree" || config.Color != "always" || config.Details == nil || !*config.Details || resolverPreset(config.DNSResolvers) != "cloudflare" || config.ResolverStrategy != "consensus" || config.DNSSEC == nil || !*config.DNSSEC || config.Scrutiny != "strict" || config.CheckActive == nil || !*config.CheckActive || config.RelatedLimit != 50 || config.InvestigationLink != "off" {
+	if err != nil || !exists || config.Format != "tree" || config.Color != "always" || config.Details == nil || !*config.Details || resolverPreset(config.DNSResolvers) != "cloudflare" || config.ResolverStrategy != "consensus" || config.DNSSEC == nil || !*config.DNSSEC || config.Scrutiny != "strict" || config.CheckActive == nil || !*config.CheckActive || config.RelatedLimit != 50 || strings.Join(config.ResearchLinks, ",") != "off" {
 		t.Fatalf("wizard config = (%+v, %v, %v), want tree/always/expanded", config, exists, err)
 	}
 }
@@ -345,6 +345,7 @@ func TestConfigStoresSafeInvestigationDefaultsWithoutCredentials(t *testing.T) {
 	commands := [][]string{
 		{"config", "set", "related-limit", "40"},
 		{"config", "set", "investigation-link", "https://intel.example/{type}/{value}"},
+		{"config", "set", "research-links", "core"},
 		{"config", "set", "otx-endpoint", "https://otx.example/api/v1/"},
 	}
 	for _, command := range commands {
@@ -353,7 +354,7 @@ func TestConfigStoresSafeInvestigationDefaultsWithoutCredentials(t *testing.T) {
 		}
 	}
 	config, exists, err := loadUserConfig(runtime)
-	if err != nil || !exists || config.RelatedLimit != 40 || config.InvestigationLink != "https://intel.example/{type}/{value}" || config.OTXEndpoint != "https://otx.example/api/v1" {
+	if err != nil || !exists || config.RelatedLimit != 40 || strings.Join(config.ResearchLinks, ",") != "core" || config.InvestigationLink != "https://intel.example/{type}/{value}" || config.OTXEndpoint != "https://otx.example/api/v1" {
 		t.Fatalf("investigation defaults = (%+v, %v, %v)", config, exists, err)
 	}
 	path, _ := configFilePath(runtime)
@@ -366,6 +367,7 @@ func TestConfigStoresSafeInvestigationDefaultsWithoutCredentials(t *testing.T) {
 	}
 	for _, command := range [][]string{
 		{"config", "set", "related-limit", "101"},
+		{"config", "set", "research-links", "unknown"},
 		{"config", "set", "investigation-link", "http://unsafe.example/{type}/{value}"},
 		{"config", "set", "otx-endpoint", "http://unsafe.example/api"},
 	} {

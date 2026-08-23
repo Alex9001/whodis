@@ -3,8 +3,10 @@
 #include "AdaptiveItemView.h"
 
 #include <QComboBox>
+#include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QGuiApplication>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -297,8 +299,10 @@ ResultWidget::ResultWidget(QWidget *parent)
     , m_stackDetailTitle(new QLabel(m_stackPage))
     , m_stackDetailSummary(new QLabel(m_stackPage))
     , m_evidence(new QTableWidget(m_stackPage))
-    , m_stackActions(new QWidget(m_stackPage))
-    , m_stackActionsLayout(new QHBoxLayout(m_stackActions))
+    , m_research(new QTreeWidget(this))
+    , m_researchPage(new QWidget(this))
+    , m_openResearch(new QPushButton(tr("Open selected"), m_researchPage))
+    , m_copyResearch(new QPushButton(tr("Copy link"), m_researchPage))
     , m_related(new QTableWidget(this))
     , m_errors(new QTableWidget(this))
     , m_contacts(new QTableWidget(this))
@@ -315,6 +319,10 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_evidence->setObjectName(QStringLiteral("stackEvidenceTable"));
     m_stackDetailTitle->setObjectName(QStringLiteral("stackDetailTitle"));
     m_stackDetailSummary->setObjectName(QStringLiteral("stackDetailSummary"));
+    m_research->setObjectName(QStringLiteral("researchTree"));
+    m_researchPage->setObjectName(QStringLiteral("researchPage"));
+    m_openResearch->setObjectName(QStringLiteral("openResearchButton"));
+    m_copyResearch->setObjectName(QStringLiteral("copyResearchButton"));
     m_related->setObjectName(QStringLiteral("relatedTable"));
     m_dns->setObjectName(QStringLiteral("dnsTable"));
     m_compare->setObjectName(QStringLiteral("compareTable"));
@@ -351,6 +359,13 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_evidence->setEditTriggers(QAbstractItemView::NoEditTriggers);
     AdaptiveItemView::configure(m_evidence, QStringLiteral("result/layout-v1/stack-evidence"), {2, 3, 3, 7});
 
+    m_research->setColumnCount(2);
+    m_research->setHeaderLabels({tr("Service"), tr("What it adds")});
+    m_research->setRootIsDecorated(true);
+    m_research->setAlternatingRowColors(true);
+    m_research->setSelectionMode(QAbstractItemView::SingleSelection);
+    AdaptiveItemView::configure(m_research, QStringLiteral("result/layout-v1/research"), {3, 7});
+
     configureTable(m_related, {tr("Hostname"), tr("Observed IP"), tr("First seen"), tr("Last seen"), tr("Now"), tr("Current DNS"), tr("Source")});
     AdaptiveItemView::configure(m_related, QStringLiteral("result/layout-v1/related"), {4, 3, 3, 3, 2, 4, 2});
     m_related->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -365,16 +380,12 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_stackDetailTitle->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_stackDetailSummary->setWordWrap(true);
     m_stackDetailSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_stackActionsLayout->setContentsMargins(0, 0, 0, 0);
-    m_stackActionsLayout->setAlignment(Qt::AlignLeft);
-
     auto *detailPage = new QWidget(m_stackSplitter);
     auto *detailLayout = new QVBoxLayout(detailPage);
     detailLayout->setContentsMargins(8, 8, 8, 8);
     detailLayout->addWidget(m_stackDetailTitle);
     detailLayout->addWidget(m_stackDetailSummary);
     detailLayout->addWidget(m_evidence, 1);
-    detailLayout->addWidget(m_stackActions);
     m_stackSplitter->addWidget(m_stack);
     m_stackSplitter->addWidget(detailPage);
     m_stackSplitter->setStretchFactor(0, 3);
@@ -391,6 +402,19 @@ ResultWidget::ResultWidget(QWidget *parent)
     });
     clearStackDetails();
 
+    auto *researchLayout = new QVBoxLayout(m_researchPage);
+    researchLayout->setContentsMargins(8, 8, 8, 8);
+    auto *researchNote = new QLabel(tr("Whodis creates these links locally. A service receives the domain or IP only when you explicitly open its link. Some services may require an account."), m_researchPage);
+    researchNote->setWordWrap(true);
+    researchLayout->addWidget(researchNote);
+    researchLayout->addWidget(m_research, 1);
+    auto *researchActions = new QHBoxLayout;
+    researchActions->addWidget(m_openResearch);
+    researchActions->addWidget(m_copyResearch);
+    researchActions->addStretch();
+    researchLayout->addLayout(researchActions);
+    updateResearchActions();
+
     m_rawPage = new QWidget(this);
     auto *rawLayout = new QVBoxLayout(m_rawPage);
     rawLayout->setContentsMargins(0, 0, 0, 0);
@@ -405,6 +429,7 @@ ResultWidget::ResultWidget(QWidget *parent)
 
     m_tabs->addTab(m_overview, tr("Overview"));
     m_tabs->addTab(m_stackPage, tr("Stack"));
+    m_tabs->addTab(m_researchPage, tr("Research"));
     m_tabs->addTab(m_related, tr("Related"));
     m_tabs->addTab(m_dns, tr("DNS"));
     m_tabs->addTab(m_compare, tr("Compare"));
@@ -417,16 +442,14 @@ ResultWidget::ResultWidget(QWidget *parent)
 
     connect(m_stack, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem *current) { showStackDetails(current); });
-    connect(m_stack, &QTreeWidget::itemDoubleClicked, this, [](QTreeWidgetItem *item) {
-        const QJsonObject payload = stackPayload(item);
-        QUrl url(payload.value(QStringLiteral("url")).toString());
-        if (url.isEmpty()) {
-            const QJsonArray links = payload.value(QStringLiteral("links")).toArray();
-            if (!links.isEmpty())
-                url = QUrl(links.first().toObject().value(QStringLiteral("url")).toString());
-        }
-        if (url.isValid() && url.scheme() == QStringLiteral("https"))
-            QDesktopServices::openUrl(url);
+    connect(m_research, &QTreeWidget::currentItemChanged, this, [this] { updateResearchActions(); });
+    connect(m_research, &QTreeWidget::itemDoubleClicked, this, [this] { openSelectedResearchLink(); });
+    connect(m_openResearch, &QPushButton::clicked, this, &ResultWidget::openSelectedResearchLink);
+    connect(m_copyResearch, &QPushButton::clicked, this, [this] {
+        const QTreeWidgetItem *item = m_research->currentItem();
+        const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
+        if (url.isValid() && url.scheme() == QStringLiteral("https") && url.userInfo().isEmpty())
+            QGuiApplication::clipboard()->setText(url.toString());
     });
     connect(m_related, &QTableWidget::customContextMenuRequested, this, [this](const QPoint &position) {
         const int row = m_related->rowAt(position.y());
@@ -456,6 +479,8 @@ void ResultWidget::clearResult()
     m_findings->setRowCount(0);
     m_stack->clear();
     clearStackDetails();
+    m_research->clear();
+    updateResearchActions();
     m_related->setRowCount(0);
     m_errors->setRowCount(0);
     m_contacts->setRowCount(0);
@@ -475,6 +500,7 @@ void ResultWidget::setItem(const QJsonObject &item)
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
     m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
     m_tabs->setTabVisible(m_tabs->indexOf(m_stackPage), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_researchPage), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_related), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_compare), false);
@@ -517,11 +543,13 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     populateServices(report);
     populateFindings(report);
     populateInvestigation(report);
+    populateResearch(report);
     populateErrors(report);
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
 
     m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
     m_tabs->setTabVisible(m_tabs->indexOf(m_stackPage), m_stack->topLevelItemCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_researchPage), m_research->topLevelItemCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_related), m_related->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_compare), m_compare->rowCount() > 0);
@@ -584,6 +612,17 @@ int ResultWidget::dnsRowCount() const
 int ResultWidget::relatedRowCount() const
 {
     return m_related->rowCount();
+}
+
+void ResultWidget::setInvestigationLinkProviders(const QJsonArray &providers)
+{
+    m_researchPurposes.clear();
+    for (const QJsonValue &value : providers) {
+        const QJsonObject provider = value.toObject();
+        const QString label = provider.value(QStringLiteral("label")).toString();
+        if (!label.isEmpty())
+            m_researchPurposes.insert(label, provider.value(QStringLiteral("purpose")).toString());
+    }
 }
 
 void ResultWidget::populateOverview(const QJsonObject &result)
@@ -954,19 +993,6 @@ void ResultWidget::populateInvestigation(const QJsonObject &report)
         }
     }
 
-    const QJsonArray links = investigation.value(QStringLiteral("links")).toArray();
-    if (!links.isEmpty()) {
-        auto *group = addStackGroup(m_stack, tr("Investigation links"));
-        for (const QJsonValue &value : links) {
-            const QJsonObject link = value.toObject();
-            auto *item = new QTreeWidgetItem(group, {link.value(QStringLiteral("label")).toString(), link.value(QStringLiteral("value")).toString(),
-                                                     tr("Manual pivot"), QString()});
-            setStackPayload(item, QStringLiteral("link"), link);
-            if (!firstLeaf)
-                firstLeaf = item;
-        }
-    }
-
     const QJsonArray warnings = investigation.value(QStringLiteral("warnings")).toArray();
     if (!warnings.isEmpty()) {
         auto *group = addStackGroup(m_stack, tr("Notes"));
@@ -1010,11 +1036,6 @@ void ResultWidget::clearStackDetails()
     m_evidence->setRowCount(0);
     m_evidence->setSortingEnabled(true);
     m_evidence->setVisible(false);
-    while (QLayoutItem *item = m_stackActionsLayout->takeAt(0)) {
-        delete item->widget();
-        delete item;
-    }
-    m_stackActions->setVisible(false);
 }
 
 void ResultWidget::showStackDetails(QTreeWidgetItem *item)
@@ -1039,17 +1060,6 @@ void ResultWidget::showStackDetails(QTreeWidgetItem *item)
         m_evidence->setItem(row, 2, new QTableWidgetItem(field));
         m_evidence->setItem(row, 3, new QTableWidgetItem(value));
     };
-    const auto addLink = [this](const QJsonObject &link) {
-        const QUrl url(link.value(QStringLiteral("url")).toString());
-        if (!url.isValid() || url.scheme() != QStringLiteral("https"))
-            return;
-        const QString label = link.value(QStringLiteral("label")).toString(tr("Open link"));
-        auto *button = new QPushButton(label, m_stackActions);
-        button->setToolTip(url.toString());
-        connect(button, &QPushButton::clicked, this, [url] { QDesktopServices::openUrl(url); });
-        m_stackActionsLayout->addWidget(button);
-    };
-
     if (kind == QStringLiteral("component")) {
         m_stackDetailTitle->setText(payload.value(QStringLiteral("name")).toString());
         QString summary = payload.value(QStringLiteral("summary")).toString();
@@ -1074,14 +1084,6 @@ void ResultWidget::showStackDetails(QTreeWidgetItem *item)
         addEvidence(payload.value(QStringLiteral("source")).toString(), address, QStringLiteral("PTR"), joined(payload.value(QStringLiteral("ptr"))));
         addEvidence(payload.value(QStringLiteral("source")).toString(), address, QStringLiteral("CIDR"), joined(payload.value(QStringLiteral("cidr"))));
         addEvidence(payload.value(QStringLiteral("source")).toString(), address, tr("Country"), payload.value(QStringLiteral("country")).toString());
-        for (const QJsonValue &value : payload.value(QStringLiteral("links")).toArray())
-            addLink(value.toObject());
-    } else if (kind == QStringLiteral("link")) {
-        m_stackDetailTitle->setText(payload.value(QStringLiteral("label")).toString());
-        m_stackDetailSummary->setText(tr("Manual investigation pivot. Whodis opens it only when you choose to."));
-        addEvidence(tr("Link"), payload.value(QStringLiteral("value")).toString(), tr("Type"), payload.value(QStringLiteral("type")).toString());
-        addEvidence(tr("Link"), payload.value(QStringLiteral("value")).toString(), QStringLiteral("URL"), payload.value(QStringLiteral("url")).toString());
-        addLink(payload);
     } else if (kind == QStringLiteral("warning")) {
         m_stackDetailTitle->setText(tr("Note"));
         m_stackDetailSummary->setText(payload.value(QStringLiteral("message")).toString());
@@ -1089,14 +1091,76 @@ void ResultWidget::showStackDetails(QTreeWidgetItem *item)
 
     m_evidence->setSortingEnabled(true);
     m_evidence->setVisible(m_evidence->rowCount() > 0);
-    m_stackActions->setVisible(m_stackActionsLayout->count() > 0);
     AdaptiveItemView::refresh(m_evidence);
+}
+
+void ResultWidget::populateResearch(const QJsonObject &report)
+{
+    m_research->clear();
+    const QJsonObject investigation = report.value(QStringLiteral("investigation")).toObject();
+    if (investigation.isEmpty()) {
+        updateResearchActions();
+        return;
+    }
+
+    QHash<QString, QTreeWidgetItem *> groups;
+    const auto appendLinks = [this, &groups](const QJsonArray &links) {
+        for (const QJsonValue &value : links) {
+            const QJsonObject link = value.toObject();
+            const QUrl url(link.value(QStringLiteral("url")).toString());
+            if (!url.isValid() || url.scheme() != QStringLiteral("https") || url.host().isEmpty() || !url.userInfo().isEmpty())
+                continue;
+            const QString targetType = link.value(QStringLiteral("type")).toString();
+            const QString target = link.value(QStringLiteral("value")).toString();
+            const QString key = targetType + QLatin1Char('\0') + target;
+            QTreeWidgetItem *group = groups.value(key);
+            if (!group) {
+                QString typeLabel = tr("Domain");
+                if (targetType == QStringLiteral("ip"))
+                    typeLabel = target.contains(QLatin1Char(':')) ? QStringLiteral("IPv6") : QStringLiteral("IPv4");
+                group = addStackGroup(m_research, typeLabel + QStringLiteral(" — ") + target);
+                groups.insert(key, group);
+            }
+            const QString label = link.value(QStringLiteral("label")).toString(tr("Research service"));
+            QString purpose = m_researchPurposes.value(label);
+            if (purpose.isEmpty())
+                purpose = tr("Manual investigation pivot");
+            auto *item = new QTreeWidgetItem(group, {label, purpose});
+            item->setData(0, Qt::UserRole, url.toString());
+            item->setToolTip(0, url.toString());
+            item->setToolTip(1, url.toString());
+        }
+    };
+
+    appendLinks(investigation.value(QStringLiteral("links")).toArray());
+    for (const QJsonValue &value : investigation.value(QStringLiteral("networks")).toArray())
+        appendLinks(value.toObject().value(QStringLiteral("links")).toArray());
+    updateResearchActions();
+    AdaptiveItemView::refresh(m_research);
+}
+
+void ResultWidget::updateResearchActions()
+{
+    const QTreeWidgetItem *item = m_research->currentItem();
+    const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
+    const bool valid = url.isValid() && url.scheme() == QStringLiteral("https") && !url.host().isEmpty() && url.userInfo().isEmpty();
+    m_openResearch->setEnabled(valid);
+    m_copyResearch->setEnabled(valid);
+}
+
+void ResultWidget::openSelectedResearchLink()
+{
+    const QTreeWidgetItem *item = m_research->currentItem();
+    const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
+    if (url.isValid() && url.scheme() == QStringLiteral("https") && !url.host().isEmpty() && url.userInfo().isEmpty())
+        QDesktopServices::openUrl(url);
 }
 
 void ResultWidget::refreshViews()
 {
     AdaptiveItemView::refresh(m_overview);
     AdaptiveItemView::refresh(m_stack);
+    AdaptiveItemView::refresh(m_research);
     for (QTableWidget *table : {m_dns, m_compare, m_delegation, m_services, m_findings,
                                 m_evidence, m_related, m_errors, m_contacts})
         AdaptiveItemView::refresh(table);
