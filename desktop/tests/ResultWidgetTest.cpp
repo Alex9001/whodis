@@ -334,14 +334,17 @@ void ResultWidgetTest::wrapsAndRemembersAdjustableColumns()
         QCOMPARE(dns->horizontalHeader()->sectionResizeMode(3), QHeaderView::Interactive);
         dns->horizontalHeader()->resizeSection(3, 137);
         QCOMPARE(dns->horizontalHeader()->sectionSize(3), 137);
-        QTest::qWait(100);
+        const QByteArray expectedState = dns->horizontalHeader()->saveState();
+        QTRY_COMPARE_WITH_TIMEOUT(
+            QSettings().value(QStringLiteral("result/layout-v1/dns/state")).toByteArray(),
+            expectedState, 1000);
     }
     settings.sync();
     {
         ResultWidget widget;
         const QTableWidget *dns = widget.findChild<QTableWidget *>(QStringLiteral("dnsTable"));
         QVERIFY(dns);
-        QCOMPARE(dns->horizontalHeader()->sectionSize(3), 137);
+        QTRY_COMPARE_WITH_TIMEOUT(dns->horizontalHeader()->sectionSize(3), 137, 1000);
     }
     settings.remove(QStringLiteral("result/layout-v1/dns"));
 }
