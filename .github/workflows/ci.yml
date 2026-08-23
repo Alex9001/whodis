@@ -222,7 +222,7 @@ jobs:
         run: |
           printf '%s\n' '{"jsonrpc":"2.0","id":"ci","method":"hello"}' |
             build-gui/bin/whodis-gui-engine |
-            grep '"protocol_version":4'
+            grep '"protocol_version":5'
       - name: Verify install layout and dependency notices
         run: |
           cmake --install build-gui --prefix "$RUNNER_TEMP/whodis-gui-install"
