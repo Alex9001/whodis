@@ -6,7 +6,7 @@ import (
 )
 
 // ReportSchemaVersion is the version of Whodis's public JSON report schema.
-const ReportSchemaVersion = 4
+const ReportSchemaVersion = 5
 
 // Operation identifies one engine operation.
 type Operation string
@@ -20,6 +20,7 @@ const (
 	OperationDNSTrace     Operation = "dns.trace"
 	OperationDNSTransfer  Operation = "dns.transfer"
 	OperationDiagnose     Operation = "diagnose"
+	OperationInvestigate  Operation = "investigate"
 )
 
 // Severity is the deterministic outcome of a diagnostic finding.
@@ -64,17 +65,18 @@ type ProgressEvent struct {
 
 // Request is the stable public input to Engine.Run.
 type Request struct {
-	ID           string              `json:"id,omitempty" yaml:"id,omitempty"`
-	Operation    Operation           `json:"operation" yaml:"operation"`
-	Target       string              `json:"target" yaml:"target"`
-	Registration LookupOptions       `json:"registration,omitempty" yaml:"registration,omitempty"`
-	DNS          DNSOptions          `json:"dns,omitempty" yaml:"dns,omitempty"`
-	Diagnose     DiagnoseOptions     `json:"diagnose,omitempty" yaml:"diagnose,omitempty"`
-	Timeout      time.Duration       `json:"-" yaml:"-"`
-	OnProgress   func(ProgressEvent) `json:"-" yaml:"-"`
+	ID            string               `json:"id,omitempty" yaml:"id,omitempty"`
+	Operation     Operation            `json:"operation" yaml:"operation"`
+	Target        string               `json:"target" yaml:"target"`
+	Registration  LookupOptions        `json:"registration,omitempty" yaml:"registration,omitempty"`
+	DNS           DNSOptions           `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Diagnose      DiagnoseOptions      `json:"diagnose,omitempty" yaml:"diagnose,omitempty"`
+	Investigation InvestigationOptions `json:"investigation,omitempty" yaml:"investigation,omitempty"`
+	Timeout       time.Duration        `json:"-" yaml:"-"`
+	OnProgress    func(ProgressEvent)  `json:"-" yaml:"-"`
 }
 
-// RegistrationResult is the normalized registration portion of a v4 report.
+// RegistrationResult is the normalized registration portion of a v5 report.
 // Query identity and observation time live once on the enclosing Report.
 type RegistrationResult struct {
 	Route        RouteDecision  `json:"route" yaml:"route"`
@@ -83,18 +85,19 @@ type RegistrationResult struct {
 	Sources      []Source       `json:"sources" yaml:"sources"`
 }
 
-// Report is the renderer-independent v4 result returned by Engine.Run.
+// Report is the renderer-independent v5 result returned by Engine.Run.
 type Report struct {
-	SchemaVersion int                 `json:"schema_version" yaml:"schema_version"`
-	RequestID     string              `json:"request_id,omitempty" yaml:"request_id,omitempty"`
-	Operation     Operation           `json:"operation" yaml:"operation"`
-	Subject       Subject             `json:"subject" yaml:"subject"`
-	ObservedAt    time.Time           `json:"observed_at" yaml:"observed_at"`
-	Registration  *RegistrationResult `json:"registration,omitempty" yaml:"registration,omitempty"`
-	DNS           *DNSOperationResult `json:"dns,omitempty" yaml:"dns,omitempty"`
-	Diagnosis     *DiagnosisReport    `json:"diagnosis,omitempty" yaml:"diagnosis,omitempty"`
-	Findings      []Finding           `json:"findings,omitempty" yaml:"findings,omitempty"`
-	Errors        []OperationError    `json:"errors,omitempty" yaml:"errors,omitempty"`
+	SchemaVersion int                  `json:"schema_version" yaml:"schema_version"`
+	RequestID     string               `json:"request_id,omitempty" yaml:"request_id,omitempty"`
+	Operation     Operation            `json:"operation" yaml:"operation"`
+	Subject       Subject              `json:"subject" yaml:"subject"`
+	ObservedAt    time.Time            `json:"observed_at" yaml:"observed_at"`
+	Registration  *RegistrationResult  `json:"registration,omitempty" yaml:"registration,omitempty"`
+	DNS           *DNSOperationResult  `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Diagnosis     *DiagnosisReport     `json:"diagnosis,omitempty" yaml:"diagnosis,omitempty"`
+	Investigation *InvestigationReport `json:"investigation,omitempty" yaml:"investigation,omitempty"`
+	Findings      []Finding            `json:"findings,omitempty" yaml:"findings,omitempty"`
+	Errors        []OperationError     `json:"errors,omitempty" yaml:"errors,omitempty"`
 }
 
 // BatchRequest controls a bounded group of independent engine requests.
@@ -148,12 +151,21 @@ type DiagnoseProvider interface {
 	Diagnose(context.Context, string, DiagnoseOptions) (*DiagnosisReport, error)
 }
 
+// InvestigationProvider turns live diagnostic evidence into an explainable
+// technology and infrastructure profile. Implementations may return partial
+// reports together with an error when optional enrichment is unavailable.
+type InvestigationProvider interface {
+	Investigate(context.Context, Subject, *DiagnosisReport, InvestigationOptions) (*InvestigationReport, error)
+}
+
 // EngineOptions configures a reusable, concurrency-safe engine.
 type EngineOptions struct {
 	Client        *Client
 	Registration  RegistrationProvider
 	DNS           DNSProvider
 	Diagnose      DiagnoseProvider
+	Investigation InvestigationProvider
+	Enrichments   map[string]EnrichmentProvider
 	Timeout       time.Duration
 	NetworkPolicy NetworkPolicy
 	Limits        EngineLimits
@@ -163,7 +175,7 @@ func registrationResult(result LookupResult) RegistrationResult {
 	return RegistrationResult{Route: result.Route, FallbackFrom: result.FallbackFrom, Object: result.Object, Sources: result.Sources}
 }
 
-// AsLookupResult converts a v4 registration section for consumers migrating
+// AsLookupResult converts a v5 registration section for consumers migrating
 // from Whodis v1's standalone lookup model.
 func (result RegistrationResult) AsLookupResult(subject Subject, observedAt time.Time) LookupResult {
 	return LookupResult{SchemaVersion: 2, Query: subjectTarget(subject), Route: result.Route, FallbackFrom: result.FallbackFrom, RetrievedAt: observedAt, Object: result.Object, Sources: result.Sources}

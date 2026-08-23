@@ -6,7 +6,7 @@ import (
 	"github.com/Alex9001/whodis/v2"
 )
 
-const ProtocolVersion = 3
+const ProtocolVersion = 4
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -51,18 +51,19 @@ type parseResult struct {
 }
 
 type runParams struct {
-	Targets          []string               `json:"targets"`
-	Operation        whodis.Operation       `json:"operation"`
-	Protocol         whodis.Protocol        `json:"protocol,omitempty"`
-	Fallback         whodis.FallbackMode    `json:"fallback,omitempty"`
-	Server           string                 `json:"server,omitempty"`
-	TimeoutMS        int                    `json:"timeout_ms,omitempty"`
-	Workers          int                    `json:"workers,omitempty"`
-	RefreshBootstrap bool                   `json:"refresh_bootstrap,omitempty"`
-	DNS              whodis.DNSOptions      `json:"dns,omitempty"`
-	Diagnose         whodis.DiagnoseOptions `json:"diagnose,omitempty"`
-	BaseToken        string                 `json:"base_token,omitempty"`
-	ReplaceIndices   []int                  `json:"replace_indices,omitempty"`
+	Targets          []string                    `json:"targets"`
+	Operation        whodis.Operation            `json:"operation"`
+	Protocol         whodis.Protocol             `json:"protocol,omitempty"`
+	Fallback         whodis.FallbackMode         `json:"fallback,omitempty"`
+	Server           string                      `json:"server,omitempty"`
+	TimeoutMS        int                         `json:"timeout_ms,omitempty"`
+	Workers          int                         `json:"workers,omitempty"`
+	RefreshBootstrap bool                        `json:"refresh_bootstrap,omitempty"`
+	DNS              whodis.DNSOptions           `json:"dns,omitempty"`
+	Diagnose         whodis.DiagnoseOptions      `json:"diagnose,omitempty"`
+	Investigation    whodis.InvestigationOptions `json:"investigation,omitempty"`
+	BaseToken        string                      `json:"base_token,omitempty"`
+	ReplaceIndices   []int                       `json:"replace_indices,omitempty"`
 }
 
 type cancelParams struct {

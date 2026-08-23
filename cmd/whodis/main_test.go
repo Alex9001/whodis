@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Alex9001/whodis/v2"
 )
@@ -113,6 +114,31 @@ func TestParseArgsStructuredDNSAndDiagnose(t *testing.T) {
 	}
 }
 
+func TestParseArgsInvestigateAndExplicitEnrichment(t *testing.T) {
+	options, err := parseArgs([]string{"investigate", "example.com", "example.net", "--enrich", "otx", "--related-limit", "40", "--investigation-link", "https://intel.example/{type}/{value}", "--otx-endpoint", "https://otx.example/api/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.task != taskInvestigate || len(options.targets) != 2 || options.timeout != 30*time.Second || options.relatedLimit != 40 || strings.Join(options.enrichments, ",") != "otx" || options.otxEndpoint != "https://otx.example/api/v1" {
+		t.Fatalf("investigate options = %#v", options)
+	}
+	for _, args := range [][]string{
+		{"example.com", "--enrich", "otx"},
+		{"investigate", "example.com", "--enrich", "unknown"},
+		{"investigate", "example.com", "--enrich", "otx", "--save"},
+		{"investigate", "example.com", "--investigation-link", "http://unsafe.example/{type}/{value}"},
+		{"investigate", "example.com", "--otx-endpoint", "http://unsafe.example/api"},
+	} {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("parseArgs(%q) succeeded, want an error", args)
+		}
+	}
+	explicit, err := parseArgs([]string{"investigate", "example.com", "--timeout", "5s"})
+	if err != nil || explicit.timeout != 5*time.Second {
+		t.Fatalf("explicit investigation timeout = (%s, %v)", explicit.timeout, err)
+	}
+}
+
 func TestRejectsOperationSpecificOptionsOnUnrelatedCommands(t *testing.T) {
 	tests := [][]string{
 		{"dns", "query", "example.com", "A", "--ixfr"},
@@ -148,7 +174,7 @@ func TestParseExplicitCSVAndNDJSONFormats(t *testing.T) {
 func TestUsageIncludesDetailsAndDNS(t *testing.T) {
 	var output bytes.Buffer
 	printUsage(&output)
-	for _, value := range []string{"inspect", "dns transfer", "expires", "get <fields>", "--details", "--summary", "--resolver", "whodis config", "snapshot", "--format"} {
+	for _, value := range []string{"inspect", "investigate", "--enrich otx", "dns transfer", "expires", "get <fields>", "--details", "--summary", "--resolver", "whodis config", "snapshot", "--format"} {
 		if !strings.Contains(output.String(), value) {
 			t.Fatalf("printUsage() output does not document %q:\n%s", value, output.String())
 		}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Alex9001/whodis/v2"
@@ -33,18 +34,20 @@ type cliRuntime struct {
 	stdinIsTerminal func() bool
 }
 
-// userConfig contains only presentation defaults. Empty format and color mean
-// automatic selection; a nil Details value means the renderer's compact
-// default. The pointer preserves a deliberate saved summary preference.
+// userConfig contains non-secret local defaults. Empty values mean automatic
+// selection. API credentials and enrichment opt-ins are deliberately absent.
 type userConfig struct {
-	Format           string   `json:"format,omitempty"`
-	Color            string   `json:"color,omitempty"`
-	Details          *bool    `json:"details,omitempty"`
-	DNSResolvers     []string `json:"dns_resolvers,omitempty"`
-	ResolverStrategy string   `json:"resolver_strategy,omitempty"`
-	DNSSEC           *bool    `json:"dnssec,omitempty"`
-	Scrutiny         string   `json:"scrutiny,omitempty"`
-	CheckActive      *bool    `json:"check_active,omitempty"`
+	Format            string   `json:"format,omitempty"`
+	Color             string   `json:"color,omitempty"`
+	Details           *bool    `json:"details,omitempty"`
+	DNSResolvers      []string `json:"dns_resolvers,omitempty"`
+	ResolverStrategy  string   `json:"resolver_strategy,omitempty"`
+	DNSSEC            *bool    `json:"dnssec,omitempty"`
+	Scrutiny          string   `json:"scrutiny,omitempty"`
+	CheckActive       *bool    `json:"check_active,omitempty"`
+	InvestigationLink string   `json:"investigation_link,omitempty"`
+	RelatedLimit      int      `json:"related_limit,omitempty"`
+	OTXEndpoint       string   `json:"otx_endpoint,omitempty"`
 }
 
 func defaultCLIRuntime() cliRuntime {
@@ -169,11 +172,11 @@ func removeUserConfig(runtime cliRuntime) error {
 }
 
 func configIsEmpty(config userConfig) bool {
-	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil && len(config.DNSResolvers) == 0 && strings.TrimSpace(config.ResolverStrategy) == "" && config.DNSSEC == nil && strings.TrimSpace(config.Scrutiny) == "" && config.CheckActive == nil
+	return strings.TrimSpace(config.Format) == "" && strings.TrimSpace(config.Color) == "" && config.Details == nil && len(config.DNSResolvers) == 0 && strings.TrimSpace(config.ResolverStrategy) == "" && config.DNSSEC == nil && strings.TrimSpace(config.Scrutiny) == "" && config.CheckActive == nil && strings.TrimSpace(config.InvestigationLink) == "" && config.RelatedLimit == 0 && strings.TrimSpace(config.OTXEndpoint) == ""
 }
 
 func configsEqual(left, right userConfig) bool {
-	if left.Format != right.Format || left.Color != right.Color || left.ResolverStrategy != right.ResolverStrategy || left.Scrutiny != right.Scrutiny || strings.Join(left.DNSResolvers, "\x00") != strings.Join(right.DNSResolvers, "\x00") {
+	if left.Format != right.Format || left.Color != right.Color || left.ResolverStrategy != right.ResolverStrategy || left.Scrutiny != right.Scrutiny || left.InvestigationLink != right.InvestigationLink || left.RelatedLimit != right.RelatedLimit || left.OTXEndpoint != right.OTXEndpoint || strings.Join(left.DNSResolvers, "\x00") != strings.Join(right.DNSResolvers, "\x00") {
 		return false
 	}
 	if !equalOptionalBool(left.Details, right.Details) || !equalOptionalBool(left.DNSSEC, right.DNSSEC) || !equalOptionalBool(left.CheckActive, right.CheckActive) {
@@ -273,6 +276,11 @@ func validateUserConfig(config userConfig) error {
 			return err
 		}
 	}
+	if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{
+		RelatedLimit: config.RelatedLimit, ExternalLinkTemplate: config.InvestigationLink, OTXEndpoint: config.OTXEndpoint,
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -289,7 +297,10 @@ func canonicalUserConfig(config userConfig) (userConfig, error) {
 	if err != nil {
 		return userConfig{}, err
 	}
-	canonical := userConfig{Details: config.Details, DNSResolvers: append([]string(nil), config.DNSResolvers...), DNSSEC: config.DNSSEC, CheckActive: config.CheckActive}
+	canonical := userConfig{
+		Details: config.Details, DNSResolvers: append([]string(nil), config.DNSResolvers...), DNSSEC: config.DNSSEC, CheckActive: config.CheckActive,
+		InvestigationLink: strings.TrimSpace(config.InvestigationLink), RelatedLimit: config.RelatedLimit, OTXEndpoint: strings.TrimRight(strings.TrimSpace(config.OTXEndpoint), "/"),
+	}
 	if format != "auto" {
 		canonical.Format = format
 	}
@@ -305,6 +316,18 @@ func canonicalUserConfig(config userConfig) (userConfig, error) {
 	}
 	if scrutiny != "standard" {
 		canonical.Scrutiny = scrutiny
+	}
+	if strings.EqualFold(canonical.InvestigationLink, "default") || strings.EqualFold(canonical.InvestigationLink, "auto") {
+		canonical.InvestigationLink = ""
+	}
+	if canonical.RelatedLimit == 25 {
+		canonical.RelatedLimit = 0
+	}
+	if strings.EqualFold(canonical.OTXEndpoint, "default") || strings.EqualFold(canonical.OTXEndpoint, "auto") {
+		canonical.OTXEndpoint = ""
+	}
+	if err := validateUserConfig(canonical); err != nil {
+		return userConfig{}, err
 	}
 	return canonical, nil
 }
@@ -383,6 +406,21 @@ func configValue(config userConfig, key string) (string, error) {
 		return parsePersistentScrutiny(config.Scrutiny)
 	case "check-mode":
 		return persistentCheckMode(config.CheckActive), nil
+	case "investigation-link":
+		if strings.TrimSpace(config.InvestigationLink) == "" {
+			return "default", nil
+		}
+		return config.InvestigationLink, nil
+	case "related-limit":
+		if config.RelatedLimit == 0 {
+			return "25", nil
+		}
+		return fmt.Sprint(config.RelatedLimit), nil
+	case "otx-endpoint":
+		if strings.TrimSpace(config.OTXEndpoint) == "" {
+			return "default", nil
+		}
+		return config.OTXEndpoint, nil
 	default:
 		return "", fmt.Errorf("unknown preference %q", key)
 	}
@@ -478,8 +516,45 @@ func setConfigValue(config *userConfig, key, value string) error {
 			return fmt.Errorf("check-mode must be passive or active")
 		}
 		return nil
+	case "investigation-link":
+		value = strings.TrimSpace(value)
+		if strings.EqualFold(value, "default") || strings.EqualFold(value, "auto") {
+			config.InvestigationLink = ""
+			return nil
+		}
+		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{ExternalLinkTemplate: value}); err != nil {
+			return err
+		}
+		config.InvestigationLink = value
+		return nil
+	case "related-limit":
+		if strings.EqualFold(strings.TrimSpace(value), "default") || strings.EqualFold(strings.TrimSpace(value), "auto") {
+			config.RelatedLimit = 0
+			return nil
+		}
+		limit, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || limit < 1 || limit > 100 {
+			return fmt.Errorf("related-limit must be between 1 and 100")
+		}
+		if limit == 25 {
+			limit = 0
+		}
+		config.RelatedLimit = limit
+		return nil
+	case "otx-endpoint":
+		value = strings.TrimSpace(value)
+		if strings.EqualFold(value, "default") || strings.EqualFold(value, "auto") {
+			config.OTXEndpoint = ""
+			return nil
+		}
+		value = strings.TrimRight(value, "/")
+		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{OTXEndpoint: value}); err != nil {
+			return err
+		}
+		config.OTXEndpoint = value
+		return nil
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, or check-mode", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, check-mode, investigation-link, related-limit, or otx-endpoint", key)
 	}
 }
 
@@ -501,8 +576,14 @@ func unsetConfigValue(config *userConfig, key string) error {
 		config.Scrutiny = ""
 	case "check-mode":
 		config.CheckActive = nil
+	case "investigation-link":
+		config.InvestigationLink = ""
+	case "related-limit":
+		config.RelatedLimit = 0
+	case "otx-endpoint":
+		config.OTXEndpoint = ""
 	default:
-		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, or check-mode", key)
+		return fmt.Errorf("unknown preference %q; choose format, color, details, resolver, strategy, dnssec, scrutiny, check-mode, investigation-link, related-limit, or otx-endpoint", key)
 	}
 	return nil
 }
@@ -575,7 +656,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "get":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint")
 			return 2
 		}
 		config, exists, err := loadUserConfig(runtime)
@@ -599,7 +680,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "set":
 		if len(args) != 3 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details|resolver|strategy|dnssec|scrutiny|check-mode <value>")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config set format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint <value>")
 			return 2
 		}
 		if err := setConfigValue(&userConfig{}, args[1], args[2]); err != nil {
@@ -615,7 +696,7 @@ func runConfig(args []string, stdout, stderr io.Writer, runtime cliRuntime) int 
 		return 0
 	case "unset":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode")
+			fmt.Fprintln(stderr, "whodis: usage: whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint")
 			return 2
 		}
 		if err := unsetConfigValue(&userConfig{}, args[1]); err != nil {
@@ -689,12 +770,14 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	dnssec := persistentOptionalBool(config.DNSSEC)
 	scrutiny, _ := parsePersistentScrutiny(config.Scrutiny)
 	checkMode := persistentCheckMode(config.CheckActive)
+	relatedLimit, _ := configValue(config, "related-limit")
+	investigationLink, _ := configValue(config, "investigation-link")
 	scanner := bufio.NewScanner(runtime.stdin)
 
 	fmt.Fprintln(stdout, "Whodis preferences")
 	fmt.Fprintln(stdout, "Enter a number, press Enter to keep the current choice, or type q to cancel.")
 
-	format, cancelled, err := promptWizardChoice(scanner, stdout, 1, 8, "Output format", format, []wizardChoice{
+	format, cancelled, err := promptWizardChoice(scanner, stdout, 1, 10, "Output format", format, []wizardChoice{
 		{value: "auto", label: "Auto", description: "dashboard in a terminal; plain text when piped or redirected"},
 		{value: "dashboard", label: "Dashboard", description: "responsive panel grid that adapts to terminal width"},
 		{value: "tree", label: "Tree", description: "hierarchical view for scanning relationships"},
@@ -705,7 +788,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	color, cancelled, err = promptWizardChoice(scanner, stdout, 2, 8, "Color", color, []wizardChoice{
+	color, cancelled, err = promptWizardChoice(scanner, stdout, 2, 10, "Color", color, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use color only on a capable terminal; respect NO_COLOR"},
 		{value: "always", label: "Always", description: "force ANSI color in dashboard and tree output"},
 		{value: "never", label: "Never", description: "never emit ANSI color"},
@@ -714,7 +797,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	details, cancelled, err = promptWizardChoice(scanner, stdout, 3, 8, "Registry notices", details, []wizardChoice{
+	details, cancelled, err = promptWizardChoice(scanner, stdout, 3, 10, "Registry notices", details, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use the compact summary behavior built into visual formats"},
 		{value: "summary", label: "Summary", description: "always show only the deduplicated notice count"},
 		{value: "expanded", label: "Expanded", description: "show deduplicated titles, descriptions, and links"},
@@ -732,12 +815,12 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	if resolver == "custom" {
 		resolverChoices = append(resolverChoices, wizardChoice{value: "custom", label: "Custom", description: "keep the resolver URIs already stored in this config"})
 	}
-	resolver, cancelled, err = promptWizardChoice(scanner, stdout, 4, 8, "Default DNS resolver", resolver, resolverChoices)
+	resolver, cancelled, err = promptWizardChoice(scanner, stdout, 4, 10, "Default DNS resolver", resolver, resolverChoices)
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
 		return wizardExitCode(err)
 	}
 
-	strategy, cancelled, err = promptWizardChoice(scanner, stdout, 5, 8, "Multiple resolver behavior", strategy, []wizardChoice{
+	strategy, cancelled, err = promptWizardChoice(scanner, stdout, 5, 10, "Multiple resolver behavior", strategy, []wizardChoice{
 		{value: "first", label: "First", description: "stop after the first successful resolver"},
 		{value: "all", label: "All", description: "retain every resolver response"},
 		{value: "fastest", label: "Fastest", description: "race resolvers and keep the first successful response"},
@@ -747,7 +830,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	dnssec, cancelled, err = promptWizardChoice(scanner, stdout, 6, 8, "DNSSEC requests", dnssec, []wizardChoice{
+	dnssec, cancelled, err = promptWizardChoice(scanner, stdout, 6, 10, "DNSSEC requests", dnssec, []wizardChoice{
 		{value: "auto", label: "Auto", description: "use each command's normal DNSSEC behavior"},
 		{value: "on", label: "On", description: "request DNSSEC records by default"},
 		{value: "off", label: "Off", description: "do not request DNSSEC records by default"},
@@ -756,7 +839,7 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	scrutiny, cancelled, err = promptWizardChoice(scanner, stdout, 7, 8, "Check scrutiny", scrutiny, []wizardChoice{
+	scrutiny, cancelled, err = promptWizardChoice(scanner, stdout, 7, 10, "Check scrutiny", scrutiny, []wizardChoice{
 		{value: "basic", label: "Basic", description: "fail only clear registration, DNS, or diagnostic problems"},
 		{value: "standard", label: "Standard", description: "balanced default with warnings for approaching risks"},
 		{value: "strict", label: "Strict", description: "promote warnings such as missing DNSSEC to failures"},
@@ -765,10 +848,20 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		return wizardExitCode(err)
 	}
 
-	checkMode, cancelled, err = promptWizardChoice(scanner, stdout, 8, 8, "Default check mode", checkMode, []wizardChoice{
+	checkMode, cancelled, err = promptWizardChoice(scanner, stdout, 8, 10, "Default check mode", checkMode, []wizardChoice{
 		{value: "passive", label: "Passive", description: "registration and DNS only; safe for routine checks"},
 		{value: "active", label: "Active", description: "also probe published web, TLS, mail, and services"},
 	})
+	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+		return wizardExitCode(err)
+	}
+
+	relatedLimit, cancelled, err = promptWizardConfigValue(scanner, stdout, 9, 10, "Related-domain display limit", "related-limit", relatedLimit, "Enter 1-100, or default (25).")
+	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
+		return wizardExitCode(err)
+	}
+
+	investigationLink, cancelled, err = promptWizardConfigValue(scanner, stdout, 10, 10, "Investigation pivot link", "investigation-link", investigationLink, "Enter default, off, or an HTTPS URL containing {type} and {value}.")
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
 		return wizardExitCode(err)
 	}
@@ -805,6 +898,14 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
+	if err := setConfigValue(&draft, "related-limit", relatedLimit); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	}
+	if err := setConfigValue(&draft, "investigation-link", investigationLink); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 1
+	}
 	draft, err = canonicalUserConfig(draft)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
@@ -820,6 +921,8 @@ func runConfigWizard(stdout, stderr io.Writer, runtime cliRuntime) int {
 	fmt.Fprintf(stdout, "  DNSSEC  : %s\n", wizardDisplayValue(dnssec))
 	fmt.Fprintf(stdout, "  Scrutiny: %s\n", wizardDisplayValue(scrutiny))
 	fmt.Fprintf(stdout, "  Check mode: %s\n", wizardDisplayValue(checkMode))
+	fmt.Fprintf(stdout, "  Related limit: %s\n", wizardDisplayValue(relatedLimit))
+	fmt.Fprintf(stdout, "  Investigation link: %s\n", wizardDisplayValue(investigationLink))
 	fmt.Fprintf(stdout, "  File   : %s\n", path)
 	confirmed, cancelled, err := promptWizardConfirmation(scanner, stdout)
 	if wizardCancelledOrFailed(cancelled, err, stdout, stderr) {
@@ -911,6 +1014,38 @@ func promptWizardChoice(scanner *bufio.Scanner, stdout io.Writer, step, total in
 	}
 }
 
+func promptWizardConfigValue(scanner *bufio.Scanner, stdout io.Writer, step, total int, title, key, current, hint string) (string, bool, error) {
+	fmt.Fprintf(stdout, "\n%d/%d  %s (current: %s)\n", step, total, title, wizardDisplayValue(current))
+	fmt.Fprintln(stdout, " "+hint)
+	for {
+		fmt.Fprintf(stdout, "Enter [%s]: ", current)
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return "", false, err
+			}
+			return "", true, nil
+		}
+		answer := strings.TrimSpace(scanner.Text())
+		if answer == "" {
+			return current, false, nil
+		}
+		if strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit") {
+			return "", true, nil
+		}
+		var candidate userConfig
+		if err := setConfigValue(&candidate, key, answer); err != nil {
+			fmt.Fprintf(stdout, "Invalid value: %v\n", err)
+			continue
+		}
+		canonical, err := configValue(candidate, key)
+		if err != nil {
+			fmt.Fprintf(stdout, "Invalid value: %v\n", err)
+			continue
+		}
+		return canonical, false, nil
+	}
+}
+
 func promptWizardConfirmation(scanner *bufio.Scanner, stdout io.Writer) (bool, bool, error) {
 	for {
 		fmt.Fprint(stdout, "Save these preferences? [Y/n]: ")
@@ -969,8 +1104,11 @@ func printConfigUsage(writer io.Writer) {
   whodis config set dnssec auto|on|off
   whodis config set scrutiny basic|standard|strict
   whodis config set check-mode passive|active
-  whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode
-  whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode
+  whodis config set investigation-link default|off|<https-template>
+  whodis config set related-limit default|1..100
+  whodis config set otx-endpoint default|<https-url>
+  whodis config get format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint
+  whodis config unset format|color|details|resolver|strategy|dnssec|scrutiny|check-mode|investigation-link|related-limit|otx-endpoint
   whodis config reset
   whodis config path
 `)

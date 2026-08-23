@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,7 +52,7 @@ type Server struct {
 	group       sync.WaitGroup
 }
 
-// NewServerWithEngine constructs a protocol-v3 server with an explicitly
+// NewServerWithEngine constructs a protocol-v4 server with an explicitly
 // injected operation engine. The caller owns the engine and all streams.
 func NewServerWithEngine(version string, engine engineRunner, input io.Reader, output, logs io.Writer) *Server {
 	return &Server{
@@ -95,7 +96,7 @@ func (server *Server) handle(rpcRequest request) {
 		server.writeResult(rpcRequest.ID, helloResult{
 			ProtocolVersion: ProtocolVersion,
 			EngineVersion:   server.version,
-			Capabilities:    []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "batch", "batch_retry", "progress", "cancel", "raw", "export", "schema_v4"},
+			Capabilities:    []string{"registration", "inspect", "dns_query", "dns_inventory", "dns_compare", "dns_trace", "dns_transfer", "diagnose", "investigate", "stack", "related", "batch", "batch_retry", "progress", "cancel", "raw", "export", "schema_v5"},
 		})
 	case "parse":
 		var params parseParams
@@ -195,7 +196,7 @@ func validateRunParams(params runParams) error {
 	switch params.Operation {
 	case whodis.OperationRegistration, whodis.OperationInspect, whodis.OperationDNSQuery, whodis.OperationDNSInventory,
 		whodis.OperationDNSCompare, whodis.OperationDNSTrace, whodis.OperationDNSTransfer,
-		whodis.OperationDiagnose:
+		whodis.OperationDiagnose, whodis.OperationInvestigate:
 	default:
 		return fmt.Errorf("unknown operation %q", params.Operation)
 	}
@@ -231,6 +232,17 @@ func validateRunParams(params runParams) error {
 	}
 	if err := whodis.ValidateDNSOptions(params.DNS); err != nil {
 		return fmt.Errorf("invalid DNS options: %w", err)
+	}
+	if err := whodis.ValidateInvestigationOptions(params.Investigation); err != nil {
+		return fmt.Errorf("invalid investigation options: %w", err)
+	}
+	if params.Operation != whodis.OperationInvestigate && (len(params.Investigation.Enrichments) > 0 || params.Investigation.RelatedLimit != 0 || strings.TrimSpace(params.Investigation.ExternalLinkTemplate) != "" || strings.TrimSpace(params.Investigation.OTXEndpoint) != "") {
+		return fmt.Errorf("investigation options require the investigate operation")
+	}
+	for _, provider := range params.Investigation.Enrichments {
+		if strings.ToLower(strings.TrimSpace(provider)) != "otx" {
+			return fmt.Errorf("unknown enrichment provider %q", provider)
+		}
 	}
 	return nil
 }
@@ -272,6 +284,9 @@ func (server *Server) startRun(id json.RawMessage, params runParams) {
 	server.stateMutex.Unlock()
 
 	timeout := 15 * time.Second
+	if params.Operation == whodis.OperationInvestigate {
+		timeout = 30 * time.Second
+	}
 	if params.TimeoutMS > 0 {
 		timeout = time.Duration(params.TimeoutMS) * time.Millisecond
 	}
@@ -288,11 +303,18 @@ func (server *Server) startRun(id json.RawMessage, params runParams) {
 		diagnose := params.Diagnose
 		diagnose.Timeout = timeout
 		diagnose.DNS = params.DNS
-		requests[index] = whodis.Request{
+		request := whodis.Request{
 			ID: fmt.Sprintf("%s-%d", requestID, index), Operation: params.Operation,
 			Target: target, Timeout: timeout, DNS: params.DNS, Diagnose: diagnose,
 			Registration: whodis.LookupOptions{Protocol: protocol, Fallback: fallback, Server: strings.TrimSpace(params.Server), Timeout: timeout, RefreshBootstrap: params.RefreshBootstrap},
 		}
+		if params.Operation == whodis.OperationInvestigate {
+			investigation := params.Investigation
+			investigation.DNS = params.DNS
+			investigation.OTXToken = os.Getenv("WHODIS_OTX_API_KEY")
+			request.Investigation = investigation
+		}
+		requests[index] = request
 	}
 	server.group.Add(1)
 	go func() {

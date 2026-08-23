@@ -189,6 +189,19 @@ func (fixture engineDiagnoseFixture) Diagnose(context.Context, string, DiagnoseO
 	return fixture.result, fixture.err
 }
 
+type engineInvestigationFixture struct {
+	result    *InvestigationReport
+	err       error
+	diagnosis chan<- *DiagnosisReport
+}
+
+func (fixture engineInvestigationFixture) Investigate(_ context.Context, _ Subject, diagnosis *DiagnosisReport, _ InvestigationOptions) (*InvestigationReport, error) {
+	if fixture.diagnosis != nil {
+		fixture.diagnosis <- diagnosis
+	}
+	return fixture.result, fixture.err
+}
+
 func TestEngineInspectPreservesDNSWhenRegistrationFails(t *testing.T) {
 	dnsResult := &DNSOperationResult{Mode: "inventory", Inventory: &DNSResult{Records: []DNSRecord{{Name: "example.test", Type: "A", Value: "192.0.2.1"}}}}
 	engine := NewEngine(EngineOptions{
@@ -225,6 +238,31 @@ func TestEngineDiagnosePreservesRegistrationWhenChecksFail(t *testing.T) {
 	}
 	if len(report.Errors) != 1 || report.Errors[0].Operation != OperationDiagnose {
 		t.Fatalf("diagnosis error was not retained: %#v", report.Errors)
+	}
+}
+
+func TestEngineInvestigateComposesDiagnosisAndProviderErrors(t *testing.T) {
+	diagnosis := &DiagnosisReport{Domain: "example.test", Findings: []Finding{{ID: "dns.inventory", Severity: SeverityPass}}}
+	observedDiagnosis := make(chan *DiagnosisReport, 1)
+	investigation := &InvestigationReport{
+		Domain: "example.test", Summary: "Web: WordPress",
+		ProviderErrors: []OperationError{{Operation: OperationInvestigate, Provider: "otx", Kind: ErrorRateLimited, Message: "rate limited"}},
+	}
+	engine := NewEngine(EngineOptions{
+		Registration:  engineRegistrationFixture{result: RegistrationResult{Object: Object{Name: "example.test"}}},
+		DNS:           engineDNSFixture{},
+		Diagnose:      engineDiagnoseFixture{result: diagnosis},
+		Investigation: engineInvestigationFixture{result: investigation, diagnosis: observedDiagnosis},
+	})
+	report, err := engine.Run(context.Background(), Request{Operation: OperationInvestigate, Target: "example.test", Investigation: InvestigationOptions{RelatedLimit: 25}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if <-observedDiagnosis != diagnosis || report.Registration == nil || report.Diagnosis == nil || report.Investigation == nil || report.Investigation.Summary != "Web: WordPress" || len(report.Findings) != 1 {
+		t.Fatalf("unexpected investigation report: %#v", report)
+	}
+	if len(report.Investigation.ProviderErrors) != 0 || len(report.Errors) != 1 || report.Errors[0].Provider != "otx" {
+		t.Fatalf("provider errors were not lifted to the report: %#v", report)
 	}
 }
 

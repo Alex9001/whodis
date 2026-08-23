@@ -23,12 +23,13 @@ type GeneratorInfo struct {
 
 // ReplayRequest is the secret-free subset required to repeat a snapshot.
 type ReplayRequest struct {
-	Operation    whodis.Operation      `json:"operation" yaml:"operation"`
-	Target       string                `json:"target" yaml:"target"`
-	Timeout      string                `json:"timeout,omitempty" yaml:"timeout,omitempty"`
-	Registration RegistrationOptions   `json:"registration,omitempty" yaml:"registration,omitempty"`
-	DNS          whodis.DNSOptions     `json:"dns,omitempty" yaml:"dns,omitempty"`
-	Diagnose     ReplayDiagnoseOptions `json:"diagnose,omitempty" yaml:"diagnose,omitempty"`
+	Operation     whodis.Operation           `json:"operation" yaml:"operation"`
+	Target        string                     `json:"target" yaml:"target"`
+	Timeout       string                     `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	Registration  RegistrationOptions        `json:"registration,omitempty" yaml:"registration,omitempty"`
+	DNS           whodis.DNSOptions          `json:"dns,omitempty" yaml:"dns,omitempty"`
+	Diagnose      ReplayDiagnoseOptions      `json:"diagnose,omitempty" yaml:"diagnose,omitempty"`
+	Investigation ReplayInvestigationOptions `json:"investigation,omitempty" yaml:"investigation,omitempty"`
 }
 
 type RegistrationOptions struct {
@@ -42,6 +43,11 @@ type ReplayDiagnoseOptions struct {
 	Trace        bool `json:"trace,omitempty" yaml:"trace,omitempty"`
 	Remote       bool `json:"remote,omitempty" yaml:"remote,omitempty"`
 	MaxAddresses int  `json:"max_addresses,omitempty" yaml:"max_addresses,omitempty"`
+}
+
+type ReplayInvestigationOptions struct {
+	RelatedLimit         int    `json:"related_limit,omitempty" yaml:"related_limit,omitempty"`
+	ExternalLinkTemplate string `json:"external_link_template,omitempty" yaml:"external_link_template,omitempty"`
 }
 
 // ReplayOptions controls exceptional network configuration restored from a

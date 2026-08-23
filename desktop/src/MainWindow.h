@@ -31,6 +31,7 @@ private slots:
     void runDNSCompare();
     void runDNSTrace();
     void runDiagnose();
+    void runInvestigate();
     void runAXFR();
     void cancelLookup();
     void openBatch();
@@ -53,6 +54,7 @@ private:
     QPushButton *m_scan;
     QPushButton *m_dns;
     QPushButton *m_diagnose;
+    QPushButton *m_investigate;
     QPushButton *m_batch;
     QPushButton *m_cancel;
     QProgressBar *m_progress;

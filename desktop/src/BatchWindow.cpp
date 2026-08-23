@@ -76,6 +76,7 @@ BatchWindow::BatchWindow(EngineClient *engine, const QJsonObject &options, QWidg
     m_mode->addItem(tr("DNS Inventory"), QStringLiteral("dns.inventory"));
     m_mode->addItem(tr("DNS Compare"), QStringLiteral("dns.compare"));
     m_mode->addItem(tr("Diagnose"), QStringLiteral("diagnose"));
+    m_mode->addItem(tr("Investigate"), QStringLiteral("investigate"));
     m_mode->setToolTip(tr("Every mode uses the same operation engine as the main window."));
     m_workers->setRange(1, 32);
     m_workers->setValue(4);
@@ -94,8 +95,8 @@ BatchWindow::BatchWindow(EngineClient *engine, const QJsonObject &options, QWidg
     toolbar->addWidget(m_retry);
     toolbar->addWidget(m_export);
 
-    m_table->setColumnCount(7);
-    m_table->setHorizontalHeaderLabels({tr("Target"), tr("State"), tr("Expiration"), tr("Registrar"), tr("DNS Records"), tr("Protocol"), tr("Error")});
+    m_table->setColumnCount(8);
+    m_table->setHorizontalHeaderLabels({tr("Target"), tr("State"), tr("Expiration"), tr("Registrar"), tr("DNS Records"), tr("Stack"), tr("Protocol"), tr("Error")});
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setSortingEnabled(true);
@@ -105,8 +106,9 @@ BatchWindow::BatchWindow(EngineClient *engine, const QJsonObject &options, QWidg
     m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
-    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Stretch);
 
     auto *splitter = new QSplitter(Qt::Vertical, this);
     auto *top = new QWidget(splitter);
@@ -220,6 +222,10 @@ void BatchWindow::beginLookup(const QStringList &targets)
     for (const QString &target : targets)
         targetArray.append(target);
     QJsonObject params = m_options;
+    if (m_resultMode != QStringLiteral("investigate"))
+        params.remove(QStringLiteral("investigation"));
+    else if (params.value(QStringLiteral("timeout_ms")).toInt() == 15000)
+        params.insert(QStringLiteral("timeout_ms"), 30000);
     params.insert(QStringLiteral("targets"), targetArray);
     params.insert(QStringLiteral("operation"), m_resultMode);
     params.insert(QStringLiteral("workers"), m_workers->value());
@@ -263,7 +269,7 @@ void BatchWindow::beginRetry(const QStringList &targets, const QVector<int> &ind
         if (row < 0)
             continue;
         m_table->item(row, 1)->setText(tr("Queued for retry"));
-        m_table->item(row, 6)->setText({});
+        m_table->item(row, 7)->setText({});
     }
     m_progress->setRange(0, targets.size());
     m_progress->setValue(0);
@@ -274,6 +280,10 @@ void BatchWindow::beginRetry(const QStringList &targets, const QVector<int> &ind
     for (int index : indexes)
         replaceIndexes.append(index);
     QJsonObject params = m_options;
+    if (m_resultMode != QStringLiteral("investigate"))
+        params.remove(QStringLiteral("investigation"));
+    else if (params.value(QStringLiteral("timeout_ms")).toInt() == 15000)
+        params.insert(QStringLiteral("timeout_ms"), 30000);
     params.insert(QStringLiteral("targets"), targetArray);
     params.insert(QStringLiteral("operation"), m_resultMode);
     params.insert(QStringLiteral("workers"), m_workers->value());
@@ -381,11 +391,12 @@ void BatchWindow::updateRow(int index, const QJsonObject &item)
         m_table->item(row, 4)->setText({});
         m_table->item(row, 4)->setToolTip({});
     }
-    m_table->item(row, 5)->setText(route.value(QStringLiteral("protocol")).toString().toUpper());
+    m_table->item(row, 5)->setText(report.value(QStringLiteral("investigation")).toObject().value(QStringLiteral("summary")).toString());
+    m_table->item(row, 6)->setText(route.value(QStringLiteral("protocol")).toString().toUpper());
     QStringList errorMessages;
     for (const QJsonValue &value : errors)
         errorMessages.append(value.toObject().value(QStringLiteral("message")).toString());
-    m_table->item(row, 6)->setText(errorMessages.join(QStringLiteral("; ")));
+    m_table->item(row, 7)->setText(errorMessages.join(QStringLiteral("; ")));
 }
 
 int BatchWindow::rowForIndex(int index) const

@@ -152,11 +152,11 @@ func (s dnsScanner) patternScan(ctx context.Context, zone string) *DNSResult {
 }
 
 func dnsPatternQueries(zone string) []dnsQuery {
-	queries := make([]dnsQuery, 0, 56)
+	queries := make([]dnsQuery, 0, 72)
 	for _, typeID := range []uint16{mdns.TypeA, mdns.TypeAAAA, mdns.TypeMX, mdns.TypeTXT, mdns.TypeNS, mdns.TypeSOA, mdns.TypeCAA, mdns.TypeHTTPS, mdns.TypeSVCB} {
 		queries = append(queries, dnsQuery{name: zone, typeID: typeID})
 	}
-	for _, label := range []string{"www", "api", "cdn", "mail", "webmail", "smtp", "imap", "pop", "ftp", "autodiscover", "autoconfig"} {
+	for _, label := range []string{"www", "api", "cdn", "mail", "webmail", "smtp", "imap", "pop", "ftp", "autodiscover", "autoconfig", "cpanel", "whm", "cpcontacts", "cpcalendars"} {
 		name := label + "." + zone
 		queries = append(queries, dnsQuery{name: name, typeID: mdns.TypeA, guessed: true}, dnsQuery{name: name, typeID: mdns.TypeAAAA, guessed: true})
 	}

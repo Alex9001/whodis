@@ -38,6 +38,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_scan(new QPushButton(tr("Inspect"), this))
     , m_dns(new QPushButton(tr("DNS Query"), this))
     , m_diagnose(new QPushButton(tr("Diagnose"), this))
+    , m_investigate(new QPushButton(tr("Investigate"), this))
     , m_batch(new QPushButton(tr("Batch…"), this))
     , m_cancel(new QPushButton(tr("Cancel"), this))
     , m_progress(new QProgressBar(this))
@@ -63,6 +64,7 @@ MainWindow::MainWindow(QWidget *parent)
     queryLayout->addWidget(m_scan);
     queryLayout->addWidget(m_dns);
     queryLayout->addWidget(m_diagnose);
+    queryLayout->addWidget(m_investigate);
     queryLayout->addWidget(m_batch);
     queryLayout->addWidget(m_cancel);
     queryLayout->addWidget(m_progress);
@@ -96,7 +98,7 @@ MainWindow::MainWindow(QWidget *parent)
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(tr("About Whodis"), this, [this] {
         QMessageBox::about(this, tr("About Whodis"),
-                           tr("Whodis %1\n\nA modern WHOIS alternative using RDAP, WHOIS, RWhois, and public DNS.\n\nHomepage: https://cyberbrand.net/whodis/\nSource and releases: https://github.com/Alex9001/whodis\n\nMIT © 2026 Aleksandr Oreshkin")
+                           tr("Whodis %1\n\nA modern WHOIS alternative for registration, DNS, diagnostics, and evidence-backed stack investigation.\n\nHomepage: https://cyberbrand.net/whodis/\nSource and releases: https://github.com/Alex9001/whodis\n\nMIT © 2026 Aleksandr Oreshkin")
                                .arg(QStringLiteral(WHODIS_GUI_VERSION)));
     });
 
@@ -114,8 +116,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_scan, &QPushButton::clicked, this, &MainWindow::runDNSScan);
     connect(m_dns, &QPushButton::clicked, this, &MainWindow::runDNSQuery);
     connect(m_diagnose, &QPushButton::clicked, this, &MainWindow::runDiagnose);
+    connect(m_investigate, &QPushButton::clicked, this, &MainWindow::runInvestigate);
     connect(m_batch, &QPushButton::clicked, this, &MainWindow::openBatch);
     connect(m_cancel, &QPushButton::clicked, this, &MainWindow::cancelLookup);
+    connect(m_result, &ResultWidget::investigateRequested, this, [this](const QString &target) {
+        m_target->setText(target);
+        startOperation(QStringLiteral("investigate"));
+    });
     connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int) {
         statusBar()->showMessage(tr("Engine %1 ready").arg(version), 3000);
         scheduleValidation();
@@ -132,8 +139,13 @@ MainWindow::MainWindow(QWidget *parent)
     QSettings settings;
     restoreGeometry(settings.value(QStringLiteral("main/geometry")).toByteArray());
     const QJsonDocument advanced = QJsonDocument::fromJson(settings.value(QStringLiteral("advanced/options")).toByteArray());
-    if (advanced.isObject())
-        m_advanced->setOptions(advanced.object());
+    if (advanced.isObject()) {
+        QJsonObject saved = advanced.object();
+        QJsonObject investigation = saved.value(QStringLiteral("investigation")).toObject();
+        investigation.remove(QStringLiteral("enrichments"));
+        saved.insert(QStringLiteral("investigation"), investigation);
+        m_advanced->setOptions(saved);
+    }
     m_engine->start();
     updateActionState();
 }
@@ -199,6 +211,11 @@ void MainWindow::runDiagnose()
     startOperation(QStringLiteral("diagnose"));
 }
 
+void MainWindow::runInvestigate()
+{
+    startOperation(QStringLiteral("investigate"));
+}
+
 void MainWindow::runAXFR()
 {
     if (m_validKind != QStringLiteral("registrable_domain"))
@@ -214,6 +231,10 @@ void MainWindow::startOperation(const QString &operation)
     if (!m_engine->isReady() || target.isEmpty() || !m_lookupRequest.isEmpty())
         return;
     QJsonObject params = m_advanced->options();
+    if (operation != QStringLiteral("investigate"))
+        params.remove(QStringLiteral("investigation"));
+    else if (params.value(QStringLiteral("timeout_ms")).toInt() == 15000)
+        params.insert(QStringLiteral("timeout_ms"), 30000);
     const QString resolver = params.take(QStringLiteral("resolver")).toString();
     QJsonObject dns = params.value(QStringLiteral("dns")).toObject();
     if (!resolver.isEmpty())
@@ -231,7 +252,9 @@ void MainWindow::startOperation(const QString &operation)
     m_lookupRequest = m_engine->request(QStringLiteral("run"), params);
     m_resultToken.clear();
     setBusy(true);
-    if (operation == QStringLiteral("diagnose"))
+    if (operation == QStringLiteral("investigate"))
+        statusBar()->showMessage(tr("Profiling the public web stack and infrastructure…"));
+    else if (operation == QStringLiteral("diagnose"))
         statusBar()->showMessage(tr("Diagnosing DNS, web, TLS, mail, and services…"));
     else if (operation.startsWith(QStringLiteral("dns.")))
         statusBar()->showMessage(tr("Running DNS operation…"));
@@ -260,7 +283,7 @@ void MainWindow::openAdvanced()
         m_advanced->setOptions(previous);
     } else {
         QSettings settings;
-        settings.setValue(QStringLiteral("advanced/options"), QJsonDocument(m_advanced->options()).toJson(QJsonDocument::Compact));
+        settings.setValue(QStringLiteral("advanced/options"), QJsonDocument(m_advanced->persistentOptions()).toJson(QJsonDocument::Compact));
     }
 }
 
@@ -380,6 +403,7 @@ void MainWindow::setBusy(bool busy)
     m_scan->setVisible(!busy);
     m_dns->setVisible(!busy);
     m_diagnose->setVisible(!busy);
+    m_investigate->setVisible(!busy);
     m_batch->setEnabled(!busy);
     m_cancel->setVisible(busy);
     m_progress->setVisible(busy);
@@ -396,6 +420,7 @@ void MainWindow::updateActionState()
     m_scan->setEnabled(m_engine->isReady() && idle && domain);
     m_dns->setEnabled(m_engine->isReady() && idle && (dnsName || m_validKind == QStringLiteral("ip")));
     m_diagnose->setEnabled(m_engine->isReady() && idle && domain);
+    m_investigate->setEnabled(m_engine->isReady() && idle && domain);
     m_axfrAction->setEnabled(m_engine->isReady() && idle && domain);
     m_compareAction->setEnabled(m_engine->isReady() && idle && dnsName);
     m_traceAction->setEnabled(m_engine->isReady() && idle && dnsName);

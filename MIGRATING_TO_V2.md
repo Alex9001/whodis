@@ -35,9 +35,10 @@ The v1 `Client`, `LookupResult`, `Render`, and registration batch types remain
 available as compatibility types, but new functionality is added to `Engine`,
 `Report`, and `RenderReport`.
 
-## Report schema v4
+## Report schemas v4 and v5
 
-Machine-readable operation output now uses `schema_version: 4`.
+Whodis v2 originally introduced schema v4. Current machine-readable operation
+output uses `schema_version: 5`; the v4 structural changes still apply:
 
 - `Report.subject` replaces the ambiguous query shape. Its kind distinguishes
   registrable domains, general DNS owner names, IPs, prefixes, and ASNs.
@@ -48,8 +49,16 @@ Machine-readable operation output now uses `schema_version: 4`.
   partial results survive a failed provider.
 - `Report.findings` is the canonical aggregate for diagnostic findings; the
   engine does not duplicate those entries inside `diagnosis.findings`.
-- JSON and YAML always emit schema-v4 `Report`/`BatchReport` values from the
+- JSON and YAML emit schema-v5 `Report`/`BatchReport` values from the
   engine path. NDJSON emits one report per line; CSV emits one target per row.
+
+Schema v5 adds the optional `investigation` section: an explainable stack
+summary, categorized components with evidence and confidence, IP-network
+attribution, manual pivot links, and bounded passive-DNS observations. It also
+adds `OperationInvestigate`, `InvestigationProvider`, and named
+`EnrichmentProvider` extension points. Existing v4 decoders that ignore unknown
+fields can continue unchanged; snapshot replay deliberately accepts saved v4
+reports.
 
 Code that decoded schema v3 should read `subject.canonical` instead of
 `query.canonical` and `observed_at` instead of `retrieved_at` at report level.
@@ -64,6 +73,7 @@ whodis registration <target...>
 whodis inspect <domain...>
 whodis dns query|inventory|compare|trace|transfer ...
 whodis diagnose <domain...>
+whodis investigate <domain...>
 ```
 
 Use `-f/--format` for `dashboard`, `tree`, `geekboys`, `plain`, `json`, `yaml`,
@@ -86,7 +96,8 @@ attribution. Existing registration exit codes retain their meanings.
 
 ## Desktop helper protocol
 
-`whodis-gui-engine` protocol version 3 carries schema-v4 reports. Frontends
+`whodis-gui-engine` protocol version 4 carries schema-v5 reports. Frontends
 must use the `run` method; the old `lookup` method has been removed. The `hello`
-capabilities include `inspect` and `schema_v4`. This protocol remains a private
+capabilities include `inspect`, `investigate`, `stack`, `related`, and
+`schema_v5`. This protocol remains a private
 desktop boundary, not a separately supported network API.

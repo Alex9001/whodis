@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// RenderReport writes one schema-v4 engine report. Registration-only reports
+// RenderReport writes one schema-v5 engine report. Registration-only reports
 // retain the established Whodis layouts; workstation operations use compact,
 // sectioned tables with the same output-format contract.
 func RenderReport(writer io.Writer, report Report, format Format, options RenderOptions) error {
@@ -51,7 +51,7 @@ func RenderReport(writer io.Writer, report Report, format Format, options Render
 	}
 }
 
-// RenderBatchReport writes schema-v4 reports in request order.
+// RenderBatchReport writes schema-v5 reports in request order.
 func RenderBatchReport(writer io.Writer, batch BatchReport, format Format, options RenderOptions) error {
 	if format == FormatJSON {
 		encoder := json.NewEncoder(writer)
@@ -93,7 +93,7 @@ func RenderBatchReport(writer io.Writer, batch BatchReport, format Format, optio
 
 func renderReportCSV(writer io.Writer, reports []Report) error {
 	csvWriter := csv.NewWriter(writer)
-	header := []string{"TARGET", "KIND", "REGISTRATION_DOMAIN", "OPERATION", "PROTOCOL", "AUTHORITY", "REGISTRAR", "REGISTRY", "REGISTERED", "UPDATED", "EXPIRES", "DNSSEC", "STATUS", "NAMESERVERS", "DNS_RECORDS", "FINDINGS", "ERRORS", "OBSERVED_AT"}
+	header := []string{"TARGET", "KIND", "REGISTRATION_DOMAIN", "OPERATION", "PROTOCOL", "AUTHORITY", "REGISTRAR", "REGISTRY", "REGISTERED", "UPDATED", "EXPIRES", "DNSSEC", "STATUS", "NAMESERVERS", "DNS_RECORDS", "FINDINGS", "ERRORS", "OBSERVED_AT", "STACK_SUMMARY", "TECHNOLOGIES", "NETWORK_PROVIDER", "DNS_PROVIDER", "MAIL_PROVIDER", "RELATED_COUNT"}
 	if err := csvWriter.Write(header); err != nil {
 		return err
 	}
@@ -122,6 +122,27 @@ func renderReportCSV(writer io.Writer, reports []Report) error {
 			errorValues = append(errorValues, string(operationError.Operation)+"/"+string(operationError.Kind)+": "+operationError.Message)
 		}
 		row[16] = strings.Join(errorValues, "; ")
+		if investigation := report.Investigation; investigation != nil {
+			row[18] = investigation.Summary
+			var technologies, networkProviders, dnsProviders, mailProviders []string
+			for _, component := range investigation.Components {
+				technologies = append(technologies, string(component.Category)+":"+component.Name)
+				switch component.Category {
+				case StackNetwork:
+					networkProviders = append(networkProviders, component.Name)
+				case StackDNS:
+					dnsProviders = append(dnsProviders, component.Name)
+				case StackMail:
+					mailProviders = append(mailProviders, component.Name)
+				}
+			}
+			row[19] = strings.Join(uniqueStrings(technologies), "; ")
+			row[20] = strings.Join(uniqueStrings(networkProviders), "; ")
+			row[21] = strings.Join(uniqueStrings(dnsProviders), "; ")
+			row[22] = strings.Join(uniqueStrings(mailProviders), "; ")
+			relatedCount := max(investigation.RelatedTotal, len(investigation.Related))
+			row[23] = strconv.Itoa(relatedCount)
+		}
 		if err := csvWriter.Write(row); err != nil {
 			return err
 		}
@@ -193,6 +214,9 @@ func renderReportTerminal(report Report, format Format, options RenderOptions) s
 	if report.DNS != nil {
 		renderDNSReport(&builder, report.DNS, options.Width)
 	}
+	if report.Investigation != nil {
+		renderInvestigationReport(&builder, report.Investigation, options.Width)
+	}
 	if findings := uniqueReportFindings(report); len(findings) > 0 {
 		var rows [][]string
 		for _, finding := range findings {
@@ -218,6 +242,92 @@ func renderReportTerminal(report Report, format Format, options RenderOptions) s
 		).Replace(output)
 	}
 	return output
+}
+
+func renderInvestigationReport(builder *strings.Builder, report *InvestigationReport, width int) {
+	if report == nil {
+		return
+	}
+	writeReportTable(builder, "Stack summary", []string{"Domain", "Profile"}, [][]string{{report.Domain, report.Summary}}, width)
+	if len(report.Components) > 0 {
+		rows := make([][]string, 0, len(report.Components))
+		for _, component := range report.Components {
+			var evidence []string
+			for _, observation := range component.Evidence {
+				item := strings.TrimSpace(observation.Source + " " + observation.Field + ": " + observation.Value)
+				evidence = append(evidence, item)
+			}
+			rows = append(rows, []string{strings.ReplaceAll(string(component.Category), "_", " "), component.Name, component.Role, strings.ToUpper(string(component.Confidence)), strings.Join(evidence, "; ")})
+		}
+		writeReportTable(builder, "Detected stack", []string{"Layer", "Technology", "Role", "Confidence", "Evidence"}, rows, width)
+	}
+	if len(report.Networks) > 0 {
+		rows := make([][]string, 0, len(report.Networks))
+		for _, network := range report.Networks {
+			owner := network.Operator
+			if owner == "" {
+				owner = network.NetworkName
+			}
+			rows = append(rows, []string{network.Address, network.Provider, owner, strings.Join(network.PTR, ", "), strings.Join(network.CIDR, ", ")})
+		}
+		writeReportTable(builder, "Network attribution", []string{"Address", "Provider", "Registered operator", "PTR", "CIDR"}, rows, width)
+	}
+	if len(report.Related) > 0 {
+		rows := make([][]string, 0, len(report.Related))
+		for _, related := range report.Related {
+			observed := formatInvestigationRange(related.FirstSeen, related.LastSeen)
+			rows = append(rows, []string{related.Hostname, related.Address, observed, strings.ToUpper(string(related.Current)), strings.Join(related.CurrentValues, ", "), related.Provider})
+		}
+		title := "Related domains (passive observations, not ownership claims)"
+		if report.RelatedTotal > len(report.Related) {
+			title = fmt.Sprintf("Related domains — showing %d of %d passive observations", len(report.Related), report.RelatedTotal)
+		}
+		writeReportTable(builder, title, []string{"Hostname", "Observed IP", "Seen", "Now", "Current DNS", "Source"}, rows, width)
+	}
+	if links := allInvestigationLinks(report); len(links) > 0 {
+		rows := make([][]string, 0, len(links))
+		for _, link := range links {
+			rows = append(rows, []string{link.Label, link.Type, link.Value, link.URL})
+		}
+		writeReportTable(builder, "Investigation links (open manually)", []string{"Link", "Type", "Value", "URL"}, rows, width)
+	}
+	if len(report.Warnings) > 0 {
+		rows := make([][]string, 0, len(report.Warnings))
+		for _, warning := range report.Warnings {
+			rows = append(rows, []string{warning})
+		}
+		writeReportTable(builder, "Investigation notes", []string{"Note"}, rows, width)
+	}
+}
+
+func allInvestigationLinks(report *InvestigationReport) []InvestigationLink {
+	if report == nil {
+		return nil
+	}
+	links := append([]InvestigationLink(nil), report.Links...)
+	for _, network := range report.Networks {
+		links = append(links, network.Links...)
+	}
+	seen := make(map[string]bool, len(links))
+	result := make([]InvestigationLink, 0, len(links))
+	for _, link := range links {
+		if link.URL == "" || seen[link.URL] {
+			continue
+		}
+		seen[link.URL] = true
+		result = append(result, link)
+	}
+	return result
+}
+
+func formatInvestigationRange(first, last time.Time) string {
+	if first.IsZero() {
+		return formatReportTime(last)
+	}
+	if last.IsZero() || first.Equal(last) {
+		return formatReportTime(first)
+	}
+	return formatReportTime(first) + " – " + formatReportTime(last)
 }
 
 func renderDNSReport(builder *strings.Builder, result *DNSOperationResult, width int) {
@@ -496,6 +606,9 @@ func renderReportMarkdown(report Report) string {
 		}
 		builder.WriteString(registration)
 	}
+	if report.Investigation != nil {
+		renderInvestigationMarkdown(&builder, report.Investigation)
+	}
 	findings := append([]Finding(nil), report.Findings...)
 	if report.Diagnosis != nil {
 		findings = append(findings, report.Diagnosis.Findings...)
@@ -519,6 +632,54 @@ func renderReportMarkdown(report Report) string {
 		}
 	}
 	return builder.String()
+}
+
+func renderInvestigationMarkdown(builder *strings.Builder, investigation *InvestigationReport) {
+	if investigation == nil {
+		return
+	}
+	builder.WriteString("\n## Stack summary\n\n")
+	fmt.Fprintf(builder, "%s\n", markdownCell(investigation.Summary))
+	if len(investigation.Components) > 0 {
+		builder.WriteString("\n### Detected stack\n\n| Layer | Technology | Role | Confidence | Evidence |\n| --- | --- | --- | --- | --- |\n")
+		for _, component := range investigation.Components {
+			var evidence []string
+			for _, observation := range component.Evidence {
+				evidence = append(evidence, strings.TrimSpace(observation.Source+" "+observation.Field+": "+observation.Value))
+			}
+			fmt.Fprintf(builder, "| %s | %s | %s | %s | %s |\n", markdownCell(strings.ReplaceAll(string(component.Category), "_", " ")), markdownCell(component.Name), markdownCell(component.Role), component.Confidence, markdownCell(strings.Join(evidence, "; ")))
+		}
+	}
+	if len(investigation.Networks) > 0 {
+		builder.WriteString("\n### Network attribution\n\n| Address | Provider | Registered operator | PTR | CIDR |\n| --- | --- | --- | --- | --- |\n")
+		for _, network := range investigation.Networks {
+			owner := network.Operator
+			if owner == "" {
+				owner = network.NetworkName
+			}
+			fmt.Fprintf(builder, "| %s | %s | %s | %s | %s |\n", markdownCell(network.Address), markdownCell(network.Provider), markdownCell(owner), markdownCell(strings.Join(network.PTR, ", ")), markdownCell(strings.Join(network.CIDR, ", ")))
+		}
+	}
+	if len(investigation.Related) > 0 {
+		builder.WriteString("\n### Related domains\n\nPassive observations are historical provider data, not ownership claims. `current` means the hostname still resolves to the observed address.\n\n")
+		fmt.Fprintf(builder, "Showing %d of %d observations.\n\n", len(investigation.Related), max(investigation.RelatedTotal, len(investigation.Related)))
+		builder.WriteString("| Hostname | Observed IP | Seen | Now | Current DNS | Source |\n| --- | --- | --- | --- | --- | --- |\n")
+		for _, related := range investigation.Related {
+			fmt.Fprintf(builder, "| %s | %s | %s | %s | %s | %s |\n", markdownCell(related.Hostname), markdownCell(related.Address), markdownCell(formatInvestigationRange(related.FirstSeen, related.LastSeen)), related.Current, markdownCell(strings.Join(related.CurrentValues, ", ")), markdownCell(related.Provider))
+		}
+	}
+	if links := allInvestigationLinks(investigation); len(links) > 0 {
+		builder.WriteString("\n### Investigation links\n\n")
+		for _, link := range links {
+			fmt.Fprintf(builder, "- [%s](%s) — `%s`\n", markdownCell(link.Label), link.URL, markdownCell(link.Value))
+		}
+	}
+	if len(investigation.Warnings) > 0 {
+		builder.WriteString("\n### Investigation notes\n\n")
+		for _, warning := range investigation.Warnings {
+			fmt.Fprintf(builder, "- %s\n", markdownCell(warning))
+		}
+	}
 }
 
 func renderDNSOperationMarkdown(builder *strings.Builder, title string, dns *DNSOperationResult) {

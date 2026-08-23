@@ -9,6 +9,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QUrl>
 #include <QVBoxLayout>
 
 AdvancedDialog::AdvancedDialog(QWidget *parent)
@@ -23,6 +24,10 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     , m_dnssec(new QCheckBox(tr("Request DNSSEC records"), this))
     , m_globalping(new QCheckBox(tr("Remote DNS probes via Globalping (shares the target)"), this))
     , m_trace(new QCheckBox(tr("Include a local network path trace in Diagnose"), this))
+    , m_otx(new QCheckBox(tr("Use AlienVault OTX passive DNS in Investigate (shares discovered IPs)"), this))
+    , m_relatedLimit(new QSpinBox(this))
+    , m_investigationLink(new QLineEdit(this))
+    , m_otxEndpoint(new QLineEdit(this))
     , m_buttons(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this))
 {
     setWindowTitle(tr("Advanced Lookup"));
@@ -44,6 +49,12 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     m_timeout->setRange(1, 600);
     m_timeout->setValue(15);
     m_timeout->setSuffix(tr(" seconds"));
+    m_relatedLimit->setRange(1, 100);
+    m_relatedLimit->setValue(25);
+    m_investigationLink->setPlaceholderText(tr("Default AlienVault link, off, or HTTPS template"));
+    m_investigationLink->setToolTip(tr("Custom links must contain {type} and {value}. They are shown but never opened automatically."));
+    m_otxEndpoint->setPlaceholderText(QStringLiteral("https://otx.alienvault.com/api/v1"));
+    m_otxEndpoint->setToolTip(tr("Optional OTX-compatible API base URL. API keys are read only from WHODIS_OTX_API_KEY."));
 
     auto *form = new QFormLayout;
     form->addRow(tr("Protocol:"), m_protocol);
@@ -54,6 +65,10 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
     form->addRow(QString(), m_dnssec);
     form->addRow(QString(), m_globalping);
     form->addRow(QString(), m_trace);
+    form->addRow(QString(), m_otx);
+    form->addRow(tr("Related results:"), m_relatedLimit);
+    form->addRow(tr("Investigation link:"), m_investigationLink);
+    form->addRow(tr("OTX endpoint:"), m_otxEndpoint);
     form->addRow(tr("Timeout:"), m_timeout);
     form->addRow(QString(), m_refresh);
 
@@ -66,6 +81,8 @@ AdvancedDialog::AdvancedDialog(QWidget *parent)
 
     connect(m_protocol, &QComboBox::currentIndexChanged, this, &AdvancedDialog::updateState);
     connect(m_server, &QLineEdit::textChanged, this, &AdvancedDialog::updateState);
+    connect(m_investigationLink, &QLineEdit::textChanged, this, &AdvancedDialog::updateState);
+    connect(m_otxEndpoint, &QLineEdit::textChanged, this, &AdvancedDialog::updateState);
     connect(m_buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(m_buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     updateState();
@@ -99,6 +116,23 @@ QJsonObject AdvancedDialog::options() const
                                                                {QStringLiteral("trace"), m_trace->isChecked()}});
     if (m_refresh->isChecked())
         result.insert(QStringLiteral("refresh_bootstrap"), true);
+    QJsonObject investigation{{QStringLiteral("related_limit"), m_relatedLimit->value()}};
+    if (!m_investigationLink->text().trimmed().isEmpty())
+        investigation.insert(QStringLiteral("external_link_template"), m_investigationLink->text().trimmed());
+    if (!m_otxEndpoint->text().trimmed().isEmpty())
+        investigation.insert(QStringLiteral("otx_endpoint"), m_otxEndpoint->text().trimmed());
+    if (m_otx->isChecked())
+        investigation.insert(QStringLiteral("enrichments"), QJsonArray{QStringLiteral("otx")});
+    result.insert(QStringLiteral("investigation"), investigation);
+    return result;
+}
+
+QJsonObject AdvancedDialog::persistentOptions() const
+{
+    QJsonObject result = options();
+    QJsonObject investigation = result.value(QStringLiteral("investigation")).toObject();
+    investigation.remove(QStringLiteral("enrichments"));
+    result.insert(QStringLiteral("investigation"), investigation);
     return result;
 }
 
@@ -124,6 +158,14 @@ void AdvancedDialog::setOptions(const QJsonObject &options)
     m_globalping->setChecked(dns.value(QStringLiteral("globalping")).toBool()
                              || options.value(QStringLiteral("diagnose")).toObject().value(QStringLiteral("remote")).toBool());
     m_trace->setChecked(options.value(QStringLiteral("diagnose")).toObject().value(QStringLiteral("trace")).toBool());
+    const QJsonObject investigation = options.value(QStringLiteral("investigation")).toObject();
+    m_relatedLimit->setValue(investigation.value(QStringLiteral("related_limit")).toInt(25));
+    m_investigationLink->setText(investigation.value(QStringLiteral("external_link_template")).toString());
+    m_otxEndpoint->setText(investigation.value(QStringLiteral("otx_endpoint")).toString());
+    bool otx = false;
+    for (const QJsonValue &value : investigation.value(QStringLiteral("enrichments")).toArray())
+        otx = otx || value.toString().compare(QStringLiteral("otx"), Qt::CaseInsensitive) == 0;
+    m_otx->setChecked(otx);
     m_timeout->setValue(qMax(1, options.value(QStringLiteral("timeout_ms")).toInt(15000) / 1000));
     m_refresh->setChecked(options.value(QStringLiteral("refresh_bootstrap")).toBool());
     updateState();
@@ -135,6 +177,20 @@ void AdvancedDialog::updateState()
     m_server->setEnabled(protocol != QStringLiteral("auto"));
     if (protocol == QStringLiteral("auto"))
         m_server->clear();
-    const bool valid = protocol != QStringLiteral("rwhois") || !m_server->text().trimmed().isEmpty();
+    const QString linkText = m_investigationLink->text().trimmed();
+    const QUrl link(linkText);
+    const bool linkValid = linkText.isEmpty() || linkText.compare(QStringLiteral("off"), Qt::CaseInsensitive) == 0
+        || (link.isValid() && link.scheme() == QStringLiteral("https") && !link.host().isEmpty() && link.userInfo().isEmpty()
+            && linkText.contains(QStringLiteral("{type}")) && linkText.contains(QStringLiteral("{value}")));
+    const QString endpointText = m_otxEndpoint->text().trimmed();
+    const QUrl endpoint(endpointText);
+    const bool endpointValid = endpointText.isEmpty()
+        || (endpoint.isValid() && endpoint.scheme() == QStringLiteral("https") && !endpoint.host().isEmpty()
+            && endpoint.userInfo().isEmpty() && endpoint.query().isEmpty() && endpoint.fragment().isEmpty());
+    const bool serverValid = protocol != QStringLiteral("rwhois") || !m_server->text().trimmed().isEmpty();
+    const bool valid = serverValid && linkValid && endpointValid;
     m_buttons->button(QDialogButtonBox::Ok)->setEnabled(valid);
+    m_buttons->button(QDialogButtonBox::Ok)->setToolTip(!serverValid ? tr("RWhois requires a direct server.")
+                                                          : !linkValid ? tr("The investigation link must be off or an HTTPS template containing {type} and {value}.")
+                                                                       : !endpointValid ? tr("The OTX endpoint must be an HTTPS URL without credentials, query, or fragment.") : QString());
 }

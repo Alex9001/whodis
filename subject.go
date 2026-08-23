@@ -63,7 +63,7 @@ func ParseSubject(input string, operation Operation) (Subject, error) {
 			return Subject{}, lookupError(ErrorInvalidInput, fmt.Sprintf("%s requires a domain or zone", operation), parseErr)
 		}
 		return subject, nil
-	case OperationInspect, OperationDiagnose:
+	case OperationInspect, OperationDiagnose, OperationInvestigate:
 		subject, parseErr := parseRegistrationSubject(original, value)
 		if parseErr != nil || subject.Kind != SubjectRegistrableDomain {
 			return Subject{}, lookupError(ErrorInvalidInput, fmt.Sprintf("%s requires a domain or URL", operation), parseErr)

@@ -55,7 +55,7 @@ func TestServerHelloParseAndRun(t *testing.T) {
 	}
 }
 
-func TestServerProtocolV3Run(t *testing.T) {
+func TestServerProtocolV4Run(t *testing.T) {
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":"hello-1","method":"hello"}`,
 		`{"jsonrpc":"2.0","id":"run-1","method":"run","params":{"targets":["example.test"],"operation":"dns.query","dns":{"types":["A"]}}}`,
@@ -72,8 +72,11 @@ func TestServerProtocolV3Run(t *testing.T) {
 	var hello struct {
 		Result helloResult `json:"result"`
 	}
-	if err := json.Unmarshal([]byte(lines[0]), &hello); err != nil || hello.Result.ProtocolVersion != 3 {
+	if err := json.Unmarshal([]byte(lines[0]), &hello); err != nil || hello.Result.ProtocolVersion != 4 {
 		t.Fatalf("hello = (%+v, %v)", hello, err)
+	}
+	if !containsString(hello.Result.Capabilities, "investigate") || !containsString(hello.Result.Capabilities, "schema_v5") {
+		t.Fatalf("hello capabilities = %#v", hello.Result.Capabilities)
 	}
 	var completed struct {
 		Result runResult `json:"result"`
@@ -84,6 +87,35 @@ func TestServerProtocolV3Run(t *testing.T) {
 	if completed.Result.Token == "" || len(completed.Result.Items) != 1 || completed.Result.Items[0].Report.SchemaVersion != whodis.ReportSchemaVersion {
 		t.Fatalf("run result = %+v", completed.Result)
 	}
+}
+
+func TestValidateRunParamsKeepsEnrichmentExplicitAndInvestigationOnly(t *testing.T) {
+	valid := runParams{
+		Targets: []string{"example.test"}, Operation: whodis.OperationInvestigate,
+		Investigation: whodis.InvestigationOptions{Enrichments: []string{"otx"}, RelatedLimit: 25, ExternalLinkTemplate: "off"},
+	}
+	if err := validateRunParams(valid); err != nil {
+		t.Fatalf("valid investigation was rejected: %v", err)
+	}
+	invalid := []runParams{
+		{Targets: []string{"example.test"}, Operation: whodis.OperationRegistration, Investigation: whodis.InvestigationOptions{RelatedLimit: 25}},
+		{Targets: []string{"example.test"}, Operation: whodis.OperationInvestigate, Investigation: whodis.InvestigationOptions{Enrichments: []string{"unknown"}}},
+		{Targets: []string{"example.test"}, Operation: whodis.OperationInvestigate, Investigation: whodis.InvestigationOptions{ExternalLinkTemplate: "http://unsafe.example/{type}/{value}"}},
+	}
+	for _, params := range invalid {
+		if err := validateRunParams(params); err == nil {
+			t.Fatalf("invalid GUI params were accepted: %#v", params)
+		}
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReportItemsExposeRawOnce(t *testing.T) {

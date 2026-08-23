@@ -138,6 +138,8 @@ func flattenBatch(snapshot Snapshot, options DiffOptions) (map[string][]string, 
 			case "diagnose":
 				blocked["diagnosis"] = true
 				blocked["findings"] = true
+			case "investigate", "otx":
+				blocked["investigation"] = true
 			}
 		}
 		encoded, _ := json.Marshal(report)

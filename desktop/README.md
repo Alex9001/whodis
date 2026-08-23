@@ -4,12 +4,17 @@
 as the `whodis` CLI. The desktop package includes `whodis-gui-engine` as a
 private helper; users do not need to install or run the CLI.
 
-The main window exposes Registration, Inspect, selectable DNS Query, and Diagnose
-actions. Resolver comparison, iterative delegation tracing, and explicit zone
-transfer live under Tools. Results open only the relevant Overview, DNS,
-Compare, Delegation, Services, Findings, Contacts, and Raw tabs. The separate
-batch workspace runs Registration, DNS Inventory, DNS Compare, or Diagnose
+The main window exposes Registration, Inspect, selectable DNS Query, Diagnose,
+and Investigate actions. Resolver comparison, iterative delegation tracing, and
+explicit zone transfer live under Tools. Results open only the relevant
+Overview, Stack, Related, DNS, Compare, Delegation, Services, Findings,
+Contacts, and Raw tabs. The separate batch workspace also supports Investigate
 through the same operation engine and exports CSV, TSV, or JSON.
+
+Investigate is local by default. Its Advanced-dialog OTX checkbox is an
+explicit, session-only third-party opt-in and is never restored automatically.
+Harmless related-result, pivot-link, and endpoint preferences may be saved; an
+OTX API key is read only from `WHODIS_OTX_API_KEY`.
 
 Qt Widgets deliberately uses the active platform style. Windows receives
 standard Windows controls, Plasma can use its configured Qt platform theme,
@@ -44,15 +49,15 @@ engine build.
 
 The GUI starts `whodis-gui-engine` as a child process. Requests and responses
 are JSON-RPC 2.0 objects separated by newlines over standard input and output;
-diagnostics go only to standard error. Protocol version 3 provides `hello`,
-`parse`, schema-v4 `run`, `cancel`, and `export`, plus asynchronous progress
+diagnostics go only to standard error. Protocol version 4 provides `hello`,
+`parse`, schema-v5 `run`, `cancel`, and `export`, plus asynchronous progress
 notifications. All operations use `run`; the old registration-only bridge was
 removed. The helper is a private implementation detail rather than a second
 public command-line interface.
 
 Full HTTP and HTTPS URLs are accepted by the desktop boundary and normalized to
-their hostname. Operation results use public Whodis report schema v4, which
-keeps partial registration, DNS, diagnosis, findings, and scoped errors. The
+their hostname. Operation results use public Whodis report schema v5, which
+keeps partial registration, DNS, diagnosis, investigation, findings, and scoped errors. The
 helper retains a small in-memory result cache so the GUI can export without
 repeating network requests. Retry requests replace failed reports inside their
 original batch so successful rows and exports remain complete. Desktop batches

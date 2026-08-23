@@ -14,7 +14,8 @@ class ResultWidgetTest final : public QObject
 
 private slots:
     void displaysTargetAndDNS();
-    void displaysSchemaV4WorkbenchTabs();
+    void displaysSchemaV5WorkbenchTabs();
+    void displaysInvestigationStackAndRelatedTabs();
     void deduplicatesEquivalentTimelineAndDNSRows();
     void showsResolverAgreementAndRawSource();
 };
@@ -47,7 +48,7 @@ void ResultWidgetTest::displaysTargetAndDNS()
     QCOMPARE(raw->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
 }
 
-void ResultWidgetTest::displaysSchemaV4WorkbenchTabs()
+void ResultWidgetTest::displaysSchemaV5WorkbenchTabs()
 {
     ResultWidget widget;
     const QJsonObject record{{QStringLiteral("type"), QStringLiteral("MX")},
@@ -63,7 +64,7 @@ void ResultWidgetTest::displaysSchemaV4WorkbenchTabs()
                               {QStringLiteral("title"), QStringLiteral("DNS inventory")},
                               {QStringLiteral("summary"), QStringLiteral("Collected public DNS records.")}};
     const QJsonObject report{
-        {QStringLiteral("schema_version"), 4},
+        {QStringLiteral("schema_version"), 5},
         {QStringLiteral("operation"), QStringLiteral("diagnose")},
         {QStringLiteral("subject"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")},
                                                   {QStringLiteral("kind"), QStringLiteral("registrable_domain")}}},
@@ -89,6 +90,51 @@ void ResultWidgetTest::displaysSchemaV4WorkbenchTabs()
         }
         QVERIFY2(index >= 0 && tabs->isTabVisible(index), qPrintable(name));
     }
+}
+
+void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
+{
+    ResultWidget widget;
+    const QJsonObject evidence{{QStringLiteral("source"), QStringLiteral("http")},
+                               {QStringLiteral("field"), QStringLiteral("homepage markup")},
+                               {QStringLiteral("value"), QStringLiteral("WordPress asset paths")}};
+    const QJsonObject component{{QStringLiteral("category"), QStringLiteral("web_application")},
+                                {QStringLiteral("name"), QStringLiteral("WordPress")},
+                                {QStringLiteral("role"), QStringLiteral("CMS")},
+                                {QStringLiteral("confidence"), QStringLiteral("high")},
+                                {QStringLiteral("evidence"), QJsonArray{evidence}}};
+    const QJsonObject related{{QStringLiteral("provider"), QStringLiteral("otx")},
+                              {QStringLiteral("hostname"), QStringLiteral("neighbor.example")},
+                              {QStringLiteral("address"), QStringLiteral("192.0.2.1")},
+                              {QStringLiteral("current"), QStringLiteral("stale")}};
+    const QJsonObject investigation{{QStringLiteral("domain"), QStringLiteral("example.com")},
+                                    {QStringLiteral("summary"), QStringLiteral("Web: WordPress")},
+                                    {QStringLiteral("components"), QJsonArray{component}},
+                                    {QStringLiteral("related"), QJsonArray{related}},
+                                    {QStringLiteral("related_total"), 7}};
+    const QJsonObject report{{QStringLiteral("schema_version"), 5},
+                             {QStringLiteral("operation"), QStringLiteral("investigate")},
+                             {QStringLiteral("subject"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")}}},
+                             {QStringLiteral("investigation"), investigation}};
+    widget.setReportItem(QJsonObject{{QStringLiteral("input"), QStringLiteral("example.com")},
+                                     {QStringLiteral("report"), report}});
+
+    QCOMPARE(widget.relatedRowCount(), 1);
+    const QTreeWidget *stack = widget.findChild<QTreeWidget *>(QStringLiteral("stackTree"));
+    QVERIFY(stack);
+    QVERIFY(stack->topLevelItemCount() >= 2);
+    const QTabWidget *tabs = widget.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    for (const QString &name : {QStringLiteral("Stack"), QStringLiteral("Related")}) {
+        int index = -1;
+        for (int candidate = 0; candidate < tabs->count(); ++candidate) {
+            if (tabs->tabText(candidate) == name)
+                index = candidate;
+        }
+        QVERIFY(index >= 0);
+        QVERIFY(tabs->isTabVisible(index));
+    }
+    QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("Stack"));
 }
 
 void ResultWidgetTest::deduplicatesEquivalentTimelineAndDNSRows()
@@ -125,7 +171,7 @@ void ResultWidgetTest::deduplicatesEquivalentTimelineAndDNSRows()
     widget.setItem(QJsonObject{{QStringLiteral("input"), QStringLiteral("example.com")}, {QStringLiteral("result"), result}});
     QCOMPARE(widget.dnsRowCount(), 2);
 
-    const QTreeWidget *overview = widget.findChild<QTreeWidget *>();
+    const QTreeWidget *overview = widget.findChild<QTreeWidget *>(QStringLiteral("overviewTree"));
     QVERIFY(overview);
     QTreeWidgetItem *timeline = nullptr;
     for (int row = 0; row < overview->topLevelItemCount(); ++row) {
@@ -171,7 +217,7 @@ void ResultWidgetTest::showsResolverAgreementAndRawSource()
                     {QStringLiteral("transport"), QStringLiteral("udp")}},
     };
     const QJsonObject report{
-        {QStringLiteral("schema_version"), 4},
+        {QStringLiteral("schema_version"), 5},
         {QStringLiteral("operation"), QStringLiteral("dns.compare")},
         {QStringLiteral("subject"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")}}},
         {QStringLiteral("dns"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("compare")},

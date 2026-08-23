@@ -16,6 +16,7 @@ type Engine struct {
 	registration      RegistrationProvider
 	dns               DNSProvider
 	diagnose          DiagnoseProvider
+	investigation     InvestigationProvider
 	limits            EngineLimits
 	registrationSlots chan struct{}
 }
@@ -64,9 +65,14 @@ func NewEngine(options EngineOptions) *Engine {
 	if limits.MaximumBatchItems <= 0 {
 		limits.MaximumBatchItems = 10000
 	}
+	registrationSlots := make(chan struct{}, limits.RegistrationConcurrency)
+	investigation := options.Investigation
+	if investigation == nil {
+		investigation = newNativeInvestigationProvider(dns, registration, options.NetworkPolicy, options.Enrichments, registrationSlots)
+	}
 	return &Engine{
-		timeout: timeout, client: client, registration: registration, dns: dns, diagnose: diagnose, limits: limits,
-		registrationSlots: make(chan struct{}, limits.RegistrationConcurrency),
+		timeout: timeout, client: client, registration: registration, dns: dns, diagnose: diagnose, investigation: investigation, limits: limits,
+		registrationSlots: registrationSlots,
 	}
 }
 
@@ -188,11 +194,54 @@ func (engine *Engine) Run(ctx context.Context, request Request) (Report, error) 
 			diagnosisValue.Findings = nil
 			report.Diagnosis = &diagnosisValue
 		}
+	case OperationInvestigate:
+		if validationErr := ValidateInvestigationOptions(request.Investigation); validationErr != nil {
+			return Report{}, lookupError(ErrorInvalidInput, validationErr.Error(), validationErr)
+		}
+		var registration *RegistrationResult
+		var diagnosis *DiagnosisReport
+		var registrationErr, diagnosisErr error
+		var group sync.WaitGroup
+		group.Add(2)
+		go func() {
+			defer group.Done()
+			value, lookupErr := engine.lookupRegistration(runContext, subject, request.Registration)
+			if lookupErr != nil {
+				registrationErr = lookupErr
+				return
+			}
+			registration = &value
+		}()
+		go func() {
+			defer group.Done()
+			diagnosisOptions := request.Diagnose
+			diagnosisOptions.DNS = request.Investigation.DNS
+			diagnosis, diagnosisErr = engine.diagnose.Diagnose(runContext, subject.Canonical, diagnosisOptions)
+		}()
+		group.Wait()
+		report.Registration, report.Diagnosis = registration, diagnosis
+		report.Errors = appendOperationError(report.Errors, OperationRegistration, "registration", registrationErr)
+		report.Errors = appendOperationError(report.Errors, OperationDiagnose, "diagnose", diagnosisErr)
+		if report.Diagnosis != nil {
+			report.Findings = append(report.Findings, report.Diagnosis.Findings...)
+			diagnosisValue := *report.Diagnosis
+			diagnosisValue.Findings = nil
+			report.Diagnosis = &diagnosisValue
+		}
+		investigation, investigationErr := engine.investigation.Investigate(runContext, subject, diagnosis, request.Investigation)
+		report.Investigation = investigation
+		if investigation != nil && len(investigation.ProviderErrors) > 0 {
+			report.Errors = append(report.Errors, investigation.ProviderErrors...)
+			investigationValue := *investigation
+			investigationValue.ProviderErrors = nil
+			report.Investigation = &investigationValue
+		}
+		report.Errors = appendOperationError(report.Errors, OperationInvestigate, "investigate", investigationErr)
 	default:
 		return Report{}, lookupError(ErrorInvalidInput, "unknown operation "+string(operation), nil)
 	}
 	if err != nil {
-		if report.DNS != nil || report.Diagnosis != nil {
+		if report.DNS != nil || report.Diagnosis != nil || report.Investigation != nil {
 			report.Errors = appendOperationError(report.Errors, operation, providerForOperation(operation), err)
 		} else {
 			return Report{}, err
@@ -415,6 +464,9 @@ func providerForOperation(operation Operation) string {
 	}
 	if operation == OperationDiagnose {
 		return "diagnose"
+	}
+	if operation == OperationInvestigate {
+		return "investigate"
 	}
 	return "dns"
 }

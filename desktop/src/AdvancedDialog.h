@@ -16,6 +16,7 @@ class AdvancedDialog final : public QDialog
 public:
     explicit AdvancedDialog(QWidget *parent = nullptr);
     QJsonObject options() const;
+    QJsonObject persistentOptions() const;
     void setOptions(const QJsonObject &options);
 
 private slots:
@@ -32,5 +33,9 @@ private:
     QCheckBox *m_dnssec;
     QCheckBox *m_globalping;
     QCheckBox *m_trace;
+    QCheckBox *m_otx;
+    QSpinBox *m_relatedLimit;
+    QLineEdit *m_investigationLink;
+    QLineEdit *m_otxEndpoint;
     QDialogButtonBox *m_buttons;
 };

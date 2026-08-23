@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Whodis
-Comment=Protocol-aware registration and DNS lookup
+Comment=Domain registration, DNS, diagnostics, and stack investigation
 Exec=whodis-gui
 Icon=net.cyberbrand.whodis
 Terminal=false
 Categories=Network;
-Keywords=WHOIS;RDAP;RWhois;DNS;Domain;
+Keywords=WHOIS;RDAP;RWhois;DNS;Domain;Investigation;Technology;
 StartupNotify=true

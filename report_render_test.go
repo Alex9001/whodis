@@ -22,13 +22,13 @@ func TestRenderReportIncludesRemoteDNSAndUsesASCIIForPlain(t *testing.T) {
 	}
 }
 
-func TestRenderReportJSONUsesSchemaV4(t *testing.T) {
+func TestRenderReportJSONUsesSchemaV5(t *testing.T) {
 	report := Report{SchemaVersion: ReportSchemaVersion, Operation: OperationRegistration, Subject: Subject{Canonical: "example.test"}, Registration: &RegistrationResult{Object: Object{Name: "example.test"}}}
 	var output bytes.Buffer
 	if err := RenderReport(&output, report, FormatJSON, RenderOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `"schema_version": 4`) || !strings.Contains(output.String(), `"operation": "registration"`) || !strings.Contains(output.String(), `"subject"`) {
+	if !strings.Contains(output.String(), `"schema_version": 5`) || !strings.Contains(output.String(), `"operation": "registration"`) || !strings.Contains(output.String(), `"subject"`) {
 		t.Fatalf("JSON report = %s", output.String())
 	}
 }
@@ -154,5 +154,52 @@ func TestRenderReportMarkdownIncludesEveryWorkstationSection(t *testing.T) {
 		if !strings.Contains(output.String(), marker) {
 			t.Fatalf("Markdown omitted %q:\n%s", marker, output.String())
 		}
+	}
+}
+
+func TestRenderInvestigationAcrossHumanAndTabularFormats(t *testing.T) {
+	report := Report{
+		SchemaVersion: ReportSchemaVersion,
+		Operation:     OperationInvestigate,
+		Subject:       Subject{Canonical: "example.test", Kind: SubjectRegistrableDomain},
+		Investigation: &InvestigationReport{
+			Domain: "example.test", Summary: "Web: WordPress · Network: Amazon Web Services · DNS: Cloudflare DNS · Mail: Microsoft 365",
+			Components: []StackComponent{
+				{Category: StackWebApplication, Name: "WordPress", Role: "CMS", Confidence: ConfidenceHigh, Evidence: []InvestigationEvidence{{Source: "http", Field: "markup", Value: "WordPress assets"}}},
+				{Category: StackNetwork, Name: "Amazon Web Services", Role: "Network owner", Confidence: ConfidenceHigh},
+				{Category: StackDNS, Name: "Cloudflare DNS", Role: "Authoritative DNS", Confidence: ConfidenceHigh},
+				{Category: StackMail, Name: "Microsoft 365", Role: "Inbound mail", Confidence: ConfidenceHigh},
+			},
+			Networks:     []NetworkObservation{{Address: "192.0.2.1", Provider: "Amazon Web Services", Operator: "Amazon Technologies Inc."}},
+			Related:      []RelatedObservation{{Provider: "otx", Hostname: "neighbor.test", Address: "192.0.2.1", Current: RelatedStale}},
+			RelatedTotal: 7,
+			Links:        []InvestigationLink{{Label: "Open in AlienVault OTX", Type: "domain", Value: "example.test", URL: "https://otx.alienvault.com/indicator/domain/example.test"}},
+		},
+	}
+	for _, format := range []Format{FormatPretty, FormatPlain, FormatMarkdown} {
+		var output bytes.Buffer
+		if err := RenderReport(&output, report, format, RenderOptions{Width: 100}); err != nil {
+			t.Fatal(err)
+		}
+		for _, marker := range []string{"Stack summary", "WordPress", "Amazon Web Services", "Related", "neighbor.test", "AlienVault OTX"} {
+			if !strings.Contains(output.String(), marker) {
+				t.Fatalf("%s output omitted %q:\n%s", format, marker, output.String())
+			}
+		}
+	}
+	var output bytes.Buffer
+	if err := RenderReport(&output, report, FormatCSV, RenderOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(&output).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := make(map[string]int)
+	for index, name := range rows[0] {
+		columns[name] = index
+	}
+	if rows[1][columns["STACK_SUMMARY"]] == "" || !strings.Contains(rows[1][columns["TECHNOLOGIES"]], "WordPress") || rows[1][columns["NETWORK_PROVIDER"]] != "Amazon Web Services" || rows[1][columns["RELATED_COUNT"]] != "7" {
+		t.Fatalf("investigation CSV row = %#v", rows[1])
 	}
 }

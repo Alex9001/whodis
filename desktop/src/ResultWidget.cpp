@@ -2,17 +2,20 @@
 
 #include <QComboBox>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QHeaderView>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QLabel>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QStackedLayout>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace {
@@ -261,6 +264,8 @@ ResultWidget::ResultWidget(QWidget *parent)
     , m_delegation(new QTableWidget(this))
     , m_services(new QTableWidget(this))
     , m_findings(new QTableWidget(this))
+    , m_stack(new QTreeWidget(this))
+    , m_related(new QTableWidget(this))
     , m_errors(new QTableWidget(this))
     , m_contacts(new QTableWidget(this))
     , m_rawSource(new QComboBox(this))
@@ -269,6 +274,10 @@ ResultWidget::ResultWidget(QWidget *parent)
 {
     m_emptyLabel->setAlignment(Qt::AlignCenter);
     m_emptyLabel->setWordWrap(true);
+
+    m_overview->setObjectName(QStringLiteral("overviewTree"));
+    m_stack->setObjectName(QStringLiteral("stackTree"));
+    m_related->setObjectName(QStringLiteral("relatedTable"));
 
     m_overview->setColumnCount(2);
     m_overview->setHeaderLabels({tr("Field"), tr("Value")});
@@ -287,6 +296,17 @@ ResultWidget::ResultWidget(QWidget *parent)
     configureTable(m_delegation, {tr("Hop"), tr("Zone"), tr("Server"), tr("Result"), tr("Nameservers"), tr("Addresses")});
     configureTable(m_services, {tr("Category"), tr("Endpoint"), tr("Result"), tr("Details")});
     configureTable(m_findings, {tr("Result"), tr("Check"), tr("Summary")});
+    m_stack->setColumnCount(5);
+    m_stack->setHeaderLabels({tr("Layer"), tr("Technology"), tr("Role"), tr("Confidence"), tr("Evidence")});
+    m_stack->setRootIsDecorated(true);
+    m_stack->setAlternatingRowColors(true);
+    m_stack->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_stack->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_stack->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_stack->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    m_stack->header()->setSectionResizeMode(4, QHeaderView::Stretch);
+    configureTable(m_related, {tr("Hostname"), tr("Observed IP"), tr("First seen"), tr("Last seen"), tr("Now"), tr("Current DNS"), tr("Source")});
+    m_related->setContextMenuPolicy(Qt::CustomContextMenu);
     configureTable(m_errors, {tr("Operation"), tr("Kind"), tr("Message")});
     configureTable(m_contacts, {tr("Role"), tr("Name"), tr("Handle"), tr("Email"), tr("Phone"), tr("Organization")});
 
@@ -303,6 +323,8 @@ ResultWidget::ResultWidget(QWidget *parent)
     });
 
     m_tabs->addTab(m_overview, tr("Overview"));
+    m_tabs->addTab(m_stack, tr("Stack"));
+    m_tabs->addTab(m_related, tr("Related"));
     m_tabs->addTab(m_dns, tr("DNS"));
     m_tabs->addTab(m_compare, tr("Compare"));
     m_tabs->addTab(m_delegation, tr("Delegation"));
@@ -311,6 +333,22 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_tabs->addTab(m_errors, tr("Errors"));
     m_tabs->addTab(m_contacts, tr("Contacts"));
     m_tabs->addTab(m_rawPage, tr("Raw"));
+
+    connect(m_stack, &QTreeWidget::itemDoubleClicked, this, [](QTreeWidgetItem *item) {
+        const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
+        if (url.isValid() && url.scheme() == QStringLiteral("https"))
+            QDesktopServices::openUrl(url);
+    });
+    connect(m_related, &QTableWidget::customContextMenuRequested, this, [this](const QPoint &position) {
+        const int row = m_related->rowAt(position.y());
+        const QTableWidgetItem *hostname = row >= 0 ? m_related->item(row, 0) : nullptr;
+        if (!hostname || hostname->text().isEmpty())
+            return;
+        QMenu menu(this);
+        QAction *investigate = menu.addAction(tr("Investigate %1").arg(hostname->text()));
+        if (menu.exec(m_related->viewport()->mapToGlobal(position)) == investigate)
+            emit investigateRequested(hostname->text());
+    });
 
     auto *stack = new QStackedLayout(this);
     stack->addWidget(m_emptyLabel);
@@ -327,6 +365,8 @@ void ResultWidget::clearResult()
     m_delegation->setRowCount(0);
     m_services->setRowCount(0);
     m_findings->setRowCount(0);
+    m_stack->clear();
+    m_related->setRowCount(0);
     m_errors->setRowCount(0);
     m_contacts->setRowCount(0);
     m_rawSource->clear();
@@ -344,6 +384,8 @@ void ResultWidget::setItem(const QJsonObject &item)
     populateContacts(result);
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
     m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_stack), false);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_related), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_compare), false);
     m_tabs->setTabVisible(m_tabs->indexOf(m_delegation), false);
@@ -380,10 +422,13 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     populateDelegation(report);
     populateServices(report);
     populateFindings(report);
+    populateInvestigation(report);
     populateErrors(report);
     populateRaw(item.value(QStringLiteral("raw_sources")).toArray());
 
     m_tabs->setTabVisible(m_tabs->indexOf(m_overview), true);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_stack), m_stack->topLevelItemCount() > 0);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_related), m_related->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_dns), m_dns->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_compare), m_compare->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_delegation), m_delegation->rowCount() > 0);
@@ -392,7 +437,9 @@ void ResultWidget::setReportItem(const QJsonObject &item)
     m_tabs->setTabVisible(m_tabs->indexOf(m_errors), m_errors->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_contacts), m_contacts->rowCount() > 0);
     m_tabs->setTabVisible(m_tabs->indexOf(m_rawPage), m_rawSource->count() > 0);
-    if (m_errors->rowCount() > 0)
+    if (m_stack->topLevelItemCount() > 0)
+        m_tabs->setCurrentWidget(m_stack);
+    else if (m_errors->rowCount() > 0)
         m_tabs->setCurrentWidget(m_errors);
     else if (m_findings->rowCount() > 0)
         m_tabs->setCurrentWidget(m_findings);
@@ -437,6 +484,11 @@ bool ResultWidget::hasRawSource() const
 int ResultWidget::dnsRowCount() const
 {
     return m_dns->rowCount();
+}
+
+int ResultWidget::relatedRowCount() const
+{
+    return m_related->rowCount();
 }
 
 void ResultWidget::populateOverview(const QJsonObject &result)
@@ -688,6 +740,117 @@ void ResultWidget::populateServices(const QJsonObject &report)
                hop.value(QStringLiteral("error")).toString());
     }
     m_services->setSortingEnabled(true);
+}
+
+void ResultWidget::populateInvestigation(const QJsonObject &report)
+{
+    m_stack->clear();
+    m_related->setSortingEnabled(false);
+    m_related->setRowCount(0);
+    const QJsonObject investigation = report.value(QStringLiteral("investigation")).toObject();
+    if (investigation.isEmpty()) {
+        m_related->setSortingEnabled(true);
+        return;
+    }
+
+    auto *summary = addGroup(m_stack, tr("Summary"));
+    addValue(summary, investigation.value(QStringLiteral("domain")).toString(), investigation.value(QStringLiteral("summary")).toString());
+
+    QHash<QString, QTreeWidgetItem *> categories;
+    for (const QJsonValue &value : investigation.value(QStringLiteral("components")).toArray()) {
+        const QJsonObject component = value.toObject();
+        const QString categoryKey = component.value(QStringLiteral("category")).toString();
+        QTreeWidgetItem *group = categories.value(categoryKey);
+        if (!group) {
+            QString label = categoryKey;
+            label.replace(QLatin1Char('_'), QLatin1Char(' '));
+            if (!label.isEmpty())
+                label[0] = label.at(0).toUpper();
+            group = addGroup(m_stack, label);
+            categories.insert(categoryKey, group);
+        }
+        QStringList evidenceSummary;
+        const QJsonArray evidence = component.value(QStringLiteral("evidence")).toArray();
+        for (const QJsonValue &evidenceValue : evidence) {
+            const QJsonObject observation = evidenceValue.toObject();
+            evidenceSummary.append((observation.value(QStringLiteral("source")).toString()
+                                    + QStringLiteral(" ") + observation.value(QStringLiteral("field")).toString()
+                                    + QStringLiteral(": ") + observation.value(QStringLiteral("value")).toString()).trimmed());
+        }
+        auto *technology = new QTreeWidgetItem(group, {QString(), component.value(QStringLiteral("name")).toString(),
+                                                       component.value(QStringLiteral("role")).toString(),
+                                                       component.value(QStringLiteral("confidence")).toString().toUpper(),
+                                                       evidenceSummary.join(QStringLiteral("; "))});
+        for (const QJsonValue &evidenceValue : evidence) {
+            const QJsonObject observation = evidenceValue.toObject();
+            const QString subject = observation.value(QStringLiteral("subject")).toString();
+            new QTreeWidgetItem(technology, {tr("Evidence"), observation.value(QStringLiteral("source")).toString(),
+                                             observation.value(QStringLiteral("field")).toString(), QString(),
+                                             (subject.isEmpty() ? QString() : subject + QStringLiteral(": "))
+                                                 + observation.value(QStringLiteral("value")).toString()});
+        }
+    }
+
+    const QJsonArray networks = investigation.value(QStringLiteral("networks")).toArray();
+    if (!networks.isEmpty()) {
+        auto *group = addGroup(m_stack, tr("Network attribution"));
+        for (const QJsonValue &value : networks) {
+            const QJsonObject network = value.toObject();
+            QStringList details;
+            const QString owner = network.value(QStringLiteral("operator")).toString(network.value(QStringLiteral("network_name")).toString());
+            if (!owner.isEmpty())
+                details.append(tr("Registered operator: %1").arg(owner));
+            if (!joined(network.value(QStringLiteral("ptr"))).isEmpty())
+                details.append(QStringLiteral("PTR: ") + joined(network.value(QStringLiteral("ptr"))));
+            if (!joined(network.value(QStringLiteral("cidr"))).isEmpty())
+                details.append(QStringLiteral("CIDR: ") + joined(network.value(QStringLiteral("cidr"))));
+            auto *networkItem = new QTreeWidgetItem(group, {network.value(QStringLiteral("address")).toString(), network.value(QStringLiteral("provider")).toString(),
+                                                     tr("Network owner"), QStringLiteral("HIGH"), details.join(QStringLiteral(" · "))});
+            for (const QJsonValue &linkValue : network.value(QStringLiteral("links")).toArray()) {
+                const QJsonObject link = linkValue.toObject();
+                auto *linkItem = new QTreeWidgetItem(networkItem, {tr("Open"), link.value(QStringLiteral("label")).toString(),
+                                                                   tr("Manual pivot"), QString(), link.value(QStringLiteral("url")).toString()});
+                linkItem->setData(0, Qt::UserRole, link.value(QStringLiteral("url")).toString());
+            }
+        }
+    }
+
+    const QJsonArray links = investigation.value(QStringLiteral("links")).toArray();
+    if (!links.isEmpty()) {
+        auto *group = addGroup(m_stack, tr("Investigation links (double-click to open)"));
+        for (const QJsonValue &value : links) {
+            const QJsonObject link = value.toObject();
+            auto *item = new QTreeWidgetItem(group, {link.value(QStringLiteral("label")).toString(), link.value(QStringLiteral("value")).toString(),
+                                                     tr("Manual pivot"), QString(), link.value(QStringLiteral("url")).toString()});
+            item->setData(0, Qt::UserRole, link.value(QStringLiteral("url")).toString());
+        }
+    }
+
+    const QJsonArray warnings = investigation.value(QStringLiteral("warnings")).toArray();
+    if (!warnings.isEmpty()) {
+        auto *group = addGroup(m_stack, tr("Notes"));
+        group->setExpanded(false);
+        for (const QJsonValue &value : warnings)
+            new QTreeWidgetItem(group, {tr("Note"), QString(), QString(), QString(), value.toString()});
+    }
+
+    const QJsonArray related = investigation.value(QStringLiteral("related")).toArray();
+    m_related->setRowCount(related.size());
+    for (int row = 0; row < related.size(); ++row) {
+        const QJsonObject observation = related.at(row).toObject();
+        m_related->setItem(row, 0, new QTableWidgetItem(observation.value(QStringLiteral("hostname")).toString()));
+        m_related->setItem(row, 1, new QTableWidgetItem(observation.value(QStringLiteral("address")).toString()));
+        m_related->setItem(row, 2, new QTableWidgetItem(observation.value(QStringLiteral("first_seen")).toString()));
+        m_related->setItem(row, 3, new QTableWidgetItem(observation.value(QStringLiteral("last_seen")).toString()));
+        m_related->setItem(row, 4, new QTableWidgetItem(observation.value(QStringLiteral("current")).toString().toUpper()));
+        m_related->setItem(row, 5, new QTableWidgetItem(joined(observation.value(QStringLiteral("current_values")))));
+        m_related->setItem(row, 6, new QTableWidgetItem(observation.value(QStringLiteral("provider")).toString()));
+    }
+    const int total = investigation.value(QStringLiteral("related_total")).toInt(related.size());
+    m_tabs->setTabToolTip(m_tabs->indexOf(m_related), total > related.size()
+                             ? tr("Showing %1 of %2 passive observations. These are not ownership claims.").arg(related.size()).arg(total)
+                             : tr("Passive observations are historical provider data, not ownership claims."));
+    m_related->setSortingEnabled(true);
 }
 
 void ResultWidget::populateFindings(const QJsonObject &report)

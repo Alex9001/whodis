@@ -30,7 +30,8 @@ domain, IP address, network, or ASN, discovers the right RDAP, WHOIS, or RWhois
 authority, and organizes the answer into a responsive terminal dashboard. It
 also grows into a full domain workstation when you need it: inventory DNS,
 compare resolvers, verify DNSSEC, trace delegation, diagnose web and mail
-service, save snapshots, detect changes, enforce health policy, or export a
+service, profile a site's technology and infrastructure with explainable
+evidence, save snapshots, detect changes, enforce health policy, or export a
 stable machine-readable report.
 
 ## Output made for humans—and scripts
@@ -47,8 +48,8 @@ stable machine-readable report.
 - **Raw source access** — preserve the original RDAP JSON, WHOIS, or RWhois
   response when one unmodified registration lookup is what you need.
 - **Native desktop workbench** — Lookup, DNS Inventory, DNS Query, Compare,
-  Delegation, Diagnose, Services, Findings, Contacts, and Raw views without a
-  browser or a separately installed CLI.
+  Delegation, Diagnose, Stack, Related, Services, Findings, Contacts, and Raw
+  views without a browser or a separately installed CLI.
 
 ## See it in action
 
@@ -172,6 +173,12 @@ whodis dns trace example.com NS
 # Bounded DNS, reachability, HTTP, TLS, SMTP, and mail-policy checks
 whodis diagnose example.com
 
+# Explainable technology, provider, and network attribution from public evidence
+whodis investigate example.com
+
+# Explicitly add OTX passive-DNS history and live-check returned hostnames
+WHODIS_OTX_API_KEY=... whodis investigate example.com --enrich otx
+
 # Save a passive observation, compare it later, and enforce health policy
 whodis inspect example.com --save --label production
 whodis diff production --live
@@ -250,11 +257,45 @@ Findings are deterministic `pass`, `info`, `warning`, or `error` observations
 with evidence. There is deliberately no opaque overall score and no arbitrary
 port-range scanner.
 
+## Investigate a site's stack without hand-waving
+
+`whodis investigate` builds on Diagnose and turns bounded public observations
+into a quick, renderer-independent stack profile. It combines homepage HTTP
+headers and markup, DNS provider patterns, mail records, PTR names, and IP RDAP
+registration. Web fingerprints use the MIT-licensed `wappalyzergo` engine.
+
+```bash
+whodis investigate example.com
+whodis investigate example.com --markdown -o profile.md
+whodis investigate example.com --enrich otx --related-limit 50 --json
+```
+
+Each detected component has a category, role, `high`/`medium`/`low`
+confidence, and the exact bounded evidence behind it. Whodis deliberately
+separates a network owner such as Amazon from a managed hosting provider, and
+does not call a lone `autodiscover` record Microsoft 365 or cPanel. A compact
+summary is followed by evidence tables in terminal output; the desktop app uses
+dedicated **Stack** and **Related** tabs.
+
+Local investigation is the default. It does not execute JavaScript, crawl the
+site, scan arbitrary ports, or contact related domains. A configurable HTTPS
+pivot link is displayed for manual use but never opened by the CLI. OTX
+passive-DNS enrichment happens only with `--enrich otx`; discovered public web
+IPs are sent to that service, returned observations are capped, and their
+hostnames are checked against current A/AAAA DNS. `current`, `stale`, and
+`unknown` describe that DNS comparison—not ownership or affiliation.
+
+The optional OTX key comes only from `WHODIS_OTX_API_KEY` and is never written
+to Whodis configuration, reports, snapshots, or logs. Customize harmless
+defaults with `whodis config set related-limit`, `investigation-link`, and
+`otx-endpoint`. Enrichment opt-in itself is never persisted.
+
 ## Snapshots, change detection, and policy checks
 
-Passive registration and DNS observations can be saved locally. Dedicated API
-token and TSIG-secret fields, raw DNS packets, request IDs, and timings are
-removed before storage:
+Eligible local observations can be saved as snapshots. Dedicated API-token and
+TSIG-secret fields, raw DNS packets, request IDs, and timings are removed before
+storage. Local investigation reports can be saved; runs using third-party
+enrichment cannot:
 
 ```bash
 whodis inspect example.com --save --label production
@@ -320,7 +361,8 @@ whodis config
 ```
 
 It configures output layout, color, notice detail, DNS resolver and DNSSEC
-defaults, plus the scrutiny and passive/active mode used by `whodis check`.
+defaults, investigation link and related-result limit, plus the scrutiny and
+passive/active mode used by `whodis check`.
 Press Enter to retain a choice or review everything before saving. Direct
 commands are available for automation:
 
@@ -331,6 +373,8 @@ whodis config set strategy consensus
 whodis config set dnssec on
 whodis config set scrutiny strict
 whodis config set check-mode passive
+whodis config set related-limit 50
+whodis config set investigation-link 'https://otx.alienvault.com/indicator/{type}/{value}'
 whodis config get resolver
 whodis config reset
 ```
@@ -351,6 +395,7 @@ whodis dns compare <name> [TYPE...]
 whodis dns trace <name> [TYPE]
 whodis dns transfer <zone>
 whodis diagnose <domain...>
+whodis investigate <domain...>
 whodis check <target...>
 whodis snapshot <list|show|remove|export|import|path> ...
 whodis diff <snapshot> <snapshot>|--live
@@ -360,8 +405,8 @@ whodis get <fields> <target...>
 
 Add `-f dashboard|tree|geekboys|plain|json|yaml|csv|ndjson|markdown|raw` to
 select output (the equivalent long shortcuts also work). `whodis help dns`,
-`whodis help diagnose`, and `whodis help advanced` document operation-specific
-controls. The older `scan` and `axfr` spellings remain available for
+`whodis help diagnose`, `whodis help investigate`, and `whodis help advanced`
+document operation-specific controls. The older `scan` and `axfr` spellings remain available for
 compatibility.
 
 ## How registration routing works
@@ -402,17 +447,20 @@ report, err := engine.Run(ctx, whodis.Request{
 err = whodis.RenderReport(os.Stdout, report, whodis.FormatJSON, whodis.RenderOptions{})
 ```
 
-`Report` schema version 4 adds an operation-aware `Subject` and keeps
-registration, DNS, diagnosis, findings, and provider-scoped errors independent,
-so one failed registry or probe does not erase useful results.
+`Report` schema version 5 keeps registration, DNS, diagnosis, investigation,
+findings, and provider-scoped errors independent, so one failed registry,
+probe, or enrichment does not erase useful results. Schema v5 adds explainable
+stack components, network attribution, manual pivot links, and bounded related
+observations. Snapshot replay continues to read schema-v4 snapshots.
 Diagnostic findings are aggregated once at report level instead of being
 duplicated inside the diagnosis payload.
 `Engine.RunBatch` preserves input order, while `Engine.RunStream` handles input
-incrementally with bounded work and progress callbacks. Registration, DNS, and
-Diagnose providers are interfaces for embedding and deterministic tests.
+incrementally with bounded work and progress callbacks. Registration, DNS,
+Diagnose, Investigation, and named Enrichment providers are interfaces for
+embedding and deterministic tests.
 
-The native GUI's private newline-delimited JSON-RPC protocol is version 3 and
-carries schema-v4 reports through the same operation engine as the CLI, plus
+The native GUI's private newline-delimited JSON-RPC protocol is version 4 and
+carries schema-v5 reports through the same operation engine as the CLI, plus
 progress, cancellation, short-lived in-memory result tokens, and exports. See
 [MIGRATING_TO_V2.md](MIGRATING_TO_V2.md) when upgrading an embedded v1 client.
 
@@ -454,6 +502,10 @@ split into CLI and GUI assets so a server never needs to install Qt.
 - Diagnose samples bounded representative addresses, MX hosts, and advertised
   services. It is evidence collection, not continuous monitoring or an
   exhaustive security audit.
+- Technology fingerprints and provider mappings are evidence-backed best
+  efforts, not contractual proof. Sites can hide, proxy, or spoof headers and
+  infrastructure. Passive-DNS neighbors are historical observations, not
+  ownership, customer, or compromise claims.
 - Raw source output is limited to one registration response. Multi-target and
   workstation operations use human-readable or structured report formats.
 - The desktop batch workspace accepts up to 1,000 targets and retains recent

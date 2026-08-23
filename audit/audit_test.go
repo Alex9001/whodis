@@ -102,6 +102,33 @@ func TestSnapshotRejectsUnsafeReplayOperations(t *testing.T) {
 	}
 }
 
+func TestSnapshotInvestigationReplayIsLocalAndSchemaV4RemainsReadable(t *testing.T) {
+	base := snapshotFixture(t, 300, nil)
+	base.Requests[0].Operation = whodis.OperationInvestigate
+	base.Requests[0].Investigation = ReplayInvestigationOptions{RelatedLimit: 40, ExternalLinkTemplate: "off"}
+	base.Batch.Reports[0].Operation = whodis.OperationInvestigate
+	requests, err := base.RequestsForReplay()
+	if err != nil || len(requests) != 1 || requests[0].Investigation.RelatedLimit != 40 || requests[0].Investigation.ExternalLinkTemplate != "off" || len(requests[0].Investigation.Enrichments) != 0 || requests[0].Investigation.OTXEndpoint != "" || requests[0].Investigation.OTXToken != "" {
+		t.Fatalf("local investigation replay = %#v, %v", requests, err)
+	}
+
+	legacy := snapshotFixture(t, 300, nil)
+	legacy.Batch.SchemaVersion = 4
+	legacy.Batch.Reports[0].SchemaVersion = 4
+	if _, err := legacy.RequestsForReplay(); err != nil {
+		t.Fatalf("schema-v4 snapshot no longer replays: %v", err)
+	}
+}
+
+func TestSnapshotRejectsThirdPartyInvestigationEnrichment(t *testing.T) {
+	request := whodis.Request{Operation: whodis.OperationInvestigate, Target: "example.test", Investigation: whodis.InvestigationOptions{Enrichments: []string{"otx"}}}
+	batch := snapshotFixture(t, 300, nil).Batch
+	batch.Reports[0].Operation = whodis.OperationInvestigate
+	if _, err := NewSnapshot([]whodis.Request{request}, batch, GeneratorInfo{Name: "whodis", Version: "test"}, ""); err == nil || !strings.Contains(err.Error(), "third-party") {
+		t.Fatalf("NewSnapshot enrichment error = %v", err)
+	}
+}
+
 func TestSnapshotRejectsMismatchedReportSubject(t *testing.T) {
 	snapshot := snapshotFixture(t, 300, nil)
 	snapshot.Batch.Reports[0].Subject.Canonical = "other.test"

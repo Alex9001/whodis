@@ -26,6 +26,10 @@ public:
     QString currentRawSource() const;
     bool hasRawSource() const;
     int dnsRowCount() const;
+    int relatedRowCount() const;
+
+signals:
+    void investigateRequested(const QString &target);
 
 private:
     void populateOverview(const QJsonObject &result);
@@ -35,6 +39,7 @@ private:
     void populateDelegation(const QJsonObject &report);
     void populateServices(const QJsonObject &report);
     void populateFindings(const QJsonObject &report);
+    void populateInvestigation(const QJsonObject &report);
     void populateErrors(const QJsonObject &report);
     void populateContacts(const QJsonObject &result);
     void populateRaw(const QJsonArray &sources);
@@ -46,6 +51,8 @@ private:
     QTableWidget *m_delegation;
     QTableWidget *m_services;
     QTableWidget *m_findings;
+    QTreeWidget *m_stack;
+    QTableWidget *m_related;
     QTableWidget *m_errors;
     QTableWidget *m_contacts;
     QComboBox *m_rawSource;

@@ -8,7 +8,7 @@
 #include <QStandardPaths>
 
 namespace {
-constexpr int supportedProtocolVersion = 3;
+constexpr int supportedProtocolVersion = 4;
 }
 
 EngineClient::EngineClient(QObject *parent)

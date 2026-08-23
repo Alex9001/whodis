@@ -207,19 +207,24 @@ func validateSnapshot(snapshot Snapshot) error {
 	if len(snapshot.Label) > 128 || strings.ContainsAny(snapshot.Label, "\r\n\x00") {
 		return fmt.Errorf("snapshot label must be at most 128 characters without control newlines")
 	}
-	if snapshot.Batch.SchemaVersion != whodis.ReportSchemaVersion {
-		return fmt.Errorf("snapshot contains report schema %d; expected %d", snapshot.Batch.SchemaVersion, whodis.ReportSchemaVersion)
+	if !supportedReportSchema(snapshot.Batch.SchemaVersion) {
+		return fmt.Errorf("snapshot contains unsupported report schema %d", snapshot.Batch.SchemaVersion)
 	}
 	for index, request := range snapshot.Requests {
 		if request.Operation == whodis.OperationDNSTransfer || request.Diagnose.Remote || request.Diagnose.Trace {
 			return fmt.Errorf("snapshot request %d contains an unsafe replay operation", index)
+		}
+		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{
+			RelatedLimit: request.Investigation.RelatedLimit, ExternalLinkTemplate: request.Investigation.ExternalLinkTemplate,
+		}); err != nil {
+			return fmt.Errorf("snapshot request %d has invalid investigation options: %w", index, err)
 		}
 		subject, err := whodis.ParseSubject(request.Target, request.Operation)
 		if err != nil {
 			return fmt.Errorf("snapshot request %d is invalid: %w", index, err)
 		}
 		report := snapshot.Batch.Reports[index]
-		if report.SchemaVersion != whodis.ReportSchemaVersion || report.Operation != request.Operation {
+		if report.SchemaVersion != snapshot.Batch.SchemaVersion || report.Operation != request.Operation {
 			return fmt.Errorf("snapshot report %d does not match its replay request", index)
 		}
 		if report.Subject.Canonical != subject.Canonical || report.Subject.Kind != subject.Kind || report.Subject.RegistrationDomain != subject.RegistrationDomain {
@@ -227,6 +232,10 @@ func validateSnapshot(snapshot Snapshot) error {
 		}
 	}
 	return nil
+}
+
+func supportedReportSchema(version int) bool {
+	return version == 4 || version == whodis.ReportSchemaVersion
 }
 
 func appendUnique(values []string, value string) []string {

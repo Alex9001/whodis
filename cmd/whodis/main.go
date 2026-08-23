@@ -36,6 +36,7 @@ const (
 	taskDNSTrace     cliTask = "dns-trace"
 	taskDNSTransfer  cliTask = "dns-transfer"
 	taskDiagnose     cliTask = "diagnose"
+	taskInvestigate  cliTask = "investigate"
 )
 
 type cliOptions struct {
@@ -54,6 +55,7 @@ type cliOptions struct {
 	fallbackSet       bool
 	server            string
 	timeout           time.Duration
+	timeoutSet        bool
 	refreshBootstrap  bool
 	dnsResolver       string
 	dnsResolvers      []string
@@ -74,6 +76,10 @@ type cliOptions struct {
 	globalpingLimit   int
 	trace             bool
 	remote            bool
+	enrichments       []string
+	relatedLimit      int
+	investigationLink string
+	otxEndpoint       string
 	color             string
 	colorSet          bool
 	details           bool
@@ -198,6 +204,8 @@ func runEngineTask(inputs []string, options cliOptions, format whodis.Format, co
 		operation = whodis.OperationDNSTrace
 	case taskDiagnose:
 		operation = whodis.OperationDiagnose
+	case taskInvestigate:
+		operation = whodis.OperationInvestigate
 	}
 	recursive := !options.noRecursion
 	if options.tsigSecretEnv != "" {
@@ -232,6 +240,15 @@ func runEngineTask(inputs []string, options cliOptions, format whodis.Format, co
 		if !options.dnssecSet && config.DNSSEC != nil {
 			options.edns.DNSSEC = *config.DNSSEC
 		}
+		if options.relatedLimit == 0 {
+			options.relatedLimit = config.RelatedLimit
+		}
+		if options.investigationLink == "" {
+			options.investigationLink = config.InvestigationLink
+		}
+		if options.otxEndpoint == "" {
+			options.otxEndpoint = config.OTXEndpoint
+		}
 	}
 	dnsOptions := whodis.DNSOptions{
 		Types: options.recordTypes, Class: options.dnsClass,
@@ -250,11 +267,19 @@ func runEngineTask(inputs []string, options cliOptions, format whodis.Format, co
 	}
 	requests := make([]whodis.Request, 0, len(inputs))
 	for _, input := range inputs {
-		requests = append(requests, whodis.Request{
+		request := whodis.Request{
 			Operation: operation, Target: input, Timeout: options.timeout,
 			Registration: registration, DNS: dnsOptions,
 			Diagnose: whodis.DiagnoseOptions{DNS: dnsOptions, Timeout: options.timeout, Trace: options.trace, Remote: options.remote},
-		})
+		}
+		if operation == whodis.OperationInvestigate {
+			request.Investigation = whodis.InvestigationOptions{
+				DNS: dnsOptions, Enrichments: append([]string(nil), options.enrichments...),
+				RelatedLimit: options.relatedLimit, ExternalLinkTemplate: options.investigationLink,
+				OTXEndpoint: options.otxEndpoint, OTXToken: runtime.getenv("WHODIS_OTX_API_KEY"),
+			}
+		}
+		requests = append(requests, request)
 	}
 	engine := whodis.NewEngine(whodis.EngineOptions{Timeout: options.timeout, NetworkPolicy: whodis.NetworkPolicy{AllowPrivate: options.allowPrivate, AllowInsecureHTTP: options.allowInsecureHTTP}})
 	defer engine.Close()
@@ -449,6 +474,7 @@ func parseArgs(args []string) (cliOptions, error) {
 				return options, fmt.Errorf("--timeout must be a positive duration")
 			}
 			options.timeout = duration
+			options.timeoutSet = true
 		case "--color":
 			v, err := value()
 			if err != nil {
@@ -592,6 +618,42 @@ func parseArgs(args []string) (cliOptions, error) {
 			options.trace = true
 		case "--remote":
 			options.remote = true
+		case "--enrich":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			for _, provider := range strings.Split(v, ",") {
+				provider = strings.ToLower(strings.TrimSpace(provider))
+				if provider != "" {
+					options.enrichments = append(options.enrichments, provider)
+				}
+			}
+			if len(options.enrichments) == 0 {
+				return options, fmt.Errorf("--enrich requires a provider name")
+			}
+		case "--related-limit":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			n, parseErr := strconv.Atoi(v)
+			if parseErr != nil || n < 1 || n > 100 {
+				return options, fmt.Errorf("--related-limit must be between 1 and 100")
+			}
+			options.relatedLimit = n
+		case "--investigation-link":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.investigationLink = strings.TrimSpace(v)
+		case "--otx-endpoint":
+			v, err := value()
+			if err != nil {
+				return options, err
+			}
+			options.otxEndpoint = strings.TrimSpace(v)
 		case "--details":
 			if options.detailsSet && !options.details {
 				return options, fmt.Errorf("--details conflicts with --summary")
@@ -643,6 +705,9 @@ func parseArgs(args []string) (cliOptions, error) {
 	}
 	if len(options.targets) > 0 {
 		options.target = options.targets[0]
+	}
+	if options.task == taskInvestigate && !options.timeoutSet {
+		options.timeout = 30 * time.Second
 	}
 	if err := validateCLIOptions(options); err != nil {
 		return options, err
@@ -701,6 +766,9 @@ func parseCommandPrefix(args []string, options *cliOptions, appendField func(who
 	case "diagnose":
 		options.task = taskDiagnose
 		index++
+	case "investigate":
+		options.task = taskInvestigate
+		index++
 	case string(taskScan):
 		options.task = taskScan
 		index++
@@ -757,16 +825,31 @@ func validateCLIOptions(options cliOptions) error {
 		return fmt.Errorf("--refresh is only available with automatic routing or rdap")
 	}
 	if options.dnsResolver != "" && !supportsDNSOptions(options.task) {
-		return fmt.Errorf("--resolver is only available with DNS operations or diagnose")
+		return fmt.Errorf("--resolver is only available with DNS operations, diagnose, or investigate")
 	}
 	if (options.dnsClass != "" || options.resolverStrategy != "" || options.edns != (whodis.EDNSOptions{}) || options.dnssecSet || options.noRecursion || options.checkingDisabled || options.globalping) && !supportsDNSOptions(options.task) {
-		return fmt.Errorf("DNS query options require dns query, dns compare, dns trace, dns transfer, or diagnose")
+		return fmt.Errorf("DNS query options require a DNS operation, diagnose, or investigate")
 	}
 	if (len(options.globalpingFrom) > 0 || options.globalpingLimit > 0) && !options.globalping && !options.remote {
 		return fmt.Errorf("--from and --limit require --globalping or diagnose --remote")
 	}
 	if (options.trace || options.remote) && options.task != taskDiagnose {
 		return fmt.Errorf("--trace and --remote require diagnose")
+	}
+	if (len(options.enrichments) > 0 || options.relatedLimit > 0 || options.investigationLink != "" || options.otxEndpoint != "") && options.task != taskInvestigate {
+		return fmt.Errorf("--enrich, --related-limit, --investigation-link, and --otx-endpoint require investigate")
+	}
+	for _, provider := range options.enrichments {
+		if provider != "otx" {
+			return fmt.Errorf("unknown enrichment provider %q; choose otx", provider)
+		}
+	}
+	if options.task == taskInvestigate {
+		if err := whodis.ValidateInvestigationOptions(whodis.InvestigationOptions{
+			RelatedLimit: options.relatedLimit, ExternalLinkTemplate: options.investigationLink, OTXEndpoint: options.otxEndpoint,
+		}); err != nil {
+			return err
+		}
 	}
 	if options.transfer != (whodis.TransferOptions{}) && options.task != taskDNSTransfer {
 		return fmt.Errorf("--ixfr, --serial, --tls, and --tsig-* require dns transfer")
@@ -810,12 +893,15 @@ func validateCLIOptions(options cliOptions) error {
 	if options.saveSnapshot && (options.task == taskAXFR || options.task == taskDNSTransfer || options.remote || options.trace) {
 		return fmt.Errorf("zone transfers and remote/path diagnoses cannot be snapshotted")
 	}
+	if options.saveSnapshot && len(options.enrichments) > 0 {
+		return fmt.Errorf("third-party enrichment results cannot be snapshotted; omit --enrich")
+	}
 	return nil
 }
 
 func supportsDNSOptions(task cliTask) bool {
 	switch task {
-	case taskScan, taskAXFR, taskDNSQuery, taskDNSInventory, taskDNSCompare, taskDNSTrace, taskDNSTransfer, taskDiagnose:
+	case taskScan, taskAXFR, taskDNSQuery, taskDNSInventory, taskDNSCompare, taskDNSTrace, taskDNSTransfer, taskDiagnose, taskInvestigate:
 		return true
 	default:
 		return false
@@ -859,6 +945,8 @@ func validateTaskTargets(inputs []string, task cliTask) error {
 		operation = whodis.OperationDNSTrace
 	case taskDiagnose:
 		operation = whodis.OperationDiagnose
+	case taskInvestigate:
+		operation = whodis.OperationInvestigate
 	}
 	for _, input := range inputs {
 		if _, err := whodis.ParseSubject(input, operation); err != nil {
@@ -1169,6 +1257,7 @@ func printUsage(writer io.Writer) {
   whodis dns trace <name> [TYPE]
   whodis dns transfer <zone>
   whodis diagnose <domain...>
+  whodis investigate <domain...>
   whodis check <target...> [--scrutiny basic|standard|strict]
   whodis snapshot <list|show|remove|export|import|path> ...
   whodis diff <snapshot-a> <snapshot-b>|--live
@@ -1176,7 +1265,7 @@ func printUsage(writer io.Writer) {
   whodis get <fields> <target...>
   whodis config
   whodis completion bash|zsh|fish|powershell
-  whodis help [dns|diagnose|inspect|expires|get|protocols|formats|advanced]
+  whodis help [dns|diagnose|investigate|inspect|expires|get|protocols|formats|advanced]
 
 Targets: domain names, IPv4/IPv6 addresses or CIDRs, and ASNs (AS15169).
 
@@ -1189,6 +1278,7 @@ Commands:
   dns trace                 iterative root-to-authority delegation trace
   dns transfer              explicit AXFR/IXFR, with optional TSIG and TLS
   diagnose                  bounded DNS, web, TLS, mail, and service checks
+  investigate               evidence-backed web stack and infrastructure profile
   check                     evaluate live or saved state against health policy
   snapshot                  save and manage secret-free observations
   diff                      compare snapshots or a snapshot with live state
@@ -1237,8 +1327,16 @@ DNS:
       --from <location>     repeatable Globalping location selector
       --limit <count>       Globalping probe limit (1-10; default: 3)
 
+Investigation (explicit third-party enrichment is off by default):
+      --enrich otx         query OTX passive DNS for discovered public web addresses
+      --related-limit <n>  retain 1-100 related observations (default: 25)
+      --investigation-link <template|off>
+                           HTTPS pivot containing {type} and {value}
+      --otx-endpoint <url> override the OTX API base URL
+
 Environment:
   WHODIS_FORMAT             default output format when no shortcut or file inference applies
+  WHODIS_OTX_API_KEY        optional OTX API key; never saved in Whodis configuration
 
 Examples:
   whodis example.com
@@ -1246,6 +1344,8 @@ Examples:
   whodis dns compare example.com A --resolver system --resolver https://1.1.1.1/dns-query
   whodis dns trace example.com NS
   whodis diagnose example.com --json
+  whodis investigate example.com
+  whodis investigate example.com --enrich otx --json
   whodis inspect example.com --tree
   whodis inspect example.com --save --label production
   whodis diff production --live
@@ -1265,8 +1365,8 @@ func runCompletion(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "whodis: usage: whodis completion bash|zsh|fish|powershell")
 		return 2
 	}
-	commands := "lookup registration inspect dns diagnose check snapshot diff expires get config help completion"
-	options := "--format --dashboard --tree --geekboys --plain --json --yaml --csv --ndjson --markdown --raw --output --input --jobs --timeout --color --details --summary --force --save --label --active --passive --against --snapshot --scrutiny --policy --webhook-env --webhook-file --live --allow-snapshot-endpoints --include-ttl --server --strict --try-both --refresh --allow-private --allow-insecure-http --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret-env --tsig-secret-file --tsig-algorithm --globalping --from --limit --trace --remote --help --version"
+	commands := "lookup registration inspect dns diagnose investigate check snapshot diff expires get config help completion"
+	options := "--format --dashboard --tree --geekboys --plain --json --yaml --csv --ndjson --markdown --raw --output --input --jobs --timeout --color --details --summary --force --save --label --active --passive --against --snapshot --scrutiny --policy --webhook-env --webhook-file --live --allow-snapshot-endpoints --include-ttl --server --strict --try-both --refresh --allow-private --allow-insecure-http --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret-env --tsig-secret-file --tsig-algorithm --globalping --from --limit --trace --remote --enrich --related-limit --investigation-link --otx-endpoint --help --version"
 	switch strings.ToLower(args[0]) {
 	case "bash":
 		fmt.Fprintf(stdout, `_whodis_complete() {
@@ -1355,6 +1455,8 @@ Example: whodis get expiration,registrar,status google.com yahoo.com --plain
 		printDNSUsage(writer)
 	case taskDiagnose:
 		printDiagnoseUsage(writer)
+	case taskInvestigate:
+		printInvestigateUsage(writer)
 	default:
 		printUsage(writer)
 	}
@@ -1394,6 +1496,29 @@ MX SMTP/EHLO/STARTTLS, mail policies, and advertised SRV services. This is not a
 --trace enables optional path work. --remote opts in to configured remote probes; neither is run by default.
 
 Example: whodis diagnose example.com --dashboard
+`)
+}
+
+func printInvestigateUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage: whodis investigate <domain> [<domain> ...] [options]
+
+Builds an evidence-backed technology and infrastructure profile from bounded public DNS, HTTP, TLS,
+mail, PTR, and IP-registration observations. Network ownership is reported separately from inferred
+hosting. Whodis does not run a generic port scan or execute page JavaScript.
+
+Third-party passive DNS is off by default. Use --enrich otx to request AlienVault OTX observations;
+WHODIS_OTX_API_KEY is read from the environment when present. Related domains are live-checked and
+labelled current, stale, or unknown.
+
+Options:
+  --enrich otx                       opt in to OTX passive-DNS enrichment
+  --related-limit <1-100>            maximum related observations (default: 25)
+  --investigation-link <template>    HTTPS pivot containing {type} and {value}, or off
+  --otx-endpoint <url>               override the OTX API base URL
+  --timeout <duration>               complete investigation budget (default: 30s)
+
+Example: whodis investigate example.com --dashboard
+         whodis investigate example.com --enrich otx --json
 `)
 }
 
@@ -1454,6 +1579,11 @@ func printAdvancedUsage(writer io.Writer) {
       --globalping          opt in to remote DNS probes (may consume Globalping quota)
       --from <location>     repeatable Globalping location
       --limit <count>       Globalping probe limit, 1-10
+      --enrich otx         opt in to passive-DNS enrichment for investigate
+      --related-limit <n>  retain 1-100 related observations
+      --investigation-link <template|off>
+                           HTTPS pivot containing {type} and {value}
+      --otx-endpoint <url> override the OTX API base URL
       --server <endpoint>   explicit server, with rdap/whois/rwhois
       --strict              do not fall back to another registration protocol
       --try-both            fall back after any protocol error
@@ -1485,6 +1615,8 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 		printDNSUsage(stdout)
 	case "diagnose":
 		printDiagnoseUsage(stdout)
+	case "investigate":
+		printInvestigateUsage(stdout)
 	case "protocols":
 		printProtocolsUsage(stdout)
 	case "formats":
