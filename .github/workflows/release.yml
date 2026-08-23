@@ -6,7 +6,7 @@ on:
       version:
         description: Version identity used by non-publishing preflight packages
         required: true
-        default: 2.4.0
+        default: 2.5.0
   push:
     tags:
       - "v*"
@@ -188,8 +188,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$PWD/stage" `
             -DWHODIS_VERSION="$version" `
-            -DBUILD_TESTING=OFF
+            -DBUILD_TESTING=ON
           cmake --build build-gui --parallel
+          $env:QT_QPA_PLATFORM = "offscreen"
+          ctest --test-dir build-gui --output-on-failure
           cmake --install build-gui
           windeployqt --release --no-translations "$PWD/stage/bin/whodis-gui.exe"
           Copy-Item README.md, LICENSE, desktop/packaging/THIRD_PARTY_NOTICES.md -Destination "$PWD/stage/bin"
@@ -266,8 +268,9 @@ jobs:
             -DWHODIS_MACOS_ICON="$RUNNER_TEMP/Whodis.icns" \
             -DWHODIS_VERSION="$version" \
             -DWHODIS_BUNDLE_VERSION="$bundle_version" \
-            -DBUILD_TESTING=OFF
+            -DBUILD_TESTING=ON
           cmake --build build-gui --parallel
+          QT_QPA_PLATFORM=offscreen ctest --test-dir build-gui --output-on-failure
           app=$(find build-gui/bin -maxdepth 1 -name '*.app' -print -quit)
           test -n "$app"
           mv "$app" build-gui/bin/Whodis.app
@@ -333,9 +336,9 @@ jobs:
         run: |
           go vet ./...
           go test -race ./...
-          go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
-          go run github.com/securego/gosec/v2/cmd/gosec@v2.22.10 -exclude-generated -quiet ./...
-          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+          go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -exclude-generated -quiet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - name: List unsigned GUI assets
         run: |
           echo 'Desktop packages are intentionally unsigned.'

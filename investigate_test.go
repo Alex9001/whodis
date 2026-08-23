@@ -78,7 +78,7 @@ func TestInvestigationSynthesizesLayeredStackWithoutOverclaimingMail(t *testing.
 	dns := investigationDNSFixture{records: records, queries: map[string][]DNSRecord{
 		normalizeDNSName(reverse): {{Name: reverse, Type: "PTR", Value: "web006.inceptionseo.com."}},
 	}}
-	provider := newNativeInvestigationProvider(dns, investigationRegistrationFixture{}, NetworkPolicy{}, nil, nil)
+	provider := newNativeInvestigationProvider(dns, investigationRegistrationFixture{}, NetworkPolicy{}, nil, nil, nil)
 	diagnosis := &DiagnosisReport{Domain: domain, DNS: &DNSOperationResult{Inventory: &DNSResult{Records: records}}}
 	headers := http.Header{"Server": {"LiteSpeed"}, "X-Redirect-By": {"WordPress"}, "X-Two-Version": {"2.33.0"}}
 	report, err := provider.Investigate(context.Background(), Subject{Canonical: domain, RegistrationDomain: domain, Kind: SubjectRegistrableDomain}, diagnosis, InvestigationOptions{
@@ -166,6 +166,14 @@ func TestWappalyzerImplicationsCanBeMarkedAsIndirect(t *testing.T) {
 	parents := implications["mysql"]
 	if !containsFold(parents, "WordPress") || !detectedParent(parents, map[string]wappalyzer.AppInfo{"WordPress:6.8": {}}) {
 		t.Fatalf("WordPress implication map = %#v", parents)
+	}
+}
+
+func TestFingerprintResourcesAreSharedAcrossEngines(t *testing.T) {
+	first, firstImplications := fingerprintResources()
+	second, secondImplications := fingerprintResources()
+	if first == nil || first != second || len(firstImplications) == 0 || len(secondImplications) == 0 {
+		t.Fatalf("fingerprint resources were rebuilt or unavailable: %p %p %d %d", first, second, len(firstImplications), len(secondImplications))
 	}
 }
 

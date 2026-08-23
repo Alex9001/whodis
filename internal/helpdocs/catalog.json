@@ -1,0 +1,13 @@
+{
+  "topics": [
+    {"id":"overview","title":"Getting started","summary":"Choose the smallest operation that answers your question.","file":"topics/overview.md"},
+    {"id":"registration","title":"Registration and protocols","summary":"RDAP, WHOIS, RWhois, routing, and direct authorities.","file":"topics/registration.md"},
+    {"id":"dns","title":"DNS and DNSSEC","summary":"Inventory, query, compare, trace, and transfer operations.","file":"topics/dns.md"},
+    {"id":"diagnose","title":"Domain diagnosis","summary":"Bounded web, TLS, mail, service, and reachability checks.","file":"topics/diagnose.md"},
+    {"id":"investigate","title":"Technology investigation","summary":"Evidence, confidence, hosting attribution, and research pivots.","file":"topics/investigate.md"},
+    {"id":"batch","title":"Batch work and exports","summary":"Check many targets and choose human or structured output.","file":"topics/batch.md"},
+    {"id":"snapshots","title":"Snapshots, diffs, and checks","summary":"Save observations, find changes, and enforce policy.","file":"topics/snapshots.md"},
+    {"id":"privacy","title":"Privacy and network safety","summary":"Local defaults, explicit third parties, secrets, and private networks.","file":"topics/privacy.md"},
+    {"id":"troubleshooting","title":"Troubleshooting","summary":"Firewalls, resolvers, permissions, unsigned packages, and partial results.","file":"topics/troubleshooting.md"}
+  ]
+}

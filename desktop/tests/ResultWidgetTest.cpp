@@ -1,4 +1,7 @@
 #include "AdvancedDialog.h"
+#include "HelpDialog.h"
+#include "BatchWindow.h"
+#include "MainWindow.h"
 #include "ResultWidget.h"
 
 #include <QJsonArray>
@@ -7,9 +10,11 @@
 #include <QPlainTextEdit>
 #include <QHeaderView>
 #include <QPushButton>
+#include <QPointer>
 #include <QSettings>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTextBrowser>
 #include <QTreeWidget>
 #include <QtTest>
 
@@ -25,7 +30,39 @@ private slots:
     void wrapsAndRemembersAdjustableColumns();
     void deduplicatesEquivalentTimelineAndDNSRows();
     void showsResolverAgreementAndRawSource();
+    void loadsAndSearchesOfflineHelp();
+    void closingBatchLeavesMainWindowAlive();
 };
+
+void ResultWidgetTest::loadsAndSearchesOfflineHelp()
+{
+    QSettings settings;
+    settings.remove(QStringLiteral("help/topic"));
+    HelpDialog dialog;
+    QCOMPARE(dialog.topicCount(), 9);
+    QCOMPARE(dialog.currentTitle(), QStringLiteral("Getting started"));
+    dialog.setSearchText(QStringLiteral("telemetry"));
+    QCoreApplication::processEvents();
+    QCOMPARE(dialog.currentTitle(), QStringLiteral("Privacy and network safety"));
+    const QTextBrowser *content = dialog.findChild<QTextBrowser *>(QStringLiteral("helpContent"));
+    QVERIFY(content);
+    QVERIFY(content->toPlainText().contains(QStringLiteral("no account system"), Qt::CaseInsensitive));
+}
+
+void ResultWidgetTest::closingBatchLeavesMainWindowAlive()
+{
+    MainWindow window;
+    window.show();
+    QVERIFY(QMetaObject::invokeMethod(&window, "openBatch", Qt::DirectConnection));
+    QCoreApplication::processEvents();
+    QPointer<BatchWindow> batch = window.findChild<BatchWindow *>();
+    QVERIFY(batch);
+    batch->close();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents();
+    QVERIFY(batch.isNull());
+    QVERIFY(window.isVisible());
+}
 
 void ResultWidgetTest::serializesResearchLinkSelection()
 {

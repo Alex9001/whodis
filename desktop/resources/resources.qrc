@@ -2,4 +2,16 @@
   <qresource prefix="/icons">
     <file alias="whodis.png">whodis-512.png</file>
   </qresource>
+  <qresource prefix="/help">
+    <file alias="catalog.json">../../internal/helpdocs/catalog.json</file>
+    <file alias="topics/overview.md">../../internal/helpdocs/topics/overview.md</file>
+    <file alias="topics/registration.md">../../internal/helpdocs/topics/registration.md</file>
+    <file alias="topics/dns.md">../../internal/helpdocs/topics/dns.md</file>
+    <file alias="topics/diagnose.md">../../internal/helpdocs/topics/diagnose.md</file>
+    <file alias="topics/investigate.md">../../internal/helpdocs/topics/investigate.md</file>
+    <file alias="topics/batch.md">../../internal/helpdocs/topics/batch.md</file>
+    <file alias="topics/snapshots.md">../../internal/helpdocs/topics/snapshots.md</file>
+    <file alias="topics/privacy.md">../../internal/helpdocs/topics/privacy.md</file>
+    <file alias="topics/troubleshooting.md">../../internal/helpdocs/topics/troubleshooting.md</file>
+  </qresource>
 </RCC>

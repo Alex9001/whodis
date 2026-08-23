@@ -104,6 +104,9 @@ tracking without making the simple lookup complicated.
   views without a browser or a separately installed CLI. Result columns are
   adjustable and remembered per view, while long values wrap instead of being
   clipped or forcing the whole layout sideways.
+- **Help where you work** — concise guides ship inside both applications. Use
+  `whodis help [topic]` in a terminal or press **F1** in the desktop app; neither
+  requires a browser or network connection.
 - **Evidence-backed site profile** — identify platforms, versions, WordPress
   plugins and themes, commerce, optimization, hosting, DNS, and mail, then
   review a score-free homepage delivery, SEO, security-header, and
@@ -254,6 +257,19 @@ whodis inspect example.com --save --label production
 whodis diff production --live
 whodis check example.com --scrutiny strict
 ```
+
+## Help is built in
+
+Run `whodis help` to see command reference and the bundled guide catalog, then
+open a focused topic such as `whodis help registration`, `whodis help dns`,
+`whodis help investigate`, `whodis help snapshots`, or `whodis help
+troubleshooting`. The native app exposes the same searchable guides through
+**Help → Whodis Help** or **F1**, alongside links to the homepage, full online
+documentation, and issue tracker.
+
+The bundled material is intentionally concise and task-oriented. This README
+remains the complete installation, architecture, safety, and limitation
+reference, so command help does not become a stale second manual.
 
 ## A full DNS client, not a decorative lookup
 
@@ -511,8 +527,9 @@ whodis get <fields> <target...>
 Add `-f dashboard|tree|geekboys|plain|json|yaml|csv|ndjson|markdown|raw` to
 select output (the equivalent long shortcuts also work). `whodis help dns`,
 `whodis help diagnose`, `whodis help investigate`, and `whodis help advanced`
-document operation-specific controls. The older `scan` and `axfr` spellings remain available for
-compatibility.
+document operation-specific controls; `whodis help` also lists offline guides
+for workflows and troubleshooting. The older `scan` and `axfr` spellings
+remain available for compatibility.
 
 ## How registration routing works
 
@@ -533,7 +550,9 @@ widens diagnostic fallback and `--strict` disables it.
 
 Automatically discovered RDAP URLs require HTTPS, and automatic RDAP,
 WHOIS, and RWhois referrals to private, loopback, link-local, documentation, or
-other special-use addresses are blocked. Explicitly managed private registry
+other special-use addresses are blocked. Diagnose and Investigate apply the
+same rule to target-derived web, TLS, SMTP, MTA-STS, and advertised-service
+destinations, including every HTTP redirect. Explicitly managed internal
 infrastructure can opt in per run with `--allow-private`; automatic HTTP RDAP
 requires the separate `--allow-insecure-http` exception.
 
@@ -563,7 +582,11 @@ duplicated inside the diagnosis payload.
 `Engine.RunBatch` preserves input order, while `Engine.RunStream` handles input
 incrementally with bounded work and progress callbacks. Registration, DNS,
 Diagnose, Investigation, and named Enrichment providers are interfaces for
-embedding and deterministic tests.
+embedding and deterministic tests. `EngineLimits` independently bounds batch
+size, registration lookups, and nested diagnostic probes for long-lived or
+multi-tenant integrations. Engine instances share the immutable compiled web
+fingerprint catalog, so repeatedly constructing an embedded engine does not
+rebuild that large dataset.
 
 The native GUI's private newline-delimited JSON-RPC protocol is version 5 and
 carries schema-v5 reports through the same operation engine as the CLI, plus
@@ -578,6 +601,7 @@ git clone https://github.com/Alex9001/whodis.git
 cd whodis
 go test -race ./...
 go vet ./...
+go test ./... -run '^$' -bench . -benchtime=100ms
 go run ./cmd/whodis example.com
 ```
 
@@ -585,7 +609,9 @@ The desktop build additionally needs CMake, Ninja, Qt 6 Core/Gui/Widgets/Test,
 and a C++17 compiler; source builds require Go 1.25 or newer. See
 [desktop/README.md](desktop/README.md). Tests use
 fixtures and in-memory protocol sessions rather than consuming public registry
-or Globalping quota.
+or Globalping quota. Parser, importer, and renderer fuzz targets run on a
+monthly maintenance workflow; its public-protocol compatibility job is manual
+and advisory so ordinary CI stays deterministic and offline.
 
 Release automation has a non-publishing preflight that cross-builds the pure-Go
 CLI and every native desktop bundle before a tag is created. It runs race and

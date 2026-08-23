@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/netip"
 	"os"
@@ -119,7 +118,7 @@ func (c *bootstrapCache) registry(ctx context.Context, kind bootstrapKind, refre
 		}
 		return bootstrapRegistry{}, lookupError(ErrorUnavailable, "IANA RDAP bootstrap request returned "+response.Status, nil)
 	}
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 5<<20))
+	payload, err := readLimitedBody(response.Body, 5<<20)
 	if err != nil {
 		return bootstrapRegistry{}, lookupError(ErrorUnavailable, "could not read IANA bootstrap data", err)
 	}

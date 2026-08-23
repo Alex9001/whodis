@@ -128,6 +128,7 @@ type StreamItem struct {
 // EngineLimits bounds nested fan-out for reusable engines and embedded use.
 type EngineLimits struct {
 	RegistrationConcurrency int
+	ProbeConcurrency        int
 	MaximumBatchItems       int
 }
 

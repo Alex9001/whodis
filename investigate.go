@@ -235,9 +235,31 @@ type nativeInvestigationProvider struct {
 	fingerprintImplies map[string][]string
 	enrichments        map[string]EnrichmentProvider
 	registrationSlots  chan struct{}
+	probeSlots         chan struct{}
 }
 
-func newNativeInvestigationProvider(dns DNSProvider, registration RegistrationProvider, policy NetworkPolicy, enrichments map[string]EnrichmentProvider, registrationSlots chan struct{}) InvestigationProvider {
+var sharedFingerprintResources struct {
+	once          sync.Once
+	fingerprinter *wappalyzer.Wappalyze
+	implications  map[string][]string
+}
+
+// The compiled Wappalyzer catalog is immutable after construction and its
+// matching methods keep request state local. Sharing it avoids rebuilding a
+// very large regular-expression database for every Engine instance.
+func fingerprintResources() (*wappalyzer.Wappalyze, map[string][]string) {
+	sharedFingerprintResources.once.Do(func() {
+		fingerprinter, err := wappalyzer.New()
+		if err != nil {
+			return
+		}
+		sharedFingerprintResources.fingerprinter = fingerprinter
+		sharedFingerprintResources.implications = buildWappalyzerImplicationMap(fingerprinter.GetFingerprints())
+	})
+	return sharedFingerprintResources.fingerprinter, sharedFingerprintResources.implications
+}
+
+func newNativeInvestigationProvider(dns DNSProvider, registration RegistrationProvider, policy NetworkPolicy, enrichments map[string]EnrichmentProvider, registrationSlots, probeSlots chan struct{}) InvestigationProvider {
 	registered := make(map[string]EnrichmentProvider, len(enrichments)+1)
 	for name, provider := range enrichments {
 		if provider != nil {
@@ -247,11 +269,14 @@ func newNativeInvestigationProvider(dns DNSProvider, registration RegistrationPr
 	if _, exists := registered["otx"]; !exists {
 		registered["otx"] = &otxEnrichmentProvider{networkPolicy: policy, slots: make(chan struct{}, 2)}
 	}
-	fingerprinter, _ := wappalyzer.New()
+	fingerprinter, implications := fingerprintResources()
 	if registrationSlots == nil {
 		registrationSlots = make(chan struct{}, 4)
 	}
-	return &nativeInvestigationProvider{dns: dns, registration: registration, networkPolicy: policy, fingerprinter: fingerprinter, fingerprintImplies: wappalyzerImplicationMap(), enrichments: registered, registrationSlots: registrationSlots}
+	if probeSlots == nil {
+		probeSlots = make(chan struct{}, 32)
+	}
+	return &nativeInvestigationProvider{dns: dns, registration: registration, networkPolicy: policy, fingerprinter: fingerprinter, fingerprintImplies: implications, enrichments: registered, registrationSlots: registrationSlots, probeSlots: probeSlots}
 }
 
 func (provider *nativeInvestigationProvider) Investigate(ctx context.Context, subject Subject, diagnosis *DiagnosisReport, options InvestigationOptions) (*InvestigationReport, error) {
@@ -297,6 +322,13 @@ func (provider *nativeInvestigationProvider) Investigate(ctx context.Context, su
 	group.Add(2)
 	go func() {
 		defer group.Done()
+		select {
+		case provider.probeSlots <- struct{}{}:
+			defer func() { <-provider.probeSlots }()
+		case <-ctx.Done():
+			webErr = ctx.Err()
+			return
+		}
 		web, webErr = provider.fetchWeb(ctx, domain, options.HTTPClient)
 	}()
 	go func() {
@@ -464,7 +496,7 @@ func safeInvestigationHTTPClient(policy NetworkPolicy) *http.Client {
 			if err != nil {
 				return nil, err
 			}
-			addresses, err := permittedAutomaticAddresses(ctx, host, policy)
+			addresses, err := permittedDiagnosticAddresses(ctx, host, policy)
 			if err != nil {
 				return nil, err
 			}
@@ -486,20 +518,13 @@ func safeInvestigationHTTPClient(policy NetworkPolicy) *http.Client {
 		if len(via) >= maximumInvestigationRedirects {
 			return errors.New("too many redirects")
 		}
-		return validateAutomaticHost(request.Context(), request.URL.Hostname(), policy)
+		if request.URL.Scheme != "https" && request.URL.Scheme != "http" {
+			return fmt.Errorf("unsupported redirect scheme %q", request.URL.Scheme)
+		}
+		_, err := permittedDiagnosticAddresses(request.Context(), request.URL.Hostname(), policy)
+		return err
 	}
 	return client
-}
-
-func readLimitedBody(body io.Reader, maximum int64) ([]byte, error) {
-	payload, err := io.ReadAll(io.LimitReader(body, maximum+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(payload)) > maximum {
-		return nil, fmt.Errorf("response body exceeded %d bytes", maximum)
-	}
-	return payload, nil
 }
 
 func (provider *nativeInvestigationProvider) inspectNetworks(ctx context.Context, addresses []string, dnsOptions DNSOptions, linkDefinitions []investigationLinkDefinition, template string) ([]NetworkObservation, []string) {
@@ -1066,8 +1091,12 @@ func fingerprintCategory(categories []string) (StackCategory, string) {
 }
 
 func wappalyzerImplicationMap() map[string][]string {
-	var fingerprints wappalyzer.Fingerprints
-	if err := json.Unmarshal([]byte(wappalyzer.GetRawFingerprints()), &fingerprints); err != nil {
+	_, implications := fingerprintResources()
+	return implications
+}
+
+func buildWappalyzerImplicationMap(fingerprints *wappalyzer.Fingerprints) map[string][]string {
+	if fingerprints == nil {
 		return nil
 	}
 	result := make(map[string][]string)

@@ -24,6 +24,10 @@ func LoadPolicy(path string) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	return decodePolicy(payload)
+}
+
+func decodePolicy(payload []byte) (Policy, error) {
 	var raw struct {
 		SchemaVersion int    `yaml:"policy_schema_version"`
 		Name          string `yaml:"name"`

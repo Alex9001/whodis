@@ -54,21 +54,25 @@ func NewEngine(options EngineOptions) *Engine {
 	if dns == nil {
 		dns = newNativeDNSProvider()
 	}
-	diagnose := options.Diagnose
-	if diagnose == nil {
-		diagnose = newNativeDiagnoseProvider(dns)
-	}
 	limits := options.Limits
 	if limits.RegistrationConcurrency <= 0 {
 		limits.RegistrationConcurrency = 4
+	}
+	if limits.ProbeConcurrency <= 0 {
+		limits.ProbeConcurrency = 32
 	}
 	if limits.MaximumBatchItems <= 0 {
 		limits.MaximumBatchItems = 10000
 	}
 	registrationSlots := make(chan struct{}, limits.RegistrationConcurrency)
+	probeSlots := make(chan struct{}, limits.ProbeConcurrency)
+	diagnose := options.Diagnose
+	if diagnose == nil {
+		diagnose = newNativeDiagnoseProvider(dns, options.NetworkPolicy, probeSlots)
+	}
 	investigation := options.Investigation
 	if investigation == nil {
-		investigation = newNativeInvestigationProvider(dns, registration, options.NetworkPolicy, options.Enrichments, registrationSlots)
+		investigation = newNativeInvestigationProvider(dns, registration, options.NetworkPolicy, options.Enrichments, registrationSlots, probeSlots)
 	}
 	return &Engine{
 		timeout: timeout, client: client, registration: registration, dns: dns, diagnose: diagnose, investigation: investigation, limits: limits,

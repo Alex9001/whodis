@@ -1,5 +1,5 @@
 class Whodis < Formula
-  desc "RDAP-first WHOIS, DNS, and domain diagnostics"
+  desc "Evidence-backed domain investigation with RDAP, WHOIS, RWhois, and DNS"
   homepage "https://cyberbrand.net/whodis/"
   version "@VERSION@"
   license "MIT"

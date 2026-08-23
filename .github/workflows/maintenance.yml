@@ -1,0 +1,63 @@
+name: Maintenance
+
+on:
+  schedule:
+    - cron: "17 7 1 * *"
+  workflow_dispatch:
+    inputs:
+      live_compatibility:
+        description: Run advisory public RDAP and DNS compatibility checks
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: 1.26.6
+
+jobs:
+  offline:
+    name: Vulnerability and bounded fuzz audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: go test -race ./...
+      - name: Scan dependencies and reachable code
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      - name: Run bounded parser and renderer fuzzing
+        run: |
+          go test . -run='^$' -fuzz=FuzzSubjectAndEndpointParsing -fuzztime=20s
+          go test . -run='^$' -fuzz=FuzzRegistrationTextParsers -fuzztime=20s
+          go test . -run='^$' -fuzz=FuzzDNSWireNormalization -fuzztime=20s
+          go test . -run='^$' -fuzz=FuzzReportRendering -fuzztime=20s
+          go test ./audit -run='^$' -fuzz=FuzzPolicyAndSnapshotImports -fuzztime=20s
+
+  live-compatibility:
+    name: Advisory live protocol compatibility
+    if: github.event_name == 'workflow_dispatch' && inputs.live_compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build Whodis
+        run: go build -trimpath -o "$RUNNER_TEMP/whodis" ./cmd/whodis
+      - name: Check public registration routing
+        run: |
+          "$RUNNER_TEMP/whodis" example.com --json --timeout 30s | jq --exit-status '.schema_version == 5'
+          "$RUNNER_TEMP/whodis" 8.8.8.8 --json --timeout 30s | jq --exit-status '.schema_version == 5'
+          "$RUNNER_TEMP/whodis" AS15169 --json --timeout 30s | jq --exit-status '.schema_version == 5'
+      - name: Check system DNS and DoH
+        run: |
+          "$RUNNER_TEMP/whodis" dns query example.com A --resolver system --json | jq --exit-status '.schema_version == 5'
+          "$RUNNER_TEMP/whodis" dns query example.com A --resolver https://cloudflare-dns.com/dns-query --json | jq --exit-status '.schema_version == 5'

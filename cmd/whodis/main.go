@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Alex9001/whodis/v2"
+	"github.com/Alex9001/whodis/v2/internal/helpdocs"
 
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -1167,6 +1168,7 @@ func openOutput(path string, force bool, stdout io.Writer) (io.Writer, func() er
 		return stdout, func() error { return nil }, nil
 	}
 	if !force {
+		// #nosec G703 -- the CLI intentionally accepts a user-selected output path.
 		if _, err := os.Stat(path); err == nil {
 			return nil, func() error { return nil }, fmt.Errorf("could not open %s: file exists (use --force to replace it)", path)
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -1180,6 +1182,7 @@ func openOutput(path string, force bool, stdout io.Writer) (io.Writer, func() er
 	}
 	if err := file.Chmod(0o644); err != nil {
 		_ = file.Close()
+		// #nosec G703 -- CreateTemp returned this exact path in the selected directory.
 		_ = os.Remove(file.Name())
 		return nil, func() error { return nil }, fmt.Errorf("could not set output permissions: %w", err)
 	}
@@ -1208,14 +1211,17 @@ func (output *atomicOutput) commit() error {
 	output.finished = true
 	if err := output.file.Sync(); err != nil {
 		_ = output.file.Close()
+		// #nosec G703 -- temporary is captured directly from CreateTemp.
 		_ = os.Remove(output.temporary)
 		return err
 	}
 	if err := output.file.Close(); err != nil {
+		// #nosec G703 -- temporary is captured directly from CreateTemp.
 		_ = os.Remove(output.temporary)
 		return err
 	}
 	if err := replaceConfigFile(output.temporary, output.destination); err != nil {
+		// #nosec G703 -- temporary is captured directly from CreateTemp.
 		_ = os.Remove(output.temporary)
 		return err
 	}
@@ -1228,6 +1234,7 @@ func (output *atomicOutput) abort() {
 	}
 	output.finished = true
 	_ = output.file.Close()
+	// #nosec G703 -- temporary is captured directly from CreateTemp.
 	_ = os.Remove(output.temporary)
 }
 
@@ -1291,7 +1298,7 @@ func printUsage(writer io.Writer) {
   whodis get <fields> <target...>
   whodis config
   whodis completion bash|zsh|fish|powershell
-  whodis help [dns|diagnose|investigate|inspect|expires|get|protocols|formats|advanced]
+  whodis help [command|guide-topic]
 
 Targets: domain names, IPv4/IPv6 addresses or CIDRs, and ASNs (AS15169).
 
@@ -1325,7 +1332,7 @@ Common options:
       --force               overwrite an existing output file
       --save                save a reusable, secret-free snapshot
       --label <name>        label a snapshot saved with --save (requires --save)
-      --allow-private       allow automatic referrals to private addresses
+      --allow-private       allow derived referrals and diagnostic targets on private networks
       --allow-insecure-http allow automatic RDAP over HTTP
   -h, --help                show this help
       --version             show version
@@ -1386,63 +1393,19 @@ Examples:
   whodis -- config
   whodis config
 `)
+	printGuideTopics(writer)
 }
 
-func runCompletion(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
-		fmt.Fprintln(stderr, "whodis: usage: whodis completion bash|zsh|fish|powershell")
-		return 2
+func printGuideTopics(writer io.Writer) {
+	values, err := helpdocs.Topics()
+	if err != nil {
+		return
 	}
-	commands := "lookup registration inspect dns diagnose investigate check snapshot diff expires get config help completion"
-	options := "--format --dashboard --tree --geekboys --plain --json --yaml --csv --ndjson --markdown --raw --output --input --jobs --timeout --color --details --summary --force --save --label --active --passive --against --snapshot --scrutiny --policy --webhook-env --webhook-file --live --allow-snapshot-endpoints --include-ttl --server --strict --try-both --refresh --allow-private --allow-insecure-http --resolver --strategy --class --dnssec --no-dnssec --bufsize --nsid --ecs --cookie --padding --no-recursion --checking-disabled --ixfr --serial --tls --tsig-name --tsig-secret-env --tsig-secret-file --tsig-algorithm --globalping --from --limit --trace --remote --enrich --related-limit --research-links --investigation-link --otx-endpoint --help --version"
-	switch strings.ToLower(args[0]) {
-	case "bash":
-		fmt.Fprintf(stdout, `_whodis_complete() {
-  local cur prev
-  COMPREPLY=()
-  cur="${COMP_WORDS[COMP_CWORD]}"
-  prev="${COMP_WORDS[COMP_CWORD-1]}"
-  if [[ "$prev" == "dns" ]]; then COMPREPLY=( $(compgen -W "query inventory compare trace transfer" -- "$cur") ); return; fi
-  if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W %q -- "$cur") ); return; fi
-  COMPREPLY=( $(compgen -W %q -- "$cur") )
-}
-complete -F _whodis_complete whodis
-`, options, commands)
-	case "zsh":
-		fmt.Fprintf(stdout, `#compdef whodis
-_arguments '*:argument:->args'
-case $state in
-  args) _values 'command or option' %s %s ;;
-esac
-`, strings.ReplaceAll(commands, " ", " "), strings.ReplaceAll(options, " ", " "))
-	case "fish":
-		for _, command := range strings.Fields(commands) {
-			fmt.Fprintf(stdout, "complete -c whodis -f -a %s\n", command)
-		}
-		for _, option := range strings.Fields(options) {
-			fmt.Fprintf(stdout, "complete -c whodis -l %s\n", strings.TrimPrefix(option, "--"))
-		}
-	case "powershell":
-		fmt.Fprintf(stdout, `Register-ArgumentCompleter -Native -CommandName whodis -ScriptBlock {
-  param($wordToComplete)
-  @(%s) | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
-    [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
-  }
-}
-`, powershellCompletionValues(append(strings.Fields(commands), strings.Fields(options)...)))
-	default:
-		fmt.Fprintf(stderr, "whodis: unsupported completion shell %q\n", args[0])
-		return 2
+	fmt.Fprintln(writer, "\nOffline guide topics:")
+	for _, topic := range values {
+		fmt.Fprintf(writer, "  %-16s %s\n", topic.ID, topic.Summary)
 	}
-	return 0
-}
-
-func powershellCompletionValues(values []string) string {
-	quoted := make([]string, len(values))
-	for index, value := range values {
-		quoted[index] = "'" + strings.ReplaceAll(value, "'", "''") + "'"
-	}
-	return strings.Join(quoted, ",")
+	fmt.Fprintln(writer, "\nFull documentation: https://github.com/Alex9001/whodis#readme")
 }
 
 func printTaskUsage(writer io.Writer, task cliTask) {
@@ -1628,7 +1591,7 @@ func printAdvancedUsage(writer io.Writer) {
       --strict              do not fall back to another registration protocol
       --try-both            fall back after any protocol error
       --refresh             refresh IANA RDAP service data
-      --allow-private       allow automatic protocol referrals to private network addresses
+      --allow-private       allow derived referrals and diagnostic targets on private networks
       --allow-insecure-http allow automatic RDAP endpoints that use HTTP
       --save                save this passive result as a secret-free snapshot
       --label <name>        assign a unique label to a saved snapshot
@@ -1647,6 +1610,8 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "registration", "lookup":
+		printRegistrationUsage(stdout)
 	case "inspect":
 		printTaskUsage(stdout, taskScan)
 	case string(taskScan), string(taskAXFR), string(taskExpires), string(taskGet):
@@ -1665,10 +1630,34 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 		printAdvancedUsage(stdout)
 	case "config":
 		printConfigUsage(stdout)
+	case "check":
+		printCheckUsage(stdout)
+	case "snapshot":
+		printSnapshotUsage(stdout)
+	case "diff":
+		printDiffUsage(stdout)
+	case "completion":
+		fmt.Fprintln(stdout, "Usage: whodis completion bash|zsh|fish|powershell")
 	default:
+		if topic, ok := helpdocs.Find(args[0]); ok {
+			fmt.Fprint(stdout, helpdocs.Terminal(topic))
+			return 0
+		}
 		fmt.Fprintf(stderr, "whodis: unknown help topic %q\n", args[0])
 		printUsage(stderr)
 		return 2
 	}
 	return 0
+}
+
+func printRegistrationUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage: whodis [registration|rdap|whois|rwhois] <target> [<target> ...] [options]
+
+Looks up domain, IP network, or ASN registration through automatically routed RDAP, WHOIS, or RWhois.
+Use --server only with an explicit protocol. --strict disables fallback; --try-both widens it.
+
+Example: whodis example.com
+         whodis AS15169 --json
+         whodis whois example.net --strict
+`)
 }

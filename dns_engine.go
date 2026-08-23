@@ -947,7 +947,7 @@ func exchangeDoH(ctx context.Context, query *mdns.Msg, endpoint string, client *
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, nil, fmt.Errorf("DoH server returned HTTP %s", response.Status)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	raw, err := readLimitedBody(response.Body, 1<<20)
 	if err != nil {
 		return nil, nil, err
 	}

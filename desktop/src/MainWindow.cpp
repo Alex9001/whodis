@@ -3,12 +3,14 @@
 #include "AdvancedDialog.h"
 #include "BatchWindow.h"
 #include "EngineClient.h"
+#include "HelpDialog.h"
 #include "ResultWidget.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -27,12 +29,14 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
+#include <QUrl>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_engine(new EngineClient(this))
     , m_advanced(new AdvancedDialog(this))
+    , m_help(new HelpDialog(this))
     , m_target(new QLineEdit(this))
     , m_lookup(new QPushButton(tr("Lookup"), this))
     , m_scan(new QPushButton(tr("Inspect"), this))
@@ -50,6 +54,15 @@ MainWindow::MainWindow(QWidget *parent)
     resize(900, 640);
     m_target->setPlaceholderText(tr("Domain, IP, ASN, or URL"));
     m_target->setClearButtonEnabled(true);
+    m_target->setAccessibleName(tr("Domain, IP, ASN, or URL"));
+    m_lookup->setAccessibleName(tr("Registration lookup"));
+    m_scan->setAccessibleName(tr("Registration and DNS inspection"));
+    m_dns->setAccessibleName(tr("DNS query"));
+    m_diagnose->setAccessibleName(tr("Domain diagnosis"));
+    m_investigate->setAccessibleName(tr("Technology investigation"));
+    m_batch->setAccessibleName(tr("Batch lookup"));
+    m_cancel->setAccessibleName(tr("Cancel current operation"));
+    m_progress->setAccessibleName(tr("Operation progress"));
     m_lookup->setDefault(true);
     m_progress->setRange(0, 0);
     m_progress->setMaximumWidth(150);
@@ -96,6 +109,19 @@ MainWindow::MainWindow(QWidget *parent)
     m_axfrAction = toolsMenu->addAction(tr("Authoritative Zone Transfer…"), this, &MainWindow::runAXFR);
     toolsMenu->addAction(tr("Advanced Lookup Options…"), this, &MainWindow::openAdvanced);
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
+    auto *helpAction = helpMenu->addAction(tr("&Whodis Help"), this, &MainWindow::openHelp);
+    helpAction->setShortcut(QKeySequence::HelpContents);
+    helpMenu->addSeparator();
+    helpMenu->addAction(tr("Whodis &Homepage"), this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://cyberbrand.net/whodis/")));
+    });
+    helpMenu->addAction(tr("&Online Documentation"), this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/Alex9001/whodis#readme")));
+    });
+    helpMenu->addAction(tr("Report an &Issue…"), this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/Alex9001/whodis/issues/new/choose")));
+    });
+    helpMenu->addSeparator();
     helpMenu->addAction(tr("About Whodis"), this, [this] {
         QMessageBox::about(this, tr("About Whodis"),
                            tr("Whodis %1\n\nA full, evidence-backed domain investigation suite for registration, DNS, infrastructure, diagnostics, technology detection, research, and change monitoring.\n\nHomepage: https://cyberbrand.net/whodis/\nSource and releases: https://github.com/Alex9001/whodis\n\nMIT © 2026 Aleksandr Oreshkin")
@@ -287,6 +313,13 @@ void MainWindow::openAdvanced()
         QSettings settings;
         settings.setValue(QStringLiteral("advanced/options"), QJsonDocument(m_advanced->persistentOptions()).toJson(QJsonDocument::Compact));
     }
+}
+
+void MainWindow::openHelp()
+{
+    m_help->show();
+    m_help->raise();
+    m_help->activateWindow();
 }
 
 void MainWindow::copyCurrent()

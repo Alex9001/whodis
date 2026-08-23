@@ -34,6 +34,42 @@ func runAuditCommand(args []string, stdout, stderr io.Writer, runtime cliRuntime
 	}
 }
 
+func printSnapshotUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage:
+  whodis snapshot list [--json]
+  whodis snapshot show <id|label|file>
+  whodis snapshot remove <id|label>... --yes
+  whodis snapshot export <id|label> -o <file>
+  whodis snapshot import <file> [--label <label>]
+  whodis snapshot path
+
+Snapshots are local, sanitized observations used by diff and check. They never run in the background.
+`)
+}
+
+func printDiffUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage:
+  whodis diff <snapshot> <snapshot>
+  whodis diff <snapshot> --live [--allow-snapshot-endpoints]
+
+Options: --include-ttl, -f plain|json|yaml|markdown,
+         --plain|--json|--yaml|--markdown, -o file, --force
+Exit status 5 means material changes; 6 means the comparison was incomplete.
+`)
+}
+
+func printCheckUsage(writer io.Writer) {
+	fmt.Fprint(writer, `Usage: whodis check <target...> [options]
+
+Options: --active|--passive, --against <snapshot>, --snapshot <reference>,
+         --scrutiny basic|standard|strict, --policy <file>, --webhook-env <name>,
+         --webhook-file <file>, -f plain|json|yaml|markdown,
+         --plain|--json|--yaml|--markdown, -o file, --force, --save
+
+Checks evaluate deterministic registration, DNS, diagnostic, change, and custom-policy rules.
+`)
+}
+
 func saveBatchSnapshot(requests []whodis.Request, batch whodis.BatchReport, label string) (string, error) {
 	store, err := audit.NewFileStore("")
 	if err != nil {
@@ -51,7 +87,7 @@ func saveBatchSnapshot(requests []whodis.Request, batch whodis.BatchReport, labe
 
 func runSnapshotCommand(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(stdout, "Usage: whodis snapshot list|show|remove|export|import|path")
+		printSnapshotUsage(stdout)
 		return 0
 	}
 	store, err := audit.NewFileStore("")
@@ -213,7 +249,7 @@ func runDiffCommand(args []string, stdout, stderr io.Writer) int {
 		case "--force":
 			options.force = true
 		case "-h", "--help":
-			fmt.Fprintln(stdout, "Usage: whodis diff <snapshot> <snapshot> | whodis diff <snapshot> --live [--allow-snapshot-endpoints] [--include-ttl] [-f plain|json|yaml|markdown | --plain|--json|--yaml|--markdown] [-o file] [--force]")
+			printDiffUsage(stdout)
 			return 0
 		default:
 			if strings.HasPrefix(args[index], "-") {
@@ -430,7 +466,7 @@ func runCheckCommand(args []string, stdout, stderr io.Writer, runtime cliRuntime
 				return 2
 			}
 		case "-h", "--help":
-			fmt.Fprintln(stdout, "Usage: whodis check <target...> [--active|--passive] [--against snapshot] [--scrutiny basic|standard|strict] [--policy file] [-f plain|json|yaml|markdown | --plain|--json|--yaml|--markdown] [-o file] [--force] [--save]")
+			printCheckUsage(stdout)
 			return 0
 		default:
 			if strings.HasPrefix(args[index], "-") {
@@ -781,6 +817,7 @@ func writeProtectedJSON(path string, value any) error {
 	if path == "" || path == "-" {
 		return fmt.Errorf("snapshot export requires a file path")
 	}
+	// #nosec G703 -- snapshot export intentionally accepts a user-selected output path.
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("could not export %s: file exists", path)
 	} else if !os.IsNotExist(err) {
@@ -801,6 +838,7 @@ func writeProtectedJSON(path string, value any) error {
 	defer func() {
 		_ = temporary.Close()
 		if !committed {
+			// #nosec G703 -- temporaryPath is captured directly from CreateTemp.
 			_ = os.Remove(temporaryPath)
 		}
 	}()

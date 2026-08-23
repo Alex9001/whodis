@@ -1,6 +1,6 @@
 {
   "version": "@VERSION@",
-  "description": "RDAP-first WHOIS, DNS, and domain diagnostics",
+  "description": "Evidence-backed domain investigation with RDAP, WHOIS, RWhois, and DNS",
   "homepage": "https://cyberbrand.net/whodis/",
   "license": "MIT",
   "architecture": {

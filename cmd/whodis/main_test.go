@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -341,6 +343,56 @@ func TestCommandHelp(t *testing.T) {
 		if got := runWithRuntime(args, &stdout, &stderr, testRuntime(t.TempDir(), nil, false)); got != 0 || stdout.Len() == 0 || stderr.Len() != 0 {
 			t.Fatalf("run(%q) = (%d, %q, %q), want command help", args, got, stdout.String(), stderr.String())
 		}
+	}
+}
+
+func TestAdvertisedCommandsAndOfflineGuidesHaveHelp(t *testing.T) {
+	topics := []string{
+		"registration", "inspect", "dns", "diagnose", "investigate", "check", "snapshot", "diff",
+		"expires", "get", "config", "completion", "protocols", "formats", "advanced",
+		"overview", "batch", "snapshots", "privacy", "troubleshooting",
+	}
+	for _, topic := range topics {
+		var stdout, stderr bytes.Buffer
+		if code := runWithRuntime([]string{"help", topic}, &stdout, &stderr, testRuntime(t.TempDir(), nil, false)); code != 0 || stdout.Len() == 0 || stderr.Len() != 0 {
+			t.Fatalf("help %s = (%d, %q, %q)", topic, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestAtomicOutputProtectsReplacesAndAbortsFiles(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "result.txt")
+	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := openOutput(path, false, &bytes.Buffer{}); err == nil {
+		t.Fatal("existing output was opened without --force")
+	}
+	written, commit, err := openOutput(path, true, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := written.Write([]byte("replacement")); err != nil || commit() != nil {
+		t.Fatalf("write/commit = %v", err)
+	}
+	if payload, err := os.ReadFile(path); err != nil || string(payload) != "replacement" {
+		t.Fatalf("replacement = %q, %v", payload, err)
+	}
+	aborted, _, err := openOutput(path, true, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := aborted.Write([]byte("partial")); err != nil {
+		t.Fatal(err)
+	}
+	abortOutput(aborted)
+	if payload, err := os.ReadFile(path); err != nil || string(payload) != "replacement" {
+		t.Fatalf("aborted output changed destination = %q, %v", payload, err)
+	}
+	matches, err := filepath.Glob(filepath.Join(directory, ".whodis-output-*.tmp"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary outputs = %#v, %v", matches, err)
 	}
 }
 

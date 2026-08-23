@@ -25,6 +25,8 @@ set(WHODIS_GUI_SOURCES
     src/BatchWindow.h
     src/EngineClient.cpp
     src/EngineClient.h
+    src/HelpDialog.cpp
+    src/HelpDialog.h
     src/MainWindow.cpp
     src/MainWindow.h
     src/ResultWidget.cpp
@@ -108,14 +110,24 @@ if(BUILD_TESTING)
         src/AdaptiveItemView.h
         src/AdvancedDialog.cpp
         src/AdvancedDialog.h
+        src/BatchWindow.cpp
+        src/BatchWindow.h
+        src/EngineClient.cpp
+        src/EngineClient.h
+        src/HelpDialog.cpp
+        src/HelpDialog.h
+        src/MainWindow.cpp
+        src/MainWindow.h
         src/ResultWidget.cpp
         src/ResultWidget.h
         resources/resources.qrc
     )
     target_include_directories(whodis-gui-tests PRIVATE src)
+    target_compile_definitions(whodis-gui-tests PRIVATE WHODIS_GUI_VERSION="${WHODIS_VERSION}")
     target_link_libraries(whodis-gui-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
     add_test(NAME whodis-gui-widgets COMMAND whodis-gui-tests)
-    set_tests_properties(whodis-gui-widgets PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    set_tests_properties(whodis-gui-widgets PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHODIS_GUI_ENGINE=${WHODIS_ENGINE_OUTPUT}")
 
     qt_add_executable(whodis-gui-appearance-tests
         tests/AppearanceTest.cpp

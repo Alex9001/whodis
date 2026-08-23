@@ -305,3 +305,79 @@ func TestPolicyRejectsInvalidRuleConfiguration(t *testing.T) {
 		t.Fatal("ValidatePolicy accepted invalid typed config")
 	}
 }
+
+func TestEveryCustomPolicyRuleEvaluatesDeterministically(t *testing.T) {
+	report := snapshotFixture(t, 300, []whodis.DNSRecord{
+		{Name: "example.test", Type: "NS", Value: "ns1.example.test"},
+		{Name: "example.test", Type: "MX", Value: "10 mail.example.test"},
+		{Name: "example.test", Type: "A", Value: "192.0.2.10"},
+	}).Batch.Reports[0]
+	report.Registration.Object.Status = []string{"client transfer prohibited"}
+	report.Registration.Object.DNSSEC = "signed"
+	report.Diagnosis = &whodis.DiagnosisReport{
+		DNS:      report.DNS,
+		TLS:      []whodis.TLSProbe{{ServerName: "example.test", NotAfter: time.Now().Add(30 * 24 * time.Hour)}},
+		Findings: []whodis.Finding{{ID: "notice", Severity: whodis.SeverityWarning, Summary: "review"}},
+	}
+	config := func(value string) json.RawMessage { return json.RawMessage(value) }
+	policy := Policy{SchemaVersion: PolicySchemaVersion, Rules: []Rule{
+		{ID: "registration-days", Type: "minimum_registration_days", Severity: whodis.SeverityWarning, Config: config(`{"days":5}`)},
+		{ID: "status-required", Type: "required_status", Severity: whodis.SeverityError, Config: config(`{"value":"client transfer prohibited"}`)},
+		{ID: "status-forbidden", Type: "forbidden_status", Severity: whodis.SeverityError, Config: config(`{"value":"server hold"}`)},
+		{ID: "record-required", Type: "required_dns_record", Severity: whodis.SeverityError, Config: config(`{"type":"A","value":"192.0.2.10"}`)},
+		{ID: "nameserver", Type: "expected_nameserver", Severity: whodis.SeverityError, Config: config(`{"value":"ns1.example.test"}`)},
+		{ID: "mail", Type: "expected_mx", Severity: whodis.SeverityWarning, Config: config(`{"value":"mail.example.test"}`)},
+		{ID: "dnssec", Type: "required_dnssec", Severity: whodis.SeverityWarning, Config: config(`{"state":"signed"}`)},
+		{ID: "tls-days", Type: "minimum_tls_days", Severity: whodis.SeverityError, Config: config(`{"days":5}`)},
+		{ID: "finding-level", Type: "maximum_finding_severity", Severity: whodis.SeverityError, Config: config(`{"severity":"warning"}`)},
+		{ID: "allowed-change", Type: "allow_diff_path", Severity: whodis.SeverityInfo, Config: config(`{"path":"/reports/0/dns/*"}`)},
+	}}
+	result, err := Evaluate(whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: []whodis.Report{report}}, nil, EvaluateOptions{Scrutiny: ScrutinyBasic, Policy: &policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]CheckStatus{}
+	for _, item := range result.Results {
+		if strings.HasPrefix(item.RuleID, "registration.") || strings.HasPrefix(item.RuleID, "dns.") || strings.HasPrefix(item.RuleID, "diagnose.") || strings.HasPrefix(item.RuleID, "tls.") {
+			continue
+		}
+		seen[item.RuleID] = item.Status
+	}
+	for _, id := range []string{"registration-days", "status-required", "status-forbidden", "record-required", "nameserver", "mail", "dnssec", "tls-days", "finding-level"} {
+		if seen[id] != CheckPass {
+			t.Fatalf("rule %s = %s; all results = %#v", id, seen[id], result.Results)
+		}
+	}
+	if _, ok := seen["allowed-change"]; ok {
+		t.Fatal("allow_diff_path produced a per-report result")
+	}
+}
+
+func TestLoadPolicyRejectsUnknownYAMLFieldsAndAcceptsValidFile(t *testing.T) {
+	directory := t.TempDir()
+	validPath := filepath.Join(directory, "valid.yaml")
+	valid := "policy_schema_version: 1\nname: production\nrules:\n  - id: expiry\n    type: minimum_registration_days\n    severity: warning\n    config:\n      days: 30\n"
+	if err := os.WriteFile(validPath, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := LoadPolicy(validPath)
+	if err != nil || len(policy.Rules) != 1 || policy.Rules[0].ID != "expiry" {
+		t.Fatalf("LoadPolicy = %#v, %v", policy, err)
+	}
+	invalidPath := filepath.Join(directory, "invalid.yaml")
+	if err := os.WriteFile(invalidPath, []byte(valid+"unexpected: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPolicy(invalidPath); err == nil {
+		t.Fatal("unknown top-level policy field was accepted")
+	}
+}
+
+func TestAllowedDiffPathUsesExactAndPrefixPatterns(t *testing.T) {
+	if !pathAllowed("/reports/0/dns/records/1", []string{"/reports/0/dns/*"}) {
+		t.Fatal("prefix pattern did not allow matching path")
+	}
+	if pathAllowed("/reports/1/dns/records/1", []string{"/reports/0/dns/*"}) {
+		t.Fatal("prefix pattern allowed unrelated path")
+	}
+}

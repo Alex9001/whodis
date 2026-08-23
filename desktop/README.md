@@ -35,6 +35,11 @@ Harmless related-result, research-link, custom-template, and endpoint
 preferences may be saved; an
 OTX API key is read only from `WHODIS_OTX_API_KEY`.
 
+Whodis Help is available from the Help menu or **F1** even if the private
+engine cannot start. It is a modeless, searchable native window backed by the
+same embedded topic catalog as `whodis help`. The menu also provides explicit
+HTTPS links to the homepage, complete online documentation, and issue tracker.
+
 Qt Widgets deliberately uses the active platform style. Windows receives
 standard Windows controls, Plasma can use its configured Qt platform theme,
 and macOS receives the native macOS Qt style. Whodis does not replace those
@@ -53,6 +58,11 @@ cmake -S desktop -B build-gui -G Ninja \
 cmake --build build-gui --parallel
 ctest --test-dir build-gui --output-on-failure
 ```
+
+CI additionally compiles and exercises the widgets under AddressSanitizer and
+UndefinedBehaviorSanitizer. The widget suite starts the real private engine for
+cancellation and child-window lifecycle coverage while keeping network access
+out of the tests.
 
 The application and private engine are written to `build-gui/bin`. Run the app
 from there so it finds the adjacent development engine:

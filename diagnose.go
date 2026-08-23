@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,57 +46,61 @@ type AddressProbe struct {
 
 // HTTPProbe captures one HTTP endpoint and its final response.
 type HTTPProbe struct {
-	URL       string        `json:"url" yaml:"url"`
-	Status    int           `json:"status,omitempty" yaml:"status,omitempty"`
-	FinalURL  string        `json:"final_url,omitempty" yaml:"final_url,omitempty"`
-	Redirects []string      `json:"redirects,omitempty" yaml:"redirects,omitempty"`
-	Duration  time.Duration `json:"duration_ns" yaml:"duration_ns"`
-	Server    string        `json:"server,omitempty" yaml:"server,omitempty"`
-	Healthy   bool          `json:"healthy" yaml:"healthy"`
-	Error     string        `json:"error,omitempty" yaml:"error,omitempty"`
+	URL           string        `json:"url" yaml:"url"`
+	Status        int           `json:"status,omitempty" yaml:"status,omitempty"`
+	FinalURL      string        `json:"final_url,omitempty" yaml:"final_url,omitempty"`
+	Redirects     []string      `json:"redirects,omitempty" yaml:"redirects,omitempty"`
+	Duration      time.Duration `json:"duration_ns" yaml:"duration_ns"`
+	Server        string        `json:"server,omitempty" yaml:"server,omitempty"`
+	Healthy       bool          `json:"healthy" yaml:"healthy"`
+	Error         string        `json:"error,omitempty" yaml:"error,omitempty"`
+	policyBlocked bool
 }
 
 // TLSProbe captures the negotiated TLS identity and protocol.
 type TLSProbe struct {
-	Address     string        `json:"address" yaml:"address"`
-	ServerName  string        `json:"server_name" yaml:"server_name"`
-	Version     string        `json:"version,omitempty" yaml:"version,omitempty"`
-	CipherSuite string        `json:"cipher_suite,omitempty" yaml:"cipher_suite,omitempty"`
-	ALPN        string        `json:"alpn,omitempty" yaml:"alpn,omitempty"`
-	Subject     string        `json:"subject,omitempty" yaml:"subject,omitempty"`
-	Issuer      string        `json:"issuer,omitempty" yaml:"issuer,omitempty"`
-	DNSNames    []string      `json:"dns_names,omitempty" yaml:"dns_names,omitempty"`
-	NotBefore   time.Time     `json:"not_before,omitempty" yaml:"not_before,omitempty"`
-	NotAfter    time.Time     `json:"not_after,omitempty" yaml:"not_after,omitempty"`
-	Duration    time.Duration `json:"duration_ns" yaml:"duration_ns"`
-	Verified    bool          `json:"verified" yaml:"verified"`
-	Error       string        `json:"error,omitempty" yaml:"error,omitempty"`
+	Address       string        `json:"address" yaml:"address"`
+	ServerName    string        `json:"server_name" yaml:"server_name"`
+	Version       string        `json:"version,omitempty" yaml:"version,omitempty"`
+	CipherSuite   string        `json:"cipher_suite,omitempty" yaml:"cipher_suite,omitempty"`
+	ALPN          string        `json:"alpn,omitempty" yaml:"alpn,omitempty"`
+	Subject       string        `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Issuer        string        `json:"issuer,omitempty" yaml:"issuer,omitempty"`
+	DNSNames      []string      `json:"dns_names,omitempty" yaml:"dns_names,omitempty"`
+	NotBefore     time.Time     `json:"not_before,omitempty" yaml:"not_before,omitempty"`
+	NotAfter      time.Time     `json:"not_after,omitempty" yaml:"not_after,omitempty"`
+	Duration      time.Duration `json:"duration_ns" yaml:"duration_ns"`
+	Verified      bool          `json:"verified" yaml:"verified"`
+	Error         string        `json:"error,omitempty" yaml:"error,omitempty"`
+	policyBlocked bool
 }
 
 // MailProbe captures one MX SMTP greeting and advertised capabilities.
 type MailProbe struct {
-	Host         string        `json:"host" yaml:"host"`
-	Preference   uint16        `json:"preference" yaml:"preference"`
-	Address      string        `json:"address,omitempty" yaml:"address,omitempty"`
-	Reachable    bool          `json:"reachable" yaml:"reachable"`
-	Greeting     string        `json:"greeting,omitempty" yaml:"greeting,omitempty"`
-	Capabilities []string      `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
-	STARTTLS     bool          `json:"starttls" yaml:"starttls"`
-	TLSVerified  bool          `json:"tls_verified,omitempty" yaml:"tls_verified,omitempty"`
-	TLSVersion   string        `json:"tls_version,omitempty" yaml:"tls_version,omitempty"`
-	Duration     time.Duration `json:"duration_ns" yaml:"duration_ns"`
-	Error        string        `json:"error,omitempty" yaml:"error,omitempty"`
+	Host          string        `json:"host" yaml:"host"`
+	Preference    uint16        `json:"preference" yaml:"preference"`
+	Address       string        `json:"address,omitempty" yaml:"address,omitempty"`
+	Reachable     bool          `json:"reachable" yaml:"reachable"`
+	Greeting      string        `json:"greeting,omitempty" yaml:"greeting,omitempty"`
+	Capabilities  []string      `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	STARTTLS      bool          `json:"starttls" yaml:"starttls"`
+	TLSVerified   bool          `json:"tls_verified,omitempty" yaml:"tls_verified,omitempty"`
+	TLSVersion    string        `json:"tls_version,omitempty" yaml:"tls_version,omitempty"`
+	Duration      time.Duration `json:"duration_ns" yaml:"duration_ns"`
+	Error         string        `json:"error,omitempty" yaml:"error,omitempty"`
+	policyBlocked bool
 }
 
 // ServiceProbe captures a DNS-advertised SRV, SVCB, or HTTPS service.
 type ServiceProbe struct {
-	Source    string        `json:"source" yaml:"source"`
-	Name      string        `json:"name" yaml:"name"`
-	Target    string        `json:"target" yaml:"target"`
-	Port      uint16        `json:"port" yaml:"port"`
-	Reachable bool          `json:"reachable" yaml:"reachable"`
-	Duration  time.Duration `json:"duration_ns" yaml:"duration_ns"`
-	Error     string        `json:"error,omitempty" yaml:"error,omitempty"`
+	Source        string        `json:"source" yaml:"source"`
+	Name          string        `json:"name" yaml:"name"`
+	Target        string        `json:"target" yaml:"target"`
+	Port          uint16        `json:"port" yaml:"port"`
+	Reachable     bool          `json:"reachable" yaml:"reachable"`
+	Duration      time.Duration `json:"duration_ns" yaml:"duration_ns"`
+	Error         string        `json:"error,omitempty" yaml:"error,omitempty"`
+	policyBlocked bool
 }
 
 // PathHop is one hop from an explicitly requested local network path trace.
@@ -123,10 +128,45 @@ type DiagnosisReport struct {
 	Warnings     []string            `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 }
 
-type nativeDiagnoseProvider struct{ dns DNSProvider }
+type nativeDiagnoseProvider struct {
+	dns           DNSProvider
+	networkPolicy NetworkPolicy
+	probeSlots    chan struct{}
+}
 
-func newNativeDiagnoseProvider(dns DNSProvider) DiagnoseProvider {
-	return &nativeDiagnoseProvider{dns: dns}
+func newNativeDiagnoseProvider(dns DNSProvider, policy NetworkPolicy, probeSlots chan struct{}) DiagnoseProvider {
+	if probeSlots == nil {
+		probeSlots = make(chan struct{}, 32)
+	}
+	return &nativeDiagnoseProvider{dns: dns, networkPolicy: policy, probeSlots: probeSlots}
+}
+
+func (provider *nativeDiagnoseProvider) acquireProbe(ctx context.Context) (func(), bool) {
+	select {
+	case provider.probeSlots <- struct{}{}:
+		return func() { <-provider.probeSlots }, true
+	case <-ctx.Done():
+		return func() {}, false
+	}
+}
+
+func diagnosticAddresses(addresses []string, policy NetworkPolicy) ([]string, []string) {
+	allowed := make([]string, 0, len(addresses))
+	var warnings []string
+	for _, value := range addresses {
+		address, err := netip.ParseAddr(strings.TrimSpace(value))
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("diagnostic address %q is invalid", value))
+			continue
+		}
+		address = address.Unmap()
+		if !policy.AllowPrivate && !publicNetworkAddress(address) {
+			warnings = append(warnings, fmt.Sprintf("diagnostic destination %s is non-public and was blocked; use --allow-private for managed internal targets", address))
+			continue
+		}
+		allowed = append(allowed, address.String())
+	}
+	return uniqueStrings(allowed), uniqueStrings(warnings)
 }
 
 func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain string, options DiagnoseOptions) (*DiagnosisReport, error) {
@@ -180,7 +220,8 @@ func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain str
 		records = inventory.Inventory.Records
 	}
 
-	addresses := representativeAddresses(records, domain, maximumAddresses)
+	addresses, addressWarnings := diagnosticAddresses(representativeAddresses(records, domain, maximumAddresses), provider.networkPolicy)
+	report.Warnings = append(report.Warnings, addressWarnings...)
 	mx := mailExchangers(records, domain, maximumMailExchangers)
 	services := advertisedServices(records)
 	collectPolicies(report.Policies, records, domain)
@@ -191,7 +232,12 @@ func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain str
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			policy, policyErr := fetchMTAStsPolicy(ctx, domain)
+			release, acquired := provider.acquireProbe(ctx)
+			if !acquired {
+				return
+			}
+			defer release()
+			policy, policyErr := fetchMTAStsPolicy(ctx, domain, provider.networkPolicy)
 			mutex.Lock()
 			if policyErr != nil {
 				report.Warnings = append(report.Warnings, policyErr.Error())
@@ -206,6 +252,11 @@ func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain str
 		group.Add(1)
 		go func() {
 			defer group.Done()
+			release, acquired := provider.acquireProbe(ctx)
+			if !acquired {
+				return
+			}
+			defer release()
 			probe := probeReachability(ctx, address)
 			mutex.Lock()
 			report.Reachability = append(report.Reachability, probe)
@@ -217,11 +268,24 @@ func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain str
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			httpProbes := []HTTPProbe{probeHTTP(ctx, "https://"+hostname+"/"), probeHTTP(ctx, "http://"+hostname+"/")}
-			tlsProbe := probeTLS(ctx, hostname, 443)
+			release, acquired := provider.acquireProbe(ctx)
+			if !acquired {
+				return
+			}
+			defer release()
+			httpProbes := []HTTPProbe{probeHTTP(ctx, "https://"+hostname+"/", provider.networkPolicy), probeHTTP(ctx, "http://"+hostname+"/", provider.networkPolicy)}
+			tlsProbe := probeTLS(ctx, hostname, 443, provider.networkPolicy)
 			mutex.Lock()
 			report.HTTP = append(report.HTTP, httpProbes...)
 			report.TLS = append(report.TLS, tlsProbe)
+			for _, probe := range httpProbes {
+				if probe.policyBlocked {
+					report.Warnings = append(report.Warnings, probe.Error)
+				}
+			}
+			if tlsProbe.policyBlocked {
+				report.Warnings = append(report.Warnings, tlsProbe.Error)
+			}
 			mutex.Unlock()
 		}()
 	}
@@ -230,9 +294,17 @@ func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain str
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			probe := probeSMTP(ctx, exchanger.host, exchanger.preference)
+			release, acquired := provider.acquireProbe(ctx)
+			if !acquired {
+				return
+			}
+			defer release()
+			probe := probeSMTP(ctx, exchanger.host, exchanger.preference, provider.networkPolicy)
 			mutex.Lock()
 			report.Mail = append(report.Mail, probe)
+			if probe.policyBlocked {
+				report.Warnings = append(report.Warnings, probe.Error)
+			}
 			mutex.Unlock()
 		}()
 	}
@@ -241,21 +313,33 @@ func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain str
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			probe := probeService(ctx, advertised)
+			release, acquired := provider.acquireProbe(ctx)
+			if !acquired {
+				return
+			}
+			defer release()
+			probe := probeService(ctx, advertised, provider.networkPolicy)
 			mutex.Lock()
 			report.Services = append(report.Services, probe)
+			if probe.policyBlocked {
+				report.Warnings = append(report.Warnings, probe.Error)
+			}
 			mutex.Unlock()
 		}()
 	}
 	group.Wait()
 
 	if options.Trace && len(addresses) > 0 {
-		path, pathErr := traceNetworkPath(ctx, addresses[0], 20)
-		report.Path = path
-		if pathErr != nil {
-			report.Warnings = append(report.Warnings, pathErr.Error())
+		if release, acquired := provider.acquireProbe(ctx); acquired {
+			path, pathErr := traceNetworkPath(ctx, addresses[0], 20)
+			release()
+			report.Path = path
+			if pathErr != nil {
+				report.Warnings = append(report.Warnings, pathErr.Error())
+			}
 		}
 	}
+	report.Warnings = uniqueStrings(report.Warnings)
 	sortDiagnosis(report)
 	report.Findings = buildFindings(report, inventoryErr, delegationErr)
 	if len(records) == 0 && ctx.Err() != nil {
@@ -264,14 +348,14 @@ func (provider *nativeDiagnoseProvider) Diagnose(ctx context.Context, domain str
 	return report, nil
 }
 
-func fetchMTAStsPolicy(ctx context.Context, domain string) (string, error) {
+func fetchMTAStsPolicy(ctx context.Context, domain string, networkPolicy NetworkPolicy) (string, error) {
 	endpoint := "https://mta-sts." + normalizeDNSName(domain) + "/.well-known/mta-sts.txt"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err
 	}
 	request.Header.Set("User-Agent", productUserAgent())
-	response, err := (&http.Client{Timeout: 6 * time.Second}).Do(request)
+	response, err := newDiagnosticHTTPClient(networkPolicy, 6*time.Second, 5, nil).Do(request)
 	if err != nil {
 		return "", fmt.Errorf("MTA-STS policy fetch failed: %w", err)
 	}
@@ -279,7 +363,7 @@ func fetchMTAStsPolicy(ctx context.Context, domain string) (string, error) {
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("MTA-STS policy returned HTTP %s", response.Status)
 	}
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	payload, err := readLimitedBody(response.Body, 64<<10)
 	if err != nil {
 		return "", err
 	}
@@ -374,16 +458,11 @@ func probeTCP(ctx context.Context, address string, port uint16) AddressProbe {
 	return probe
 }
 
-func probeHTTP(ctx context.Context, endpoint string) HTTPProbe {
+func probeHTTP(ctx context.Context, endpoint string, networkPolicy NetworkPolicy) HTTPProbe {
 	probe := HTTPProbe{URL: endpoint}
-	client := &http.Client{Timeout: 6 * time.Second}
-	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-		probe.Redirects = append(probe.Redirects, request.URL.String())
-		if len(via) >= 8 {
-			return fmt.Errorf("too many redirects")
-		}
-		return nil
-	}
+	client := newDiagnosticHTTPClient(networkPolicy, 6*time.Second, 8, func(value string) {
+		probe.Redirects = append(probe.Redirects, value)
+	})
 	started := time.Now()
 	request := func(method string) (*http.Response, error) {
 		value, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
@@ -400,7 +479,7 @@ func probeHTTP(ctx context.Context, endpoint string) HTTPProbe {
 	}
 	probe.Duration = time.Since(started)
 	if err != nil {
-		probe.Error = err.Error()
+		probe.Error, probe.policyBlocked = diagnosticProbeError("HTTP probe", err)
 		return probe
 	}
 	defer response.Body.Close()
@@ -410,18 +489,30 @@ func probeHTTP(ctx context.Context, endpoint string) HTTPProbe {
 	return probe
 }
 
-func probeTLS(ctx context.Context, hostname string, port uint16) TLSProbe {
+func probeTLS(ctx context.Context, hostname string, port uint16, networkPolicy NetworkPolicy) TLSProbe {
 	probe := TLSProbe{Address: net.JoinHostPort(hostname, strconv.Itoa(int(port))), ServerName: hostname}
 	started := time.Now()
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 4 * time.Second}, Config: &tls.Config{ServerName: hostname, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}}}
-	connection, err := dialer.DialContext(ctx, "tcp", probe.Address)
+	rawConnection, err := dialDiagnosticContext(ctx, "tcp", probe.Address, 4*time.Second, networkPolicy)
+	if err != nil {
+		probe.Duration = time.Since(started)
+		probe.Error, probe.policyBlocked = diagnosticProbeError("TLS probe", err)
+		return probe
+	}
+	connection := tls.Client(rawConnection, &tls.Config{ServerName: hostname, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}})
+	handshakeDeadline := time.Now().Add(4 * time.Second)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(handshakeDeadline) {
+		handshakeDeadline = deadline
+	}
+	_ = connection.SetDeadline(handshakeDeadline)
+	err = connection.HandshakeContext(ctx)
 	probe.Duration = time.Since(started)
 	if err != nil {
+		_ = rawConnection.Close()
 		probe.Error = err.Error()
 		return probe
 	}
 	defer connection.Close()
-	state := connection.(*tls.Conn).ConnectionState()
+	state := connection.ConnectionState()
 	probe.Verified = len(state.VerifiedChains) > 0
 	probe.Version = tls.VersionName(state.Version)
 	probe.CipherSuite = tls.CipherSuiteName(state.CipherSuite)
@@ -435,14 +526,13 @@ func probeTLS(ctx context.Context, hostname string, port uint16) TLSProbe {
 	return probe
 }
 
-func probeSMTP(ctx context.Context, hostname string, preference uint16) MailProbe {
+func probeSMTP(ctx context.Context, hostname string, preference uint16, networkPolicy NetworkPolicy) MailProbe {
 	probe := MailProbe{Host: hostname, Preference: preference}
 	started := time.Now()
-	dialer := &net.Dialer{Timeout: 4 * time.Second}
-	connection, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(hostname, "25"))
+	connection, err := dialDiagnosticContext(ctx, "tcp", net.JoinHostPort(hostname, "25"), 4*time.Second, networkPolicy)
 	probe.Duration = time.Since(started)
 	if err != nil {
-		probe.Error = err.Error()
+		probe.Error, probe.policyBlocked = diagnosticProbeError("SMTP probe", err)
 		return probe
 	}
 	defer connection.Close()
@@ -581,12 +671,12 @@ func advertisedServices(records []DNSRecord) []ServiceProbe {
 	return services
 }
 
-func probeService(ctx context.Context, service ServiceProbe) ServiceProbe {
+func probeService(ctx context.Context, service ServiceProbe, networkPolicy NetworkPolicy) ServiceProbe {
 	started := time.Now()
-	connection, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(service.Target, strconv.Itoa(int(service.Port))))
+	connection, err := dialDiagnosticContext(ctx, "tcp", net.JoinHostPort(service.Target, strconv.Itoa(int(service.Port))), 3*time.Second, networkPolicy)
 	service.Duration = time.Since(started)
 	if err != nil {
-		service.Error = err.Error()
+		service.Error, service.policyBlocked = diagnosticProbeError("service probe", err)
 		return service
 	}
 	service.Reachable = true
@@ -643,8 +733,12 @@ func buildFindings(report *DiagnosisReport, dnsErr, delegationErr error) []Findi
 	findings = append(findings, httpFinding(report.HTTP))
 	findings = append(findings, tlsFinding(report.TLS))
 	if len(report.Mail) > 0 {
-		reachable, startTLS, verifiedTLS := 0, 0, 0
+		reachable, startTLS, verifiedTLS, eligible := 0, 0, 0, 0
 		for _, mail := range report.Mail {
+			if mail.policyBlocked {
+				continue
+			}
+			eligible++
 			if mail.Reachable {
 				reachable++
 			}
@@ -656,12 +750,18 @@ func buildFindings(report *DiagnosisReport, dnsErr, delegationErr error) []Findi
 			}
 		}
 		severity := SeverityPass
-		if reachable == 0 {
+		if eligible == 0 {
+			severity = SeverityWarning
+		} else if reachable == 0 {
 			severity = SeverityError
 		} else if startTLS == 0 || verifiedTLS == 0 {
 			severity = SeverityWarning
 		}
-		findings = append(findings, Finding{ID: "mail.smtp", Severity: severity, Title: "Mail delivery", Summary: fmt.Sprintf("%d of %d sampled MX hosts accepted SMTP; %d advertised STARTTLS and %d completed verified TLS.", reachable, len(report.Mail), startTLS, verifiedTLS)})
+		summary := fmt.Sprintf("%d of %d eligible sampled MX hosts accepted SMTP; %d advertised STARTTLS and %d completed verified TLS.", reachable, eligible, startTLS, verifiedTLS)
+		if eligible == 0 {
+			summary = "No public MX hosts were eligible for an SMTP probe under the current network policy."
+		}
+		findings = append(findings, Finding{ID: "mail.smtp", Severity: severity, Title: "Mail delivery", Summary: summary})
 	}
 	for _, policy := range []string{"spf", "dmarc", "mta_sts", "tls_rpt"} {
 		severity, summary := SeverityPass, "Published."
@@ -681,17 +781,23 @@ func reachabilityFinding(probes []AddressProbe) Finding {
 		}
 	}
 	severity := SeverityPass
+	summary := fmt.Sprintf("%d of %d representative addresses answered a bounded reachability probe.", reachable, len(probes))
 	if len(probes) == 0 {
 		severity = SeverityWarning
+		summary = "No public representative addresses were eligible for a reachability probe under the current network policy."
 	} else if reachable == 0 {
 		severity = SeverityError
 	}
-	return Finding{ID: "network.reachability", Severity: severity, Title: "Address reachability", Summary: fmt.Sprintf("%d of %d representative addresses answered a bounded reachability probe.", reachable, len(probes))}
+	return Finding{ID: "network.reachability", Severity: severity, Title: "Address reachability", Summary: summary}
 }
 
 func httpFinding(probes []HTTPProbe) Finding {
-	responded, healthy, serverFailures := 0, 0, 0
+	responded, healthy, serverFailures, eligible := 0, 0, 0, 0
 	for _, probe := range probes {
+		if probe.policyBlocked {
+			continue
+		}
+		eligible++
 		if probe.Status > 0 {
 			responded++
 		}
@@ -703,26 +809,42 @@ func httpFinding(probes []HTTPProbe) Finding {
 		}
 	}
 	severity := SeverityPass
-	if responded == 0 || (healthy == 0 && serverFailures > 0) {
+	if eligible == 0 {
+		severity = SeverityWarning
+	} else if responded == 0 || (healthy == 0 && serverFailures > 0) {
 		severity = SeverityError
-	} else if healthy < len(probes) {
+	} else if healthy < eligible {
 		severity = SeverityWarning
 	}
-	return Finding{ID: "web.http", Severity: severity, Title: "Web endpoints", Summary: fmt.Sprintf("%d of %d HTTP or HTTPS endpoints returned a healthy 2xx/3xx response; %d responded at all.", healthy, len(probes), responded)}
+	summary := fmt.Sprintf("%d of %d eligible HTTP or HTTPS endpoints returned a healthy 2xx/3xx response; %d responded at all.", healthy, eligible, responded)
+	if eligible == 0 {
+		summary = "No public HTTP endpoints were eligible under the current network policy."
+	}
+	return Finding{ID: "web.http", Severity: severity, Title: "Web endpoints", Summary: summary}
 }
 
 func tlsFinding(probes []TLSProbe) Finding {
-	verified := 0
+	verified, eligible := 0, 0
 	for _, probe := range probes {
+		if probe.policyBlocked {
+			continue
+		}
+		eligible++
 		if probe.Verified {
 			verified++
 		}
 	}
 	severity := SeverityPass
-	if verified == 0 {
+	if eligible == 0 {
+		severity = SeverityWarning
+	} else if verified == 0 {
 		severity = SeverityError
-	} else if verified < len(probes) {
+	} else if verified < eligible {
 		severity = SeverityWarning
 	}
-	return Finding{ID: "web.tls", Severity: severity, Title: "TLS identity", Summary: fmt.Sprintf("%d of %d HTTPS certificates verified for the requested name.", verified, len(probes))}
+	summary := fmt.Sprintf("%d of %d eligible HTTPS certificates verified for the requested name.", verified, eligible)
+	if eligible == 0 {
+		summary = "No public TLS endpoints were eligible under the current network policy."
+	}
+	return Finding{ID: "web.tls", Severity: severity, Title: "TLS identity", Summary: summary}
 }

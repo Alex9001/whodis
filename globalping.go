@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,7 +72,7 @@ func queryGlobalping(ctx context.Context, name string, types []uint16, options D
 			failures = append(failures, err.Error())
 			continue
 		}
-		responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+		responseBody, readErr := readLimitedBody(response.Body, 2<<20)
 		_ = response.Body.Close()
 		if readErr != nil {
 			failures = append(failures, readErr.Error())
@@ -117,7 +116,7 @@ func pollGlobalping(ctx context.Context, client *http.Client, endpoint, id, toke
 		if err != nil {
 			return nil, err
 		}
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+		body, readErr := readLimitedBody(response.Body, 8<<20)
 		_ = response.Body.Close()
 		if readErr != nil {
 			return nil, readErr

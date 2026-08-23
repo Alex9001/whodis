@@ -33,7 +33,7 @@ stdenv.mkDerivation {
     runHook postInstall
   '';
   meta = {
-    description = "RDAP-first WHOIS, DNS, and domain diagnostics";
+    description = "Evidence-backed domain investigation with RDAP, WHOIS, RWhois, and DNS";
     homepage = "https://cyberbrand.net/whodis/";
     license = lib.licenses.mit;
     mainProgram = "whodis";

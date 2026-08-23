@@ -29,6 +29,18 @@ func (fakeEngine) RunBatch(_ context.Context, request whodis.BatchRequest) (whod
 	return whodis.BatchReport{SchemaVersion: whodis.ReportSchemaVersion, Reports: reports}, nil
 }
 
+type cancelAwareEngine struct {
+	started  chan struct{}
+	canceled chan struct{}
+}
+
+func (engine cancelAwareEngine) RunBatch(ctx context.Context, _ whodis.BatchRequest) (whodis.BatchReport, error) {
+	close(engine.started)
+	<-ctx.Done()
+	close(engine.canceled)
+	return whodis.BatchReport{}, ctx.Err()
+}
+
 func TestServerHelloParseAndRun(t *testing.T) {
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":"hello-1","method":"hello"}`,
@@ -243,5 +255,26 @@ func TestStoredResultsExpireAndStayWithinCountLimit(t *testing.T) {
 	server.results[oldest] = value
 	if _, ok := server.loadResult(oldest); ok {
 		t.Fatal("expired stored result remained available")
+	}
+}
+
+func TestServerInputClosureCancelsActiveRuns(t *testing.T) {
+	engine := cancelAwareEngine{started: make(chan struct{}), canceled: make(chan struct{})}
+	input := strings.NewReader(`{"jsonrpc":"2.0","id":"run-1","method":"run","params":{"targets":["example.test"],"operation":"registration"}}` + "\n")
+	server := NewServerWithEngine("test", engine, input, &bytes.Buffer{}, &bytes.Buffer{})
+	done := make(chan error, 1)
+	go func() { done <- server.Serve() }()
+	select {
+	case <-engine.started:
+	case <-time.After(time.Second):
+		t.Fatal("run did not start")
+	}
+	select {
+	case <-engine.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("input closure did not cancel active run")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

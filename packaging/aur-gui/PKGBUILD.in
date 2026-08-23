@@ -3,7 +3,7 @@
 pkgname=whodis-gui
 pkgver=@PKGVER@
 pkgrel=1
-pkgdesc='Native Qt interface for the Whodis RDAP, WHOIS, RWhois, and DNS client'
+pkgdesc='Native interface for evidence-backed domain investigation with Whodis'
 arch=('x86_64' 'aarch64')
 url='https://github.com/Alex9001/whodis'
 license=('MIT')

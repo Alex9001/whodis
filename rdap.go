@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -129,7 +128,7 @@ func (a rdapAdapter) fetchOnce(ctx context.Context, endpoint string, automatic b
 		return rdapRecord{}, Source{}, lookupError(ErrorUnavailable, "RDAP service is unavailable", err)
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	raw, err := readLimitedBody(response.Body, 8<<20)
 	if err != nil {
 		return rdapRecord{}, Source{}, lookupError(ErrorUnavailable, "could not read RDAP response", err)
 	}

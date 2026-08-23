@@ -301,3 +301,45 @@ func TestEngineBatchAttributesInvalidDefaultRegistrationInput(t *testing.T) {
 		t.Fatalf("batch report = %#v", batch)
 	}
 }
+
+func TestEngineStreamPreservesInputIndexes(t *testing.T) {
+	engine := NewEngine(EngineOptions{Registration: engineRegistrationFixture{}, DNS: engineDNSFixture{}, Diagnose: engineDiagnoseFixture{}})
+	requests := make(chan Request, 3)
+	for _, target := range []string{"one.example", "two.example", "three.example"} {
+		requests <- Request{Operation: OperationRegistration, Target: target}
+	}
+	close(requests)
+	seen := map[int]string{}
+	err := engine.RunStream(context.Background(), requests, StreamOptions{Workers: 2}, func(item StreamItem) error {
+		seen[item.Index] = item.Report.Subject.Canonical
+		return nil
+	})
+	if err != nil || seen[0] != "one.example" || seen[1] != "two.example" || seen[2] != "three.example" {
+		t.Fatalf("stream = %#v, %v", seen, err)
+	}
+}
+
+func TestEngineStreamStopsWhenEmitterFails(t *testing.T) {
+	engine := NewEngine(EngineOptions{Registration: engineRegistrationFixture{}, DNS: engineDNSFixture{}, Diagnose: engineDiagnoseFixture{}})
+	requests := make(chan Request, 8)
+	for index := 0; index < cap(requests); index++ {
+		requests <- Request{Operation: OperationRegistration, Target: "example.test"}
+	}
+	close(requests)
+	wanted := errors.New("writer failed")
+	if err := engine.RunStream(context.Background(), requests, StreamOptions{Workers: 4}, func(StreamItem) error { return wanted }); !errors.Is(err, wanted) {
+		t.Fatalf("RunStream error = %v", err)
+	}
+}
+
+func TestEngineStreamReturnsParentCancellation(t *testing.T) {
+	engine := NewEngine(EngineOptions{Registration: blockingRegistrationFixture{}, DNS: engineDNSFixture{}, Diagnose: engineDiagnoseFixture{}})
+	requests := make(chan Request, 1)
+	requests <- Request{Operation: OperationRegistration, Target: "example.test", Timeout: time.Second}
+	close(requests)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := engine.RunStream(ctx, requests, StreamOptions{Workers: 1}, func(StreamItem) error { return nil }); err == nil {
+		t.Fatal("canceled stream returned nil")
+	}
+}

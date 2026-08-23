@@ -3,7 +3,7 @@
 pkgname=whodis
 pkgver=@PKGVER@
 pkgrel=1
-pkgdesc='Domain workstation with RDAP, WHOIS, RWhois, DNS, and diagnostics'
+pkgdesc='Evidence-backed domain investigation with RDAP, WHOIS, RWhois, and DNS'
 arch=('x86_64' 'aarch64')
 url='https://github.com/Alex9001/whodis'
 license=('MIT')

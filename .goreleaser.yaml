@@ -60,7 +60,7 @@ nfpms:
     vendor: Cyberbrand
     homepage: https://cyberbrand.net/whodis/
     maintainer: Aleksandr Oreshkin
-    description: Modern WHOIS alternative with RDAP, WHOIS, RWhois, DNS, and diagnostics.
+    description: Evidence-backed domain investigation with RDAP, WHOIS, RWhois, and DNS.
     license: MIT
     bindir: /usr/bin
     section: utils

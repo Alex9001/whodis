@@ -6,6 +6,7 @@
 class QAction;
 class AdvancedDialog;
 class EngineClient;
+class HelpDialog;
 class QLineEdit;
 class QProgressBar;
 class QPushButton;
@@ -36,6 +37,7 @@ private slots:
     void cancelLookup();
     void openBatch();
     void openAdvanced();
+    void openHelp();
     void copyCurrent();
     void saveCurrent();
     void handleResponse(const QString &id, const QString &method, const QJsonValue &result);
@@ -49,6 +51,7 @@ private:
 
     EngineClient *m_engine;
     AdvancedDialog *m_advanced;
+    HelpDialog *m_help;
     QLineEdit *m_target;
     QPushButton *m_lookup;
     QPushButton *m_scan;
