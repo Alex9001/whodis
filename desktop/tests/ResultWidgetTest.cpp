@@ -5,9 +5,17 @@
 #include "MainWindow.h"
 #include "ResultWidget.h"
 
+#include <QAction>
+#include <QAbstractItemView>
+#include <QApplication>
+#include <QClipboard>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QItemSelection>
+#include <QItemSelectionModel>
+#include <QKeySequence>
 #include <QLabel>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QHeaderView>
 #include <QPushButton>
@@ -17,6 +25,7 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTextBrowser>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QtTest>
 
@@ -26,6 +35,7 @@ class ResultWidgetTest final : public QObject
 
 private slots:
     void displaysTargetAndDNS();
+    void exposesNativeCopyActions();
     void displaysSchemaV5WorkbenchTabs();
     void displaysInvestigationStackAndRelatedTabs();
     void serializesResearchLinkSelection();
@@ -36,6 +46,60 @@ private slots:
     void closingBatchLeavesMainWindowAlive();
     void stripsAppImagePathsFromExternalLinkEnvironment();
 };
+
+void ResultWidgetTest::exposesNativeCopyActions()
+{
+    MainWindow window;
+    window.show();
+    QAction *copySelection = window.findChild<QAction *>(QStringLiteral("copySelectionAction"));
+    QAction *copyFullResult = window.findChild<QAction *>(QStringLiteral("copyFullResultAction"));
+    QVERIFY(copySelection);
+    QVERIFY(copyFullResult);
+    QCOMPARE(copySelection->text(), QStringLiteral("&Copy Selection"));
+    QCOMPARE(copySelection->shortcut(), QKeySequence(QKeySequence::Copy));
+    QCOMPARE(copyFullResult->text(), QStringLiteral("Copy &Full Result"));
+    QVERIFY(copyFullResult->shortcut().isEmpty());
+
+    ResultWidget *result = window.findChild<ResultWidget *>();
+    QVERIFY(result);
+    const QJsonObject record{{QStringLiteral("type"), QStringLiteral("A")},
+                             {QStringLiteral("name"), QStringLiteral("example.com")},
+                             {QStringLiteral("ttl"), 300},
+                             {QStringLiteral("value"), QStringLiteral("192.0.2.1")}};
+    result->setItem({{QStringLiteral("input"), QStringLiteral("example.com")},
+                     {QStringLiteral("result"), QJsonObject{
+                          {QStringLiteral("query"), QJsonObject{{QStringLiteral("canonical"), QStringLiteral("example.com")}}},
+                          {QStringLiteral("dns"), QJsonObject{{QStringLiteral("records"), QJsonArray{record}}}},
+                      }}});
+    result->showDNSTab();
+    QTableWidget *dns = result->findChild<QTableWidget *>(QStringLiteral("dnsTable"));
+    QVERIFY(dns);
+    dns->selectionModel()->select(dns->model()->index(0, 3), QItemSelectionModel::ClearAndSelect);
+    dns->setFocus();
+    QCoreApplication::processEvents();
+    QVERIFY(copySelection->isEnabled());
+    QVERIFY(copyFullResult->isEnabled());
+    copySelection->trigger();
+    QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("192.0.2.1"));
+
+    bool contextCopyFound = false;
+    QTimer::singleShot(0, this, [&contextCopyFound] {
+        if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+            for (QAction *action : menu->actions()) {
+                if (action->text() == QStringLiteral("Copy")) {
+                    contextCopyFound = true;
+                    QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier,
+                                      menu->actionGeometry(action).center());
+                    break;
+                }
+            }
+        }
+    });
+    QApplication::clipboard()->clear();
+    emit dns->customContextMenuRequested(dns->visualRect(dns->model()->index(0, 3)).center());
+    QVERIFY(contextCopyFound);
+    QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("192.0.2.1"));
+}
 
 void ResultWidgetTest::stripsAppImagePathsFromExternalLinkEnvironment()
 {
@@ -139,7 +203,18 @@ void ResultWidgetTest::displaysTargetAndDNS()
     const QTabWidget *tabs = widget.findChild<QTabWidget *>();
     QVERIFY(tabs);
     QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("DNS"));
-    QVERIFY(widget.copyText().contains(QStringLiteral("example.com")));
+    QVERIFY(widget.fullResultText().contains(QStringLiteral("example.com")));
+
+    QTableWidget *dns = widget.findChild<QTableWidget *>(QStringLiteral("dnsTable"));
+    QVERIFY(dns);
+    QCOMPARE(dns->selectionBehavior(), QAbstractItemView::SelectItems);
+    QCOMPARE(dns->selectionMode(), QAbstractItemView::ExtendedSelection);
+    QCOMPARE(dns->contextMenuPolicy(), Qt::CustomContextMenu);
+    dns->selectionModel()->select(
+        QItemSelection(dns->model()->index(0, 0), dns->model()->index(0, 3)),
+        QItemSelectionModel::ClearAndSelect);
+    QCOMPARE(widget.selectionText(), QStringLiteral("A\texample.com\t300\t192.0.2.1"));
+    QVERIFY(widget.hasSelection());
 
     const QPlainTextEdit *raw = widget.findChild<QPlainTextEdit *>();
     QVERIFY(raw);
@@ -194,6 +269,7 @@ void ResultWidgetTest::displaysSchemaV5WorkbenchTabs()
 void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
 {
     ResultWidget widget;
+    widget.show();
     widget.setInvestigationLinkProviders(QJsonArray{
         QJsonObject{{QStringLiteral("label"), QStringLiteral("BuiltWith")},
                     {QStringLiteral("purpose"), QStringLiteral("Technology profile")}},
@@ -280,6 +356,9 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     QTreeWidget *stack = widget.findChild<QTreeWidget *>(QStringLiteral("stackTree"));
     QVERIFY(stack);
     QCOMPARE(stack->columnCount(), 4);
+    QCOMPARE(stack->selectionBehavior(), QAbstractItemView::SelectItems);
+    QCOMPARE(stack->selectionMode(), QAbstractItemView::ExtendedSelection);
+    QCOMPARE(stack->contextMenuPolicy(), Qt::CustomContextMenu);
     QVERIFY(stack->topLevelItemCount() >= 1);
     QTreeWidgetItem *technology = nullptr;
     for (int group = 0; group < stack->topLevelItemCount(); ++group) {
@@ -295,11 +374,18 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     QCoreApplication::processEvents();
     const QTableWidget *evidenceTable = widget.findChild<QTableWidget *>(QStringLiteral("stackEvidenceTable"));
     QVERIFY(evidenceTable);
+    QCOMPARE(evidenceTable->selectionBehavior(), QAbstractItemView::SelectItems);
+    QCOMPARE(evidenceTable->selectionMode(), QAbstractItemView::ExtendedSelection);
+    QCOMPARE(evidenceTable->contextMenuPolicy(), Qt::CustomContextMenu);
     QCOMPARE(evidenceTable->rowCount(), 1);
     QCOMPARE(evidenceTable->item(0, 3)->text(), QStringLiteral("WordPress asset paths"));
     const QLabel *detailTitle = widget.findChild<QLabel *>(QStringLiteral("stackDetailTitle"));
     const QLabel *detailSummary = widget.findChild<QLabel *>(QStringLiteral("stackDetailSummary"));
     QVERIFY(detailTitle && detailSummary);
+    QVERIFY(detailTitle->textInteractionFlags().testFlag(Qt::TextSelectableByKeyboard));
+    QVERIFY(detailSummary->textInteractionFlags().testFlag(Qt::TextSelectableByKeyboard));
+    QCOMPARE(detailTitle->contextMenuPolicy(), Qt::CustomContextMenu);
+    QCOMPARE(detailSummary->contextMenuPolicy(), Qt::CustomContextMenu);
     QCOMPARE(detailTitle->text(), QStringLiteral("WordPress 6.8"));
     QVERIFY(detailSummary->text().contains(QStringLiteral("Basis: asset_path, meta")));
     QVERIFY(detailSummary->text().contains(QStringLiteral("Showing 1 of 3 evidence signals")));
@@ -308,6 +394,9 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
 
     QTreeWidget *research = widget.findChild<QTreeWidget *>(QStringLiteral("researchTree"));
     QVERIFY(research);
+    QCOMPARE(research->selectionBehavior(), QAbstractItemView::SelectItems);
+    QCOMPARE(research->selectionMode(), QAbstractItemView::ExtendedSelection);
+    QCOMPARE(research->contextMenuPolicy(), Qt::CustomContextMenu);
     QCOMPARE(research->topLevelItemCount(), 2);
     QCOMPARE(research->topLevelItem(0)->text(0), QStringLiteral("Domain — example.com"));
     QCOMPARE(research->topLevelItem(0)->child(0)->text(0), QStringLiteral("BuiltWith"));
@@ -332,8 +421,10 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
     QVERIFY(findings);
     QCOMPARE(findings->rowCount(), 1);
     QCOMPARE(findings->item(0, 1)->text(), QStringLiteral("Homepage response"));
-    const QTabWidget *tabs = widget.findChild<QTabWidget *>();
+    QTabWidget *tabs = widget.findChild<QTabWidget *>();
     QVERIFY(tabs);
+    int stackTab = -1;
+    int researchTab = -1;
     for (const QString &name : {QStringLiteral("Stack"), QStringLiteral("Research"), QStringLiteral("Related")}) {
         int index = -1;
         for (int candidate = 0; candidate < tabs->count(); ++candidate) {
@@ -342,8 +433,53 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
         }
         QVERIFY(index >= 0);
         QVERIFY(tabs->isTabVisible(index));
+        if (name == QStringLiteral("Stack"))
+            stackTab = index;
+        else if (name == QStringLiteral("Research"))
+            researchTab = index;
     }
     QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("Overview"));
+
+    tabs->setCurrentIndex(stackTab);
+    stack->selectionModel()->select(
+        QItemSelection(stack->indexFromItem(technology, 1), stack->indexFromItem(technology, 2)),
+        QItemSelectionModel::ClearAndSelect);
+    QCOMPARE(widget.selectionText(), QStringLiteral("WordPress 6.8\tCMS"));
+    QVERIFY(widget.hasSelection());
+
+    tabs->setCurrentIndex(researchTab);
+    QTreeWidgetItem *builtWith = research->topLevelItem(0)->child(0);
+    research->selectionModel()->select(
+        QItemSelection(research->indexFromItem(builtWith, 0), research->indexFromItem(builtWith, 1)),
+        QItemSelectionModel::ClearAndSelect);
+    QCOMPARE(widget.selectionText(), QStringLiteral("BuiltWith\tTechnology profile"));
+
+    bool openLinkFound = false;
+    bool copyLinkFound = false;
+    QTimer::singleShot(0, this, [&openLinkFound, &copyLinkFound] {
+        if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+            QAction *copyLink = nullptr;
+            for (QAction *action : menu->actions()) {
+                if (action->text() == QStringLiteral("Open in Browser"))
+                    openLinkFound = true;
+                if (action->text() == QStringLiteral("Copy Link")) {
+                    copyLinkFound = true;
+                    copyLink = action;
+                }
+            }
+            if (copyLink)
+                QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier,
+                                  menu->actionGeometry(copyLink).center());
+            else
+                menu->close();
+        }
+    });
+    QApplication::clipboard()->clear();
+    emit research->customContextMenuRequested(
+        research->visualRect(research->indexFromItem(builtWith, 0)).center());
+    QVERIFY(openLinkFound);
+    QVERIFY(copyLinkFound);
+    QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("https://builtwith.com/example.com"));
 }
 
 void ResultWidgetTest::wrapsAndRemembersAdjustableColumns()

@@ -6,8 +6,10 @@
 #include <QWidget>
 
 class QComboBox;
+class QAbstractItemView;
 class QHBoxLayout;
 class QLabel;
+class QPoint;
 class QPlainTextEdit;
 class QPushButton;
 class QSplitter;
@@ -28,7 +30,9 @@ public:
     void setReportItem(const QJsonObject &item);
     void setInvestigationLinkProviders(const QJsonArray &providers);
     void showDNSTab();
-    QString copyText() const;
+    QString fullResultText() const;
+    QString selectionText() const;
+    bool hasSelection() const;
     QString currentTarget() const;
     QString currentRawSource() const;
     bool hasRawSource() const;
@@ -37,6 +41,7 @@ public:
 
 signals:
     void investigateRequested(const QString &target);
+    void selectionAvailabilityChanged();
 
 private:
     void populateOverview(const QJsonObject &result);
@@ -54,6 +59,9 @@ private:
     void populateRaw(const QJsonArray &sources);
     void clearStackDetails();
     void showStackDetails(QTreeWidgetItem *item);
+    QAbstractItemView *currentSelectionView() const;
+    void showItemContextMenu(QAbstractItemView *view, const QPoint &position);
+    void showLabelContextMenu(QLabel *label, const QPoint &position);
     void updateResearchActions();
     void openSelectedResearchLink();
     void refreshViews();
@@ -84,4 +92,5 @@ private:
     QLabel *m_emptyLabel;
     QJsonObject m_item;
     QHash<QString, QString> m_researchPurposes;
+    QAbstractItemView *m_lastSelectionView;
 };

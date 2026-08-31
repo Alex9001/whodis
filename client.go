@@ -82,17 +82,11 @@ func ParseTarget(input string) (Target, error) {
 		return Target{}, lookupError(ErrorInvalidInput, "a domain, IP address, CIDR, or ASN is required", nil)
 	}
 
-	upper := strings.ToUpper(original)
-	if strings.HasPrefix(upper, "AS") {
-		rawASN := upper[2:]
-		if rawASN == "" {
-			return Target{}, lookupError(ErrorInvalidInput, "ASN must contain a number", nil)
-		}
-		n, err := strconv.ParseUint(rawASN, 10, 32)
+	if canonical, recognized, err := parsePrefixedASN(original); recognized {
 		if err != nil {
-			return Target{}, lookupError(ErrorInvalidInput, "invalid ASN", nil)
+			return Target{}, err
 		}
-		return Target{Original: original, Canonical: fmt.Sprintf("%d", n), Kind: KindASN}, nil
+		return Target{Original: original, Canonical: canonical, Kind: KindASN}, nil
 	}
 	if n, err := strconv.ParseUint(original, 10, 32); err == nil {
 		return Target{Original: original, Canonical: fmt.Sprintf("%d", n), Kind: KindASN}, nil

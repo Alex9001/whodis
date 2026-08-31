@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
 )
 
 func benchmarkReport() Report {
@@ -34,17 +36,56 @@ func BenchmarkNewEngine(b *testing.B) {
 	}
 }
 
-func BenchmarkHomepageAnalysisOneMiB(b *testing.B) {
+func benchmarkHomepageBody() []byte {
 	body := []byte("<html><head><meta name=\"generator\" content=\"WordPress 6.8\"></head><body>" + strings.Repeat("<img src=\"/wp-content/uploads/a.jpg\">", 26000) + "</body></html>")
 	if len(body) > maximumInvestigationBody {
 		body = body[:maximumInvestigationBody]
 	}
+	return body
+}
+
+func BenchmarkHomepageAnalysisOneMiB(b *testing.B) {
+	body := benchmarkHomepageBody()
 	observation := webInvestigationObservation{URL: "https://example.com/", Status: 200, Body: body}
 	b.ReportAllocs()
 	b.SetBytes(int64(len(body)))
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
 		analyzeHomepage(observation)
+	}
+}
+
+func BenchmarkHomepageParseOnly(b *testing.B) {
+	body := benchmarkHomepageBody()
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if _, err := html.Parse(bytes.NewReader(body)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkHomepageMinificationOnly(b *testing.B) {
+	body := benchmarkHomepageBody()
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		homepageMinification(body, false)
+	}
+}
+
+func BenchmarkHomepageLooksLikeHTMLOnly(b *testing.B) {
+	body := benchmarkHomepageBody()
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if !homepageLooksLikeHTML("text/html", body) {
+			b.Fatal("expected html")
+		}
 	}
 }
 

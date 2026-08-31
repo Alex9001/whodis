@@ -127,14 +127,34 @@ func targetValue(original string) (string, error) {
 	return host, nil
 }
 
-func parseRegistrationSubject(original, value string) (Subject, error) {
-	upper := strings.ToUpper(value)
-	if strings.HasPrefix(upper, "AS") {
-		n, err := strconv.ParseUint(upper[2:], 10, 32)
-		if err != nil {
-			return Subject{}, lookupError(ErrorInvalidInput, "invalid ASN", err)
+func parsePrefixedASN(value string) (canonical string, recognized bool, err error) {
+	if len(value) < 2 || (value[0] != 'A' && value[0] != 'a') || (value[1] != 'S' && value[1] != 's') {
+		return "", false, nil
+	}
+	digits := value[2:]
+	// A bare "as" is a valid DNS name (and a delegated TLD), not an
+	// incomplete ASN. Reserve the AS prefix only for an all-decimal token.
+	if digits == "" {
+		return "", false, nil
+	}
+	for index := 0; index < len(digits); index++ {
+		if digits[index] < '0' || digits[index] > '9' {
+			return "", false, nil
 		}
-		return Subject{Original: original, Canonical: strconv.FormatUint(n, 10), Kind: SubjectASN}, nil
+	}
+	number, parseErr := strconv.ParseUint(digits, 10, 32)
+	if parseErr != nil {
+		return "", true, lookupError(ErrorInvalidInput, "invalid ASN", parseErr)
+	}
+	return strconv.FormatUint(number, 10), true, nil
+}
+
+func parseRegistrationSubject(original, value string) (Subject, error) {
+	if canonical, recognized, err := parsePrefixedASN(value); recognized {
+		if err != nil {
+			return Subject{}, err
+		}
+		return Subject{Original: original, Canonical: canonical, Kind: SubjectASN}, nil
 	}
 	if n, err := strconv.ParseUint(value, 10, 32); err == nil {
 		return Subject{Original: original, Canonical: strconv.FormatUint(n, 10), Kind: SubjectASN}, nil

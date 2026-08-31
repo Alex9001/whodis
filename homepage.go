@@ -174,7 +174,6 @@ func analyzeHomepage(web webInvestigationObservation) (*HomepageProfile, []Stack
 		return &analysis.profile, analysis.components, analysis.findings
 	}
 	analysis.profile.MarkupAnalyzed = true
-	analysis.collectLabels(document)
 	analysis.walk(document)
 	analysis.finishAccessibility()
 	analysis.profile.Assets.ThirdPartyOriginTotal = len(analysis.thirdParties)
@@ -190,20 +189,14 @@ func analyzeHomepage(web webInvestigationObservation) (*HomepageProfile, []Stack
 	return &analysis.profile, analysis.components, analysis.findings
 }
 
-func (analysis *homepageAnalysis) collectLabels(node *html.Node) {
-	if node.Type == html.ElementNode && node.Data == "label" {
-		if target, ok := htmlAttribute(node, "for"); ok && strings.TrimSpace(target) != "" {
-			analysis.labels[target] = true
-		}
-	}
-	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		analysis.collectLabels(child)
-	}
-}
-
 func (analysis *homepageAnalysis) walk(node *html.Node) {
 	if node.Type == html.ElementNode {
 		analysis.inspectElement(node)
+		if node.Data == "label" {
+			if target, ok := htmlAttribute(node, "for"); ok && strings.TrimSpace(target) != "" {
+				analysis.labels[target] = true
+			}
+		}
 	}
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
 		analysis.walk(child)
@@ -211,8 +204,6 @@ func (analysis *homepageAnalysis) walk(node *html.Node) {
 }
 
 func (analysis *homepageAnalysis) inspectElement(node *html.Node) {
-	classes, _ := htmlAttribute(node, "class")
-	classTokens := strings.Fields(strings.ToLower(classes))
 	switch node.Data {
 	case "html":
 		language, _ := htmlAttribute(node, "lang")
@@ -245,7 +236,11 @@ func (analysis *homepageAnalysis) inspectElement(node *html.Node) {
 			analysis.controls = append(analysis.controls, node)
 		}
 	}
-	analysis.inspectMarkupTechnology(node, classTokens)
+	// Only elements with attributes can expose class or Elementor markup
+	// signals, so avoid scanning every other element.
+	if len(node.Attr) > 0 {
+		analysis.inspectMarkupTechnology(node)
+	}
 }
 
 func (analysis *homepageAnalysis) inspectMeta(node *html.Node) {
@@ -426,8 +421,21 @@ func (analysis *homepageAnalysis) inspectWordPressPath(path string) {
 	}
 }
 
-func (analysis *homepageAnalysis) inspectMarkupTechnology(node *html.Node, classTokens []string) {
-	for _, className := range classTokens {
+func (analysis *homepageAnalysis) inspectMarkupTechnology(node *html.Node) {
+	var classes string
+	elementorMarker := false
+	for _, attribute := range node.Attr {
+		switch {
+		case strings.EqualFold(attribute.Key, "class") && classes == "":
+			classes = attribute.Val
+		case strings.EqualFold(attribute.Key, "data-elementor-type"):
+			elementorMarker = true
+		}
+	}
+	// FieldsSeq scans class tokens as they are consumed and avoids allocating
+	// a slice for every class-bearing element in a large homepage.
+	for classToken := range strings.FieldsSeq(classes) {
+		className := strings.ToLower(classToken)
 		var product *wordpressProduct
 		switch {
 		case strings.HasPrefix(className, "wp-block-"):
@@ -461,7 +469,7 @@ func (analysis *homepageAnalysis) inspectMarkupTechnology(node *html.Node, class
 				Evidence: []InvestigationEvidence{{Source: "http", Subject: analysis.profile.URL, Field: "markup class", Value: className}}})
 		}
 	}
-	if _, ok := htmlAttribute(node, "data-elementor-type"); ok {
+	if elementorMarker {
 		product := wordpressPluginProducts["elementor"]
 		analysis.addTechnology(StackComponent{Category: StackWebApplication, Name: product.name, Role: product.role, Parent: "WordPress", Traits: product.traits,
 			Basis: []string{"markup"}, Confidence: ConfidenceMedium, Evidence: []InvestigationEvidence{{Source: "http", Subject: analysis.profile.URL, Field: "markup attribute", Value: "data-elementor-type"}}})

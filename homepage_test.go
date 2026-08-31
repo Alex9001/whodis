@@ -76,6 +76,24 @@ func TestHomepageTechnologyIgnoresLooseProductText(t *testing.T) {
 	}
 }
 
+func TestHomepageSinglePassLabelsAndLazyTechnologyTokens(t *testing.T) {
+	profile, components, _ := analyzeHomepage(webInvestigationObservation{
+		URL: "https://example.test/", Status: 200, ContentType: "text/html", Headers: http.Header{"Content-Type": {"text/html"}},
+		Body: []byte(`<html lang="en"><head><title>Example</title></head><body>
+<input id="email"><label for="email">Email</label>
+<div class="layout WP-BLOCK-GROUP gform_wrapper"></div>
+<section data-elementor-type="page"></section></body></html>`),
+	})
+	if profile == nil || profile.Accessibility.FormControls != 1 || profile.Accessibility.FormControlsMissingLabel != 0 {
+		t.Fatalf("single-pass form label analysis = %#v", profile)
+	}
+	for _, name := range []string{"WordPress", "Gravity Forms", "Elementor"} {
+		if !hasComponent(components, name) {
+			t.Errorf("lazy markup inspection missed %q in %#v", name, components)
+		}
+	}
+}
+
 func TestHomepageGeneratorAndMarkupSignalsRemainEvidenceBounded(t *testing.T) {
 	profile, components, _ := analyzeHomepage(webInvestigationObservation{
 		URL: "https://example.test/", Status: 200, ContentType: "text/html", Headers: http.Header{"Content-Type": {"text/html"}},

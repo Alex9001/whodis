@@ -15,6 +15,11 @@ func TestParseTarget(t *testing.T) {
 		{"bücher.example", "xn--bcher-kva.example", KindDomain},
 		{"2001:4860:4860::8888", "2001:4860:4860::8888", KindIP},
 		{"192.0.2.12/24", "192.0.2.0/24", KindIP},
+		{"askjeeves.com", "askjeeves.com", KindDomain},
+		{"aspen.com", "aspen.com", KindDomain},
+		{"as15169.com", "as15169.com", KindDomain},
+		{"AS", "as", KindDomain},
+		{"as.", "as", KindDomain},
 		{"AS15169", "15169", KindASN},
 		{"15169", "15169", KindASN},
 	}
@@ -29,8 +34,11 @@ func TestParseTarget(t *testing.T) {
 			}
 		})
 	}
-	if _, err := ParseTarget("ASbogus"); err == nil {
-		t.Fatal("invalid ASN was accepted")
+	if target, err := ParseTarget("ASbogus"); err != nil || target.Kind != KindDomain {
+		t.Fatalf("ASbogus should parse as a domain (AS prefix only means ASN before digits), got %#v, err %v", target, err)
+	}
+	if _, err := ParseTarget("AS99999999999"); err == nil {
+		t.Fatal("out-of-range ASN was accepted")
 	}
 }
 

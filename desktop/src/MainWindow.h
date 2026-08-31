@@ -38,7 +38,8 @@ private slots:
     void openBatch();
     void openAdvanced();
     void openHelp();
-    void copyCurrent();
+    void copyFullResult();
+    void copySelection();
     void saveCurrent();
     void handleResponse(const QString &id, const QString &method, const QJsonValue &result);
     void handleFailure(const QString &id, const QString &method, const QString &message);
@@ -64,7 +65,8 @@ private:
     ResultWidget *m_result;
     QTimer *m_validationTimer;
     QAction *m_saveAction;
-    QAction *m_copyAction;
+    QAction *m_copyResultAction;
+    QAction *m_copySelectionAction;
     QAction *m_axfrAction;
     QAction *m_compareAction;
     QAction *m_traceAction;

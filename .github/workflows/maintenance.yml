@@ -36,6 +36,7 @@ jobs:
       - name: Run bounded parser and renderer fuzzing
         run: |
           go test . -run='^$' -fuzz=FuzzSubjectAndEndpointParsing -fuzztime=20s
+          go test . -run='^$' -fuzz=FuzzParseTargetASPrefix -fuzztime=20s
           go test . -run='^$' -fuzz=FuzzRegistrationTextParsers -fuzztime=20s
           go test . -run='^$' -fuzz=FuzzDNSWireNormalization -fuzztime=20s
           go test . -run='^$' -fuzz=FuzzReportRendering -fuzztime=20s

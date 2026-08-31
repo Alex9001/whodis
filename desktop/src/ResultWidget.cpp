@@ -3,6 +3,8 @@
 #include "AdaptiveItemView.h"
 #include "ExternalLinks.h"
 
+#include <QAbstractItemView>
+#include <QApplication>
 #include <QComboBox>
 #include <QClipboard>
 #include <QDateTime>
@@ -12,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QHBoxLayout>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QMenu>
 #include <QPlainTextEdit>
@@ -21,9 +24,12 @@
 #include <QStackedLayout>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTextCursor>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace {
 constexpr int StackKindRole = Qt::UserRole;
@@ -85,10 +91,72 @@ void configureTable(QTableWidget *table, const QStringList &headers)
 {
     table->setColumnCount(headers.size());
     table->setHorizontalHeaderLabels(headers);
-    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionBehavior(QAbstractItemView::SelectItems);
     table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     table->setSortingEnabled(true);
     table->setAlternatingRowColors(true);
+}
+
+QList<int> modelIndexPath(QModelIndex index)
+{
+    QList<int> path;
+    while (index.isValid()) {
+        path.prepend(index.row());
+        index = index.parent();
+    }
+    return path;
+}
+
+struct SelectedCell {
+    QModelIndex index;
+    QList<int> path;
+};
+
+QString selectedItemViewText(const QAbstractItemView *view)
+{
+    if (!view || !view->selectionModel())
+        return {};
+    QList<SelectedCell> cells;
+    for (const QModelIndex &index : view->selectionModel()->selectedIndexes())
+        cells.append({index, modelIndexPath(index)});
+    std::sort(cells.begin(), cells.end(), [](const SelectedCell &left, const SelectedCell &right) {
+        if (left.path != right.path) {
+            return std::lexicographical_compare(left.path.cbegin(), left.path.cend(),
+                                                right.path.cbegin(), right.path.cend());
+        }
+        return left.index.column() < right.index.column();
+    });
+
+    QStringList lines;
+    QStringList fields;
+    QList<int> rowPath;
+    for (const SelectedCell &cell : cells) {
+        if (!fields.isEmpty() && cell.path != rowPath) {
+            lines.append(fields.join(QLatin1Char('\t')));
+            fields.clear();
+        }
+        rowPath = cell.path;
+        QString field = cell.index.data(Qt::DisplayRole).toString();
+        if (cells.size() > 1) {
+            field.replace(QLatin1Char('\t'), QLatin1Char(' '));
+            field.replace(QLatin1Char('\r'), QLatin1Char(' '));
+            field.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        }
+        fields.append(field);
+    }
+    if (!fields.isEmpty())
+        lines.append(fields.join(QLatin1Char('\t')));
+    return lines.join(QLatin1Char('\n'));
+}
+
+QUrl researchUrl(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return {};
+    const QUrl url(index.siblingAtColumn(0).data(Qt::UserRole).toString());
+    if (!url.isValid() || url.scheme() != QStringLiteral("https") || url.host().isEmpty() || !url.userInfo().isEmpty())
+        return {};
+    return url;
 }
 
 QJsonObject reportDNS(const QJsonObject &report)
@@ -369,6 +437,7 @@ ResultWidget::ResultWidget(QWidget *parent)
     , m_rawSource(new QComboBox(this))
     , m_rawText(new QPlainTextEdit(this))
     , m_emptyLabel(new QLabel(tr("Enter a domain, IP address, ASN, or URL to begin."), this))
+    , m_lastSelectionView(nullptr)
 {
     m_emptyLabel->setAlignment(Qt::AlignCenter);
     m_emptyLabel->setWordWrap(true);
@@ -396,6 +465,8 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_overview->setHeaderLabels({tr("Field"), tr("Value")});
     m_overview->setRootIsDecorated(true);
     m_overview->setAlternatingRowColors(true);
+    m_overview->setSelectionBehavior(QAbstractItemView::SelectItems);
+    m_overview->setSelectionMode(QAbstractItemView::ExtendedSelection);
     AdaptiveItemView::configure(m_overview, QStringLiteral("result/layout-v1/overview"), {2, 5});
 
     configureTable(m_dns, {tr("Type"), tr("Name"), tr("TTL"), tr("Value")});
@@ -413,6 +484,8 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_stack->setHeaderLabels({tr("Layer"), tr("Technology"), tr("Role"), tr("Confidence")});
     m_stack->setRootIsDecorated(true);
     m_stack->setAlternatingRowColors(true);
+    m_stack->setSelectionBehavior(QAbstractItemView::SelectItems);
+    m_stack->setSelectionMode(QAbstractItemView::ExtendedSelection);
     AdaptiveItemView::configure(m_stack, QStringLiteral("result/layout-v1/stack"), {2, 4, 4, 2});
 
     configureTable(m_evidence, {tr("Source"), tr("Subject"), tr("Field"), tr("Value")});
@@ -423,7 +496,8 @@ ResultWidget::ResultWidget(QWidget *parent)
     m_research->setHeaderLabels({tr("Service"), tr("What it adds")});
     m_research->setRootIsDecorated(true);
     m_research->setAlternatingRowColors(true);
-    m_research->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_research->setSelectionBehavior(QAbstractItemView::SelectItems);
+    m_research->setSelectionMode(QAbstractItemView::ExtendedSelection);
     AdaptiveItemView::configure(m_research, QStringLiteral("result/layout-v1/research"), {3, 7});
 
     configureTable(m_related, {tr("Hostname"), tr("Observed IP"), tr("First seen"), tr("Last seen"), tr("Now"), tr("Current DNS"), tr("Source")});
@@ -437,9 +511,9 @@ ResultWidget::ResultWidget(QWidget *parent)
     QFont detailTitleFont = m_stackDetailTitle->font();
     detailTitleFont.setBold(true);
     m_stackDetailTitle->setFont(detailTitleFont);
-    m_stackDetailTitle->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_stackDetailTitle->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     m_stackDetailSummary->setWordWrap(true);
-    m_stackDetailSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_stackDetailSummary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     auto *detailPage = new QWidget(m_stackSplitter);
     auto *detailLayout = new QVBoxLayout(detailPage);
     detailLayout->setContentsMargins(8, 8, 8, 8);
@@ -506,21 +580,41 @@ ResultWidget::ResultWidget(QWidget *parent)
     connect(m_research, &QTreeWidget::itemDoubleClicked, this, [this] { openSelectedResearchLink(); });
     connect(m_openResearch, &QPushButton::clicked, this, &ResultWidget::openSelectedResearchLink);
     connect(m_copyResearch, &QPushButton::clicked, this, [this] {
-        const QTreeWidgetItem *item = m_research->currentItem();
-        const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
-        if (url.isValid() && url.scheme() == QStringLiteral("https") && url.userInfo().isEmpty())
+        const QUrl url = researchUrl(m_research->currentIndex());
+        if (!url.isEmpty())
             QGuiApplication::clipboard()->setText(url.toString());
     });
-    connect(m_related, &QTableWidget::customContextMenuRequested, this, [this](const QPoint &position) {
-        const int row = m_related->rowAt(position.y());
-        const QTableWidgetItem *hostname = row >= 0 ? m_related->item(row, 0) : nullptr;
-        if (!hostname || hostname->text().isEmpty())
-            return;
-        QMenu menu(this);
-        QAction *investigate = menu.addAction(tr("Investigate %1").arg(hostname->text()));
-        if (menu.exec(m_related->viewport()->mapToGlobal(position)) == investigate)
-            emit investigateRequested(hostname->text());
-    });
+
+    const QList<QAbstractItemView *> structuredViews{
+        m_overview, m_dns, m_compare, m_delegation, m_services, m_findings,
+        m_stack, m_evidence, m_research, m_related, m_errors, m_contacts,
+    };
+    for (QAbstractItemView *view : structuredViews) {
+        view->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(view, &QAbstractItemView::customContextMenuRequested, this,
+                [this, view](const QPoint &position) { showItemContextMenu(view, position); });
+        connect(view->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+                [this, view] {
+                    if (!view->selectionModel()->selectedIndexes().isEmpty())
+                        m_lastSelectionView = view;
+                    emit selectionAvailabilityChanged();
+                });
+        connect(view->selectionModel(), &QItemSelectionModel::currentChanged, this,
+                [this, view](const QModelIndex &current) {
+                    if (current.isValid())
+                        m_lastSelectionView = view;
+                    emit selectionAvailabilityChanged();
+                });
+    }
+    for (QLabel *label : {m_stackDetailTitle, m_stackDetailSummary}) {
+        label->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(label, &QLabel::customContextMenuRequested, this,
+                [this, label](const QPoint &position) { showLabelContextMenu(label, position); });
+    }
+    connect(m_rawText, &QPlainTextEdit::copyAvailable, this,
+            [this] { emit selectionAvailabilityChanged(); });
+    connect(m_tabs, &QTabWidget::currentChanged, this,
+            [this] { emit selectionAvailabilityChanged(); });
 
     auto *stack = new QStackedLayout(this);
     stack->addWidget(m_emptyLabel);
@@ -639,14 +733,134 @@ void ResultWidget::showDNSTab()
     m_tabs->setCurrentWidget(m_dns);
 }
 
-QString ResultWidget::copyText() const
+QString ResultWidget::fullResultText() const
 {
-    if (m_tabs->currentWidget() == m_rawPage && !m_rawText->toPlainText().isEmpty())
-        return m_rawText->toPlainText();
     const QJsonObject value = m_item.contains(QStringLiteral("report"))
         ? m_item.value(QStringLiteral("report")).toObject()
         : m_item.value(QStringLiteral("result")).toObject();
     return QString::fromUtf8(QJsonDocument(value).toJson(QJsonDocument::Indented));
+}
+
+QAbstractItemView *ResultWidget::currentSelectionView() const
+{
+    QWidget *current = m_tabs->currentWidget();
+    QWidget *focus = QApplication::focusWidget();
+    if (current == m_stackPage) {
+        if (focus && (focus == m_evidence || m_evidence->isAncestorOf(focus)))
+            return m_evidence;
+        if (focus && (focus == m_stack || m_stack->isAncestorOf(focus)))
+            return m_stack;
+        if (m_lastSelectionView == m_evidence && m_evidence->selectionModel()
+            && !m_evidence->selectionModel()->selectedIndexes().isEmpty())
+            return m_evidence;
+        return m_stack;
+    }
+    if (current == m_researchPage)
+        return m_research;
+    const QList<QAbstractItemView *> directViews{
+        m_overview, m_dns, m_compare, m_delegation, m_services, m_findings,
+        m_related, m_errors, m_contacts,
+    };
+    for (QAbstractItemView *view : directViews) {
+        if (current == view)
+            return view;
+    }
+    return nullptr;
+}
+
+QString ResultWidget::selectionText() const
+{
+    QWidget *focus = QApplication::focusWidget();
+    for (QLabel *label : {m_stackDetailTitle, m_stackDetailSummary}) {
+        if (focus == label) {
+            const QString selected = label->selectedText();
+            return selected.isEmpty() ? label->text() : selected;
+        }
+    }
+    if (focus && (focus == m_rawText || m_rawText->isAncestorOf(focus))) {
+        const QTextCursor cursor = m_rawText->textCursor();
+        return cursor.hasSelection() ? cursor.selectedText().replace(QChar::ParagraphSeparator, QLatin1Char('\n')) : QString();
+    }
+    return selectedItemViewText(currentSelectionView());
+}
+
+bool ResultWidget::hasSelection() const
+{
+    QWidget *focus = QApplication::focusWidget();
+    for (QLabel *label : {m_stackDetailTitle, m_stackDetailSummary}) {
+        if (focus == label)
+            return !label->text().isEmpty();
+    }
+    if (focus && (focus == m_rawText || m_rawText->isAncestorOf(focus)))
+        return m_rawText->textCursor().hasSelection();
+    const QAbstractItemView *view = currentSelectionView();
+    return view && view->selectionModel() && !view->selectionModel()->selectedIndexes().isEmpty();
+}
+
+void ResultWidget::showItemContextMenu(QAbstractItemView *view, const QPoint &position)
+{
+    if (!view || !view->selectionModel())
+        return;
+    const QModelIndex clicked = view->indexAt(position);
+    if (!clicked.isValid())
+        return;
+    if (view->selectionModel()->isSelected(clicked))
+        view->selectionModel()->setCurrentIndex(clicked, QItemSelectionModel::NoUpdate);
+    else
+        view->selectionModel()->setCurrentIndex(clicked, QItemSelectionModel::ClearAndSelect);
+
+    QMenu menu(this);
+    QAction *openLink = nullptr;
+    QAction *copyLink = nullptr;
+    QAction *investigate = nullptr;
+    QUrl link;
+    if (view == m_research) {
+        link = researchUrl(clicked);
+        if (!link.isEmpty()) {
+            openLink = menu.addAction(tr("Open in Browser"));
+            copyLink = menu.addAction(tr("Copy Link"));
+        }
+    } else if (view == m_related) {
+        const QModelIndex hostnameIndex = clicked.siblingAtColumn(0);
+        const QString hostname = hostnameIndex.data(Qt::DisplayRole).toString();
+        if (!hostname.isEmpty())
+            investigate = menu.addAction(tr("Investigate %1").arg(hostname));
+    }
+
+    const QString selected = selectedItemViewText(view);
+    QAction *copy = nullptr;
+    if (!selected.isEmpty()) {
+        if (!menu.actions().isEmpty())
+            menu.addSeparator();
+        const bool multiple = view->selectionModel()->selectedIndexes().size() > 1;
+        copy = menu.addAction(multiple ? tr("Copy Selection") : tr("Copy"));
+    }
+    if (menu.actions().isEmpty())
+        return;
+
+    QAction *chosen = menu.exec(view->viewport()->mapToGlobal(position));
+    if (openLink && chosen == openLink)
+        ExternalLinks::open(link, this);
+    else if (copyLink && chosen == copyLink)
+        QGuiApplication::clipboard()->setText(link.toString());
+    else if (investigate && chosen == investigate)
+        emit investigateRequested(clicked.siblingAtColumn(0).data(Qt::DisplayRole).toString());
+    else if (copy && chosen == copy)
+        QGuiApplication::clipboard()->setText(selected);
+}
+
+void ResultWidget::showLabelContextMenu(QLabel *label, const QPoint &position)
+{
+    if (!label)
+        return;
+    const QString selected = label->selectedText();
+    const QString text = selected.isEmpty() ? label->text() : selected;
+    if (text.isEmpty())
+        return;
+    QMenu menu(this);
+    QAction *copy = menu.addAction(tr("Copy"));
+    if (menu.exec(label->mapToGlobal(position)) == copy)
+        QGuiApplication::clipboard()->setText(text);
 }
 
 QString ResultWidget::currentTarget() const
@@ -1289,18 +1503,15 @@ void ResultWidget::populateResearch(const QJsonObject &report)
 
 void ResultWidget::updateResearchActions()
 {
-    const QTreeWidgetItem *item = m_research->currentItem();
-    const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
-    const bool valid = url.isValid() && url.scheme() == QStringLiteral("https") && !url.host().isEmpty() && url.userInfo().isEmpty();
+    const bool valid = !researchUrl(m_research->currentIndex()).isEmpty();
     m_openResearch->setEnabled(valid);
     m_copyResearch->setEnabled(valid);
 }
 
 void ResultWidget::openSelectedResearchLink()
 {
-    const QTreeWidgetItem *item = m_research->currentItem();
-    const QUrl url(item ? item->data(0, Qt::UserRole).toString() : QString());
-    if (url.isValid() && url.scheme() == QStringLiteral("https") && !url.host().isEmpty() && url.userInfo().isEmpty())
+    const QUrl url = researchUrl(m_research->currentIndex());
+    if (!url.isEmpty())
         ExternalLinks::open(url, this);
 }
 

@@ -99,9 +99,13 @@ MainWindow::MainWindow(QWidget *parent)
     exitAction->setShortcut(QKeySequence::Quit);
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
     auto *editMenu = menuBar()->addMenu(tr("&Edit"));
-    m_copyAction = editMenu->addAction(tr("&Copy Current View"));
-    m_copyAction->setShortcut(QKeySequence::Copy);
-    connect(m_copyAction, &QAction::triggered, this, &MainWindow::copyCurrent);
+    m_copySelectionAction = editMenu->addAction(tr("&Copy Selection"));
+    m_copySelectionAction->setObjectName(QStringLiteral("copySelectionAction"));
+    m_copySelectionAction->setShortcut(QKeySequence::Copy);
+    connect(m_copySelectionAction, &QAction::triggered, this, &MainWindow::copySelection);
+    m_copyResultAction = editMenu->addAction(tr("Copy &Full Result"));
+    m_copyResultAction->setObjectName(QStringLiteral("copyFullResultAction"));
+    connect(m_copyResultAction, &QAction::triggered, this, &MainWindow::copyFullResult);
     auto *toolsMenu = menuBar()->addMenu(tr("&Tools"));
     m_compareAction = toolsMenu->addAction(tr("Compare DNS Resolvers"), this, &MainWindow::runDNSCompare);
     m_traceAction = toolsMenu->addAction(tr("Trace DNS Delegation"), this, &MainWindow::runDNSTrace);
@@ -131,11 +135,13 @@ MainWindow::MainWindow(QWidget *parent)
     auto *toolbar = addToolBar(tr("Actions"));
     toolbar->setMovable(false);
     toolbar->addAction(m_saveAction);
-    toolbar->addAction(m_copyAction);
+    toolbar->addAction(m_copyResultAction);
+    toolbar->addAction(m_copySelectionAction);
     toolbar->addSeparator();
     toolbar->addAction(tr("Advanced…"), this, &MainWindow::openAdvanced);
 
     connect(m_target, &QLineEdit::textChanged, this, &MainWindow::scheduleValidation);
+    connect(m_target, &QLineEdit::selectionChanged, this, &MainWindow::updateActionState);
     connect(m_target, &QLineEdit::returnPressed, this, &MainWindow::runLookup);
     connect(m_validationTimer, &QTimer::timeout, this, &MainWindow::validateTarget);
     connect(m_lookup, &QPushButton::clicked, this, &MainWindow::runLookup);
@@ -149,6 +155,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_target->setText(target);
         startOperation(QStringLiteral("investigate"));
     });
+    connect(m_result, &ResultWidget::selectionAvailabilityChanged, this, &MainWindow::updateActionState);
+    connect(qApp, &QApplication::focusChanged, this, [this] { updateActionState(); });
     connect(m_engine, &EngineClient::engineReady, this, [this](const QString &version, int, const QJsonArray &linkProviders) {
         m_advanced->setInvestigationLinkProviders(linkProviders);
         m_result->setInvestigationLinkProviders(linkProviders);
@@ -322,12 +330,25 @@ void MainWindow::openHelp()
     m_help->activateWindow();
 }
 
-void MainWindow::copyCurrent()
+void MainWindow::copyFullResult()
 {
-    const QString text = m_result->copyText();
+    const QString text = m_result->fullResultText();
     if (!text.isEmpty()) {
         QApplication::clipboard()->setText(text);
-        statusBar()->showMessage(tr("Copied current result."), 3000);
+        statusBar()->showMessage(tr("Copied full result."), 3000);
+    }
+}
+
+void MainWindow::copySelection()
+{
+    QString text;
+    if (auto *lineEdit = qobject_cast<QLineEdit *>(QApplication::focusWidget()); lineEdit && lineEdit->hasSelectedText())
+        text = lineEdit->selectedText();
+    else
+        text = m_result->selectionText();
+    if (!text.isEmpty()) {
+        QApplication::clipboard()->setText(text);
+        statusBar()->showMessage(tr("Copied selection."), 3000);
     }
 }
 
@@ -460,5 +481,8 @@ void MainWindow::updateActionState()
     m_compareAction->setEnabled(m_engine->isReady() && idle && dnsName);
     m_traceAction->setEnabled(m_engine->isReady() && idle && dnsName);
     m_saveAction->setEnabled(!m_resultToken.isEmpty());
-    m_copyAction->setEnabled(!m_result->currentTarget().isEmpty());
+    m_copyResultAction->setEnabled(!m_result->currentTarget().isEmpty());
+    const auto *lineEdit = qobject_cast<QLineEdit *>(QApplication::focusWidget());
+    const bool lineEditSelection = lineEdit && lineEdit->hasSelectedText();
+    m_copySelectionAction->setEnabled(lineEdit ? lineEditSelection : m_result->hasSelection());
 }

@@ -36,3 +36,38 @@ func TestParseSubjectRejectsActiveOperationForIPAddress(t *testing.T) {
 		t.Fatal("inspect accepted an IP address")
 	}
 }
+
+func TestParseSubjectDistinguishesASPrefixDomainsFromASNs(t *testing.T) {
+	tests := []struct {
+		input      string
+		canonical  string
+		kind       SubjectKind
+		registered string
+	}{
+		{input: "askjeeves.com", canonical: "askjeeves.com", kind: SubjectRegistrableDomain, registered: "askjeeves.com"},
+		{input: "https://askjeeves.com/search", canonical: "askjeeves.com", kind: SubjectRegistrableDomain, registered: "askjeeves.com"},
+		{input: "aspen.com", canonical: "aspen.com", kind: SubjectRegistrableDomain, registered: "aspen.com"},
+		{input: "as15169.com", canonical: "as15169.com", kind: SubjectRegistrableDomain, registered: "as15169.com"},
+		{input: "ASbogus", canonical: "asbogus", kind: SubjectRegistrableDomain, registered: "asbogus"},
+		{input: "AS", canonical: "as", kind: SubjectRegistrableDomain, registered: "as"},
+		{input: "as.", canonical: "as", kind: SubjectRegistrableDomain, registered: "as"},
+		{input: "AS15169", canonical: "15169", kind: SubjectASN},
+		{input: "as007", canonical: "7", kind: SubjectASN},
+	}
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			subject, err := ParseSubject(test.input, OperationRegistration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if subject.Canonical != test.canonical || subject.Kind != test.kind || subject.RegistrationDomain != test.registered {
+				t.Fatalf("ParseSubject(%q) = %#v", test.input, subject)
+			}
+		})
+	}
+	for _, input := range []string{"as4294967296", "AS99999999999"} {
+		if _, err := ParseSubject(input, OperationRegistration); err == nil {
+			t.Errorf("ParseSubject(%q) accepted an invalid ASN literal", input)
+		}
+	}
+}

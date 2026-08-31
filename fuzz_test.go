@@ -3,6 +3,8 @@ package whodis
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 
 	mdns "github.com/miekg/dns"
@@ -62,6 +64,50 @@ func FuzzReportRendering(f *testing.F) {
 		for _, format := range []Format{FormatPlain, FormatPretty, FormatTree, FormatGeekBoys, FormatJSON, FormatYAML, FormatMarkdown} {
 			var output bytes.Buffer
 			_ = RenderReport(&output, report, format, RenderOptions{Width: 120})
+		}
+	})
+}
+
+// FuzzParseTargetASPrefix pins the AS-prefix grammar: "AS" means ASN only
+// when followed entirely by digits that fit uint32. Other suffixes must never
+// be classified as ASNs, including domains such as askjeeves.com.
+func FuzzParseTargetASPrefix(f *testing.F) {
+	for _, seed := range []string{
+		"AS15169", "as15169", "As0", "AS4294967295", "AS4294967296",
+		"AS007", "AS", "AS12a34", "AS-1", "ASbogus", "askjeeves.com",
+		"aspen.com", "as15169.com", "AS4294967296.com", "15169", "",
+		"bücher.example", "AS1.2.3", "AS\x001",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		target, err := ParseTarget(input)
+		trimmed := strings.TrimSpace(input)
+		remainder, hasASPrefix := strings.CutPrefix(strings.ToUpper(trimmed), "AS")
+		allDigits := remainder != ""
+		for index := range len(remainder) {
+			if remainder[index] < '0' || remainder[index] > '9' {
+				allDigits = false
+				break
+			}
+		}
+
+		if hasASPrefix && allDigits {
+			number, parseErr := strconv.ParseUint(remainder, 10, 32)
+			if parseErr != nil {
+				if err == nil {
+					t.Fatalf("ParseTarget(%q) accepted an out-of-range ASN as %#v", input, target)
+				}
+				return
+			}
+			if err != nil || target.Kind != KindASN || target.Canonical != strconv.FormatUint(number, 10) {
+				t.Fatalf("ParseTarget(%q) = %#v, %v; want ASN %d", input, target, err, number)
+			}
+			return
+		}
+
+		if err == nil && hasASPrefix && target.Kind == KindASN {
+			t.Fatalf("ParseTarget(%q) classified a non-digit AS suffix as an ASN: %#v", input, target)
 		}
 	})
 }
