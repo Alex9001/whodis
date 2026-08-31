@@ -272,102 +272,152 @@ func evaluateBuiltins(report whodis.Report, scrutiny Scrutiny) []RuleResult {
 }
 
 func evaluateCustom(report whodis.Report, policy Policy) []RuleResult {
-	var results []RuleResult
+	results := make([]RuleResult, 0, len(policy.Rules))
 	for _, rule := range policy.Rules {
-		if rule.Type == "allow_diff_path" {
-			continue
+		if rule.Type != "allow_diff_path" {
+			results = append(results, evaluateCustomRule(report, rule))
 		}
-		result := RuleResult{RuleID: rule.ID, Status: CheckUnknown, Severity: rule.Severity, Message: "rule could not be evaluated"}
-		var config map[string]any
-		_ = json.Unmarshal(rule.Config, &config)
-		switch rule.Type {
-		case "minimum_registration_days":
-			if report.Registration != nil {
-				expires := expirationTime(report.Registration.Object.Events)
-				minimum := int(numberConfig(config, "days"))
-				if !expires.IsZero() {
-					days := int(time.Until(expires).Hours() / 24)
-					result.Status = CheckPass
-					result.Message = fmt.Sprintf("registration lifetime is %d days", days)
-					if days < minimum {
-						result.Status = CheckFail
-					}
-				}
-			}
-		case "required_status", "forbidden_status":
-			if report.Registration != nil {
-				wanted := stringConfig(config, "value")
-				present := containsFold(report.Registration.Object.Status, wanted)
-				result.Status = CheckPass
-				if (rule.Type == "required_status" && !present) || (rule.Type == "forbidden_status" && present) {
-					result.Status = CheckFail
-				}
-				result.Message = fmt.Sprintf("registration status %q present=%t", wanted, present)
-			}
-		case "required_dnssec":
-			state := strings.ToLower(stringConfig(config, "state"))
-			actual := ""
-			if report.Registration != nil {
-				actual = strings.ToLower(report.Registration.Object.DNSSEC)
-			}
-			if actual != "" {
-				result.Status = CheckPass
-				if actual != state {
-					result.Status = CheckFail
-				}
-				result.Message = fmt.Sprintf("DNSSEC state is %s; expected %s", actual, state)
-			}
-		case "expected_nameserver", "expected_mx", "required_dns_record":
-			records := reportRecords(report)
-			wantedType := strings.ToUpper(stringConfig(config, "type"))
-			if rule.Type == "expected_nameserver" {
-				wantedType = "NS"
-			}
-			if rule.Type == "expected_mx" {
-				wantedType = "MX"
-			}
-			wantedValue := strings.ToLower(stringConfig(config, "value"))
-			found := false
-			for _, record := range records {
-				if record.Type == wantedType && (wantedValue == "" || strings.Contains(strings.ToLower(record.Value), wantedValue)) {
-					found = true
-				}
-			}
-			if len(records) > 0 {
-				result.Status = CheckPass
-				if !found {
-					result.Status = CheckFail
-				}
-				result.Message = fmt.Sprintf("required %s record found=%t", wantedType, found)
-			}
-		case "minimum_tls_days":
-			minimum := int(numberConfig(config, "days"))
-			if report.Diagnosis != nil && len(report.Diagnosis.TLS) > 0 {
-				result.Status = CheckPass
-				result.Message = "TLS certificates satisfy minimum lifetime"
-				for _, probe := range report.Diagnosis.TLS {
-					if probe.NotAfter.IsZero() || int(time.Until(probe.NotAfter).Hours()/24) < minimum {
-						result.Status = CheckFail
-						result.Message = "a TLS certificate is below the minimum remaining lifetime"
-					}
-				}
-			}
-		case "maximum_finding_severity":
-			maximum := severityRank(whodis.Severity(stringConfig(config, "severity")))
-			if report.Diagnosis != nil || len(report.Findings) > 0 {
-				result.Status = CheckPass
-				result.Message = "diagnostic findings are within the severity limit"
-				for _, finding := range reportFindings(report) {
-					if severityRank(finding.Severity) > maximum {
-						result.Status = CheckFail
-						result.Message = "a diagnostic finding exceeds the severity limit"
-					}
-				}
-			}
-		}
-		results = append(results, result)
 	}
 	return results
+}
+
+func evaluateCustomRule(report whodis.Report, rule Rule) RuleResult {
+	result := unevaluatedRuleResult(rule)
+	var config map[string]any
+	_ = json.Unmarshal(rule.Config, &config)
+	switch rule.Type {
+	case "minimum_registration_days":
+		return evaluateMinimumRegistrationDays(report, config, result)
+	case "required_status", "forbidden_status":
+		return evaluateRegistrationStatus(report, rule.Type, config, result)
+	case "required_dnssec":
+		return evaluateRequiredDNSSEC(report, config, result)
+	case "expected_nameserver", "expected_mx", "required_dns_record":
+		return evaluateRequiredDNSRecord(report, rule.Type, config, result)
+	case "minimum_tls_days":
+		return evaluateMinimumTLSDays(report, config, result)
+	case "maximum_finding_severity":
+		return evaluateMaximumFindingSeverity(report, config, result)
+	default:
+		return result
+	}
+}
+
+func unevaluatedRuleResult(rule Rule) RuleResult {
+	return RuleResult{
+		RuleID: rule.ID, Status: CheckUnknown, Severity: rule.Severity,
+		Message: "rule could not be evaluated",
+	}
+}
+
+func evaluateMinimumRegistrationDays(report whodis.Report, config map[string]any, result RuleResult) RuleResult {
+	if report.Registration == nil {
+		return result
+	}
+	expires := expirationTime(report.Registration.Object.Events)
+	if expires.IsZero() {
+		return result
+	}
+	days := int(time.Until(expires).Hours() / 24)
+	result.Status = CheckPass
+	result.Message = fmt.Sprintf("registration lifetime is %d days", days)
+	if days < int(numberConfig(config, "days")) {
+		result.Status = CheckFail
+	}
+	return result
+}
+
+func evaluateRegistrationStatus(report whodis.Report, ruleType string, config map[string]any, result RuleResult) RuleResult {
+	if report.Registration == nil {
+		return result
+	}
+	wanted := stringConfig(config, "value")
+	present := containsFold(report.Registration.Object.Status, wanted)
+	result.Status = CheckPass
+	if (ruleType == "required_status" && !present) || (ruleType == "forbidden_status" && present) {
+		result.Status = CheckFail
+	}
+	result.Message = fmt.Sprintf("registration status %q present=%t", wanted, present)
+	return result
+}
+
+func evaluateRequiredDNSSEC(report whodis.Report, config map[string]any, result RuleResult) RuleResult {
+	actual := ""
+	if report.Registration != nil {
+		actual = strings.ToLower(report.Registration.Object.DNSSEC)
+	}
+	if actual == "" {
+		return result
+	}
+	expected := strings.ToLower(stringConfig(config, "state"))
+	result.Status = CheckPass
+	if actual != expected {
+		result.Status = CheckFail
+	}
+	result.Message = fmt.Sprintf("DNSSEC state is %s; expected %s", actual, expected)
+	return result
+}
+
+func evaluateRequiredDNSRecord(report whodis.Report, ruleType string, config map[string]any, result RuleResult) RuleResult {
+	records := reportRecords(report)
+	if len(records) == 0 {
+		return result
+	}
+	wantedType := strings.ToUpper(stringConfig(config, "type"))
+	switch ruleType {
+	case "expected_nameserver":
+		wantedType = "NS"
+	case "expected_mx":
+		wantedType = "MX"
+	}
+	wantedValue := strings.ToLower(stringConfig(config, "value"))
+	found := false
+	for _, record := range records {
+		if record.Type == wantedType && (wantedValue == "" || strings.Contains(strings.ToLower(record.Value), wantedValue)) {
+			found = true
+			break
+		}
+	}
+	result.Status = CheckPass
+	if !found {
+		result.Status = CheckFail
+	}
+	result.Message = fmt.Sprintf("required %s record found=%t", wantedType, found)
+	return result
+}
+
+func evaluateMinimumTLSDays(report whodis.Report, config map[string]any, result RuleResult) RuleResult {
+	if report.Diagnosis == nil || len(report.Diagnosis.TLS) == 0 {
+		return result
+	}
+	minimum := int(numberConfig(config, "days"))
+	result.Status = CheckPass
+	result.Message = "TLS certificates satisfy minimum lifetime"
+	for _, probe := range report.Diagnosis.TLS {
+		if probe.NotAfter.IsZero() || int(time.Until(probe.NotAfter).Hours()/24) < minimum {
+			result.Status = CheckFail
+			result.Message = "a TLS certificate is below the minimum remaining lifetime"
+			break
+		}
+	}
+	return result
+}
+
+func evaluateMaximumFindingSeverity(report whodis.Report, config map[string]any, result RuleResult) RuleResult {
+	if report.Diagnosis == nil && len(report.Findings) == 0 {
+		return result
+	}
+	maximum := severityRank(whodis.Severity(stringConfig(config, "severity")))
+	result.Status = CheckPass
+	result.Message = "diagnostic findings are within the severity limit"
+	for _, finding := range reportFindings(report) {
+		if severityRank(finding.Severity) > maximum {
+			result.Status = CheckFail
+			result.Message = "a diagnostic finding exceeds the severity limit"
+			break
+		}
+	}
+	return result
 }
 
 func reportFindings(report whodis.Report) []whodis.Finding {

@@ -149,6 +149,8 @@ jobs:
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -config-file .github/actionlint.yaml .github/workflows/*.yml
       - name: Run staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+      - name: Enforce Go complexity guardrails
+        run: scripts/check-complexity.sh go
       - run: go test -race ./...
       - name: Run Go security static analysis
         run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -exclude-generated -quiet ./...
@@ -214,10 +216,12 @@ jobs:
       - name: Install Qt build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y appstream cmake desktop-file-utils ninja-build qt6-base-dev qt6-tools-dev-tools
+          sudo apt-get install -y appstream clang clang-tidy cmake desktop-file-utils ninja-build qt6-base-dev qt6-tools-dev-tools
       - name: Configure and build
         run: cmake -S desktop -B build-gui -G Ninja -DWHODIS_VERSION=ci -DBUILD_TESTING=ON
       - run: cmake --build build-gui --parallel
+      - name: Enforce C++ complexity guardrails
+        run: scripts/check-complexity.sh cpp
       - name: Test desktop widgets
         env:
           QT_QPA_PLATFORM: offscreen

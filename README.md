@@ -603,12 +603,15 @@ git clone https://github.com/Alex9001/whodis.git
 cd whodis
 go test -race ./...
 go vet ./...
+scripts/check-complexity.sh go
 go test ./... -run '^$' -bench . -benchtime=100ms
 go run ./cmd/whodis example.com
 ```
 
 The desktop build additionally needs CMake, Ninja, Qt 6 Core/Gui/Widgets/Test,
-and a C++17 compiler; source builds require Go 1.25 or newer. See
+and a C++17 compiler; source builds require Go 1.25 or newer. With Clang and
+Clang-Tidy installed, `scripts/check-complexity.sh all` also enforces the Go
+and C++ complexity regression guardrails used by CI. See
 [desktop/README.md](desktop/README.md). Tests use
 fixtures and in-memory protocol sessions rather than consuming public registry
 or Globalping quota. Parser, importer, and renderer fuzz targets run on a

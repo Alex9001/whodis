@@ -345,266 +345,356 @@ type checkCLIOptions struct {
 }
 
 func runCheckCommand(args []string, stdout, stderr io.Writer, runtime cliRuntime) int {
-	options := checkCLIOptions{scrutiny: audit.ScrutinyStandard, format: "plain", timeout: 20 * time.Second, jobs: 4}
-	for index := 0; index < len(args); index++ {
-		value := func(name string) (string, bool) {
-			if index+1 >= len(args) {
-				fmt.Fprintln(stderr, "whodis:", name, "requires a value")
-				return "", false
-			}
-			index++
-			return args[index], true
-		}
-		switch args[index] {
-		case "--active":
-			if options.activeSet && !options.active {
-				fmt.Fprintln(stderr, "whodis: --active conflicts with --passive")
-				return 2
-			}
-			options.active = true
-			options.activeSet = true
-		case "--passive":
-			if options.activeSet && options.active {
-				fmt.Fprintln(stderr, "whodis: --passive conflicts with --active")
-				return 2
-			}
-			options.active = false
-			options.activeSet = true
-		case "--against":
-			if item, ok := value("--against"); ok {
-				options.against = item
-			} else {
-				return 2
-			}
-		case "--snapshot":
-			if item, ok := value("--snapshot"); ok {
-				options.snapshot = item
-			} else {
-				return 2
-			}
-		case "--scrutiny":
-			if item, ok := value("--scrutiny"); ok {
-				options.scrutiny = audit.Scrutiny(strings.ToLower(item))
-				options.scrutinySet = true
-			} else {
-				return 2
-			}
-		case "--policy":
-			if item, ok := value("--policy"); ok {
-				options.policy = item
-			} else {
-				return 2
-			}
-		case "--webhook":
-			if item, ok := value("--webhook"); ok {
-				options.webhook = item
-			} else {
-				return 2
-			}
-		case "--webhook-env":
-			if item, ok := value("--webhook-env"); ok {
-				options.webhookEnv = item
-			} else {
-				return 2
-			}
-		case "--webhook-file":
-			if item, ok := value("--webhook-file"); ok {
-				options.webhookFile = item
-			} else {
-				return 2
-			}
-		case "--json", "--yaml", "--markdown", "--plain":
-			if err := setAuditFormat(&options.format, &options.formatSet, strings.TrimPrefix(args[index], "--")); err != nil {
-				fmt.Fprintln(stderr, "whodis:", err)
-				return 2
-			}
-		case "-f", "--format":
-			if item, ok := value("--format"); ok {
-				if err := setAuditFormat(&options.format, &options.formatSet, item); err != nil {
-					fmt.Fprintln(stderr, "whodis:", err)
-					return 2
-				}
-			} else {
-				return 2
-			}
-		case "-o", "--output":
-			if item, ok := value("--output"); ok {
-				options.output = item
-			} else {
-				return 2
-			}
-		case "--force":
-			options.force = true
-		case "--timeout":
-			item, ok := value("--timeout")
-			if !ok {
-				return 2
-			}
-			duration, err := time.ParseDuration(item)
-			if err != nil || duration <= 0 {
-				fmt.Fprintln(stderr, "whodis: --timeout must be a positive duration")
-				return 2
-			}
-			options.timeout = duration
-		case "-j", "--jobs":
-			item, ok := value("--jobs")
-			if !ok {
-				return 2
-			}
-			jobs, err := strconv.Atoi(item)
-			if err != nil || jobs < 1 || jobs > 32 {
-				fmt.Fprintln(stderr, "whodis: --jobs must be between 1 and 32")
-				return 2
-			}
-			options.jobs = jobs
-		case "--save":
-			options.save = true
-		case "--label":
-			if item, ok := value("--label"); ok {
-				options.label = item
-			} else {
-				return 2
-			}
-		case "-h", "--help":
-			printCheckUsage(stdout)
-			return 0
-		default:
-			if strings.HasPrefix(args[index], "-") {
-				fmt.Fprintln(stderr, "whodis: unknown check option", args[index])
-				return 2
-			}
-			options.targets = append(options.targets, args[index])
-		}
+	options, help, err := parseCheckCLIOptions(args)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 2
 	}
+	if help {
+		printCheckUsage(stdout)
+		return 0
+	}
+
 	config, configExists, err := loadOptionalUserConfig(runtime)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
-	if configExists {
-		if !options.scrutinySet && config.Scrutiny != "" {
-			options.scrutiny = audit.Scrutiny(config.Scrutiny)
-		}
-		if options.snapshot == "" && !options.activeSet && config.CheckActive != nil {
-			options.active = *config.CheckActive
-		}
-	}
-	if options.label != "" && !options.save {
-		fmt.Fprintln(stderr, "whodis: --label requires --save")
-		return 2
-	}
-	if options.snapshot != "" && (len(options.targets) > 0 || options.active) {
-		fmt.Fprintln(stderr, "whodis: --snapshot is an offline input and cannot be combined with targets or --active")
-		return 2
-	}
-	if options.snapshot == "" && len(options.targets) == 0 {
-		fmt.Fprintln(stderr, "whodis: check requires targets or --snapshot")
+	applyCheckConfigDefaults(&options, config, configExists)
+	if err := validateCheckCLIOptions(options); err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
 		return 2
 	}
 	options.format = inferAuditFormat(options.format, options.formatSet, options.output)
+
 	store, err := audit.NewFileStore("")
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
-	var requests []whodis.Request
-	var batch whodis.BatchReport
-	var currentStored *audit.Snapshot
-	if options.snapshot != "" {
-		snapshot, err := store.Get(options.snapshot)
-		if err != nil {
-			fmt.Fprintln(stderr, "whodis:", err)
-			return 2
-		}
-		batch = snapshot.Batch
-		currentStored = &snapshot
-	} else {
-		operation := whodis.OperationInspect
-		if options.active {
-			operation = whodis.OperationDiagnose
-			options.timeout = maxDuration(options.timeout, 30*time.Second)
-		}
-		for _, target := range options.targets {
-			dnssec := true
-			if configExists && config.DNSSEC != nil {
-				dnssec = *config.DNSSEC
-			}
-			dns := whodis.DNSOptions{EDNS: whodis.EDNSOptions{DNSSEC: dnssec}}
-			if configExists {
-				dns.Resolvers = append([]string(nil), config.DNSResolvers...)
-				dns.Strategy = whodis.ResolverStrategy(config.ResolverStrategy)
-			}
-			requests = append(requests, whodis.Request{Operation: operation, Target: target, Timeout: options.timeout, Registration: whodis.LookupOptions{Protocol: whodis.ProtocolAuto, Fallback: whodis.FallbackUnavailable, Timeout: options.timeout}, DNS: dns, Diagnose: whodis.DiagnoseOptions{DNS: dns, Timeout: options.timeout}})
-		}
-		engine := whodis.NewEngine(whodis.EngineOptions{Timeout: options.timeout})
-		defer engine.Close()
-		batch, err = engine.RunBatch(context.Background(), whodis.BatchRequest{Requests: requests, Workers: options.jobs})
-		if err != nil {
-			fmt.Fprintln(stderr, "whodis:", err)
-			return exitCode(err)
-		}
+	requests, batch, currentStored, code, err := loadCheckBatch(options, config, configExists, store)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return code
 	}
-	var changes *audit.ChangeSet
-	if options.against != "" {
-		baseline, err := store.Get(options.against)
-		if err != nil {
-			fmt.Fprintln(stderr, "whodis:", err)
-			return 2
-		}
-		var current audit.Snapshot
-		if currentStored != nil {
-			current = *currentStored
-		} else {
-			current, err = audit.NewSnapshot(requests, batch, audit.GeneratorInfo{Name: "whodis", Version: resolvedVersion()}, "")
-			if err != nil {
-				fmt.Fprintln(stderr, "whodis:", err)
-				return 2
-			}
-		}
-		value, err := audit.Diff(baseline, current, audit.DiffOptions{})
-		if err != nil {
-			fmt.Fprintln(stderr, "whodis:", err)
-			return 2
-		}
-		changes = &value
+	changes, err := loadCheckChanges(options.against, requests, batch, currentStored, store)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 2
 	}
-	var policy *audit.Policy
-	if options.policy != "" {
-		loaded, err := audit.LoadPolicy(options.policy)
-		if err != nil {
-			fmt.Fprintln(stderr, "whodis:", err)
-			return 2
-		}
-		policy = &loaded
+	policy, err := loadCheckPolicy(options.policy)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis:", err)
+		return 2
 	}
 	check, err := audit.Evaluate(batch, changes, audit.EvaluateOptions{Scrutiny: options.scrutiny, Policy: policy})
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 2
 	}
-	if options.save && len(requests) > 0 {
-		if id, err := saveBatchSnapshot(requests, batch, options.label); err != nil {
-			fmt.Fprintln(stderr, "whodis: could not save snapshot:", err)
-			return 1
-		} else {
-			fmt.Fprintln(stderr, "whodis: saved snapshot", id)
-		}
+	if code := saveCheckSnapshot(options, requests, batch, stderr); code != 0 {
+		return code
 	}
 	if err := writeAuditValue(stdout, options.output, options.format, options.force, check, renderHumanCheck(check), renderMarkdownCheck(check)); err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 1
 	}
+	if code := deliverCheckWebhook(options, check, stderr, runtime); code != 0 {
+		return code
+	}
+	return checkExitCode(check)
+}
+
+type checkArgParser struct {
+	args    []string
+	index   int
+	options checkCLIOptions
+}
+
+func parseCheckCLIOptions(args []string) (checkCLIOptions, bool, error) {
+	parser := checkArgParser{
+		args: args,
+		options: checkCLIOptions{
+			scrutiny: audit.ScrutinyStandard, format: "plain",
+			timeout: 20 * time.Second, jobs: 4,
+		},
+	}
+	for parser.index = 0; parser.index < len(parser.args); parser.index++ {
+		help, err := parser.parseCurrent()
+		if err != nil || help {
+			return parser.options, help, err
+		}
+	}
+	return parser.options, false, nil
+}
+
+func (parser *checkArgParser) parseCurrent() (bool, error) {
+	argument := parser.args[parser.index]
+	value := func(name string) (string, error) { return parser.value(name) }
+	switch argument {
+	case "--active":
+		if parser.options.activeSet && !parser.options.active {
+			return false, fmt.Errorf("--active conflicts with --passive")
+		}
+		parser.options.active = true
+		parser.options.activeSet = true
+	case "--passive":
+		if parser.options.activeSet && parser.options.active {
+			return false, fmt.Errorf("--passive conflicts with --active")
+		}
+		parser.options.active = false
+		parser.options.activeSet = true
+	case "--against":
+		item, err := value("--against")
+		if err != nil {
+			return false, err
+		}
+		parser.options.against = item
+	case "--snapshot":
+		item, err := value("--snapshot")
+		if err != nil {
+			return false, err
+		}
+		parser.options.snapshot = item
+	case "--scrutiny":
+		item, err := value("--scrutiny")
+		if err != nil {
+			return false, err
+		}
+		parser.options.scrutiny = audit.Scrutiny(strings.ToLower(item))
+		parser.options.scrutinySet = true
+	case "--policy":
+		item, err := value("--policy")
+		if err != nil {
+			return false, err
+		}
+		parser.options.policy = item
+	case "--webhook":
+		item, err := value("--webhook")
+		if err != nil {
+			return false, err
+		}
+		parser.options.webhook = item
+	case "--webhook-env":
+		item, err := value("--webhook-env")
+		if err != nil {
+			return false, err
+		}
+		parser.options.webhookEnv = item
+	case "--webhook-file":
+		item, err := value("--webhook-file")
+		if err != nil {
+			return false, err
+		}
+		parser.options.webhookFile = item
+	case "--json", "--yaml", "--markdown", "--plain":
+		format := strings.TrimPrefix(argument, "--")
+		if err := setAuditFormat(&parser.options.format, &parser.options.formatSet, format); err != nil {
+			return false, err
+		}
+	case "-f", "--format":
+		item, err := value("--format")
+		if err != nil {
+			return false, err
+		}
+		if err := setAuditFormat(&parser.options.format, &parser.options.formatSet, item); err != nil {
+			return false, err
+		}
+	case "-o", "--output":
+		item, err := value("--output")
+		if err != nil {
+			return false, err
+		}
+		parser.options.output = item
+	case "--force":
+		parser.options.force = true
+	case "--timeout":
+		item, err := value("--timeout")
+		if err != nil {
+			return false, err
+		}
+		duration, err := time.ParseDuration(item)
+		if err != nil || duration <= 0 {
+			return false, fmt.Errorf("--timeout must be a positive duration")
+		}
+		parser.options.timeout = duration
+	case "-j", "--jobs":
+		item, err := value("--jobs")
+		if err != nil {
+			return false, err
+		}
+		jobs, err := strconv.Atoi(item)
+		if err != nil || jobs < 1 || jobs > 32 {
+			return false, fmt.Errorf("--jobs must be between 1 and 32")
+		}
+		parser.options.jobs = jobs
+	case "--save":
+		parser.options.save = true
+	case "--label":
+		item, err := value("--label")
+		if err != nil {
+			return false, err
+		}
+		parser.options.label = item
+	case "-h", "--help":
+		return true, nil
+	default:
+		if strings.HasPrefix(argument, "-") {
+			return false, fmt.Errorf("unknown check option %s", argument)
+		}
+		parser.options.targets = append(parser.options.targets, argument)
+	}
+	return false, nil
+}
+
+func (parser *checkArgParser) value(name string) (string, error) {
+	if parser.index+1 >= len(parser.args) {
+		return "", fmt.Errorf("%s requires a value", name)
+	}
+	parser.index++
+	return parser.args[parser.index], nil
+}
+
+func applyCheckConfigDefaults(options *checkCLIOptions, config userConfig, exists bool) {
+	if !exists {
+		return
+	}
+	if !options.scrutinySet && config.Scrutiny != "" {
+		options.scrutiny = audit.Scrutiny(config.Scrutiny)
+	}
+	if options.snapshot == "" && !options.activeSet && config.CheckActive != nil {
+		options.active = *config.CheckActive
+	}
+}
+
+func validateCheckCLIOptions(options checkCLIOptions) error {
+	if options.label != "" && !options.save {
+		return fmt.Errorf("--label requires --save")
+	}
+	if options.snapshot != "" && (len(options.targets) > 0 || options.active) {
+		return fmt.Errorf("--snapshot is an offline input and cannot be combined with targets or --active")
+	}
+	if options.snapshot == "" && len(options.targets) == 0 {
+		return fmt.Errorf("check requires targets or --snapshot")
+	}
+	return nil
+}
+
+func loadCheckBatch(options checkCLIOptions, config userConfig, configExists bool, store *audit.FileStore) ([]whodis.Request, whodis.BatchReport, *audit.Snapshot, int, error) {
+	if options.snapshot != "" {
+		snapshot, err := store.Get(options.snapshot)
+		if err != nil {
+			return nil, whodis.BatchReport{}, nil, 2, err
+		}
+		return nil, snapshot.Batch, &snapshot, 0, nil
+	}
+	if options.active {
+		options.timeout = maxDuration(options.timeout, 30*time.Second)
+	}
+	requests := buildCheckRequests(options, config, configExists)
+	engine := whodis.NewEngine(whodis.EngineOptions{Timeout: options.timeout})
+	defer engine.Close()
+	batch, err := engine.RunBatch(context.Background(), whodis.BatchRequest{Requests: requests, Workers: options.jobs})
+	if err != nil {
+		return nil, whodis.BatchReport{}, nil, exitCode(err), err
+	}
+	return requests, batch, nil, 0, nil
+}
+
+func buildCheckRequests(options checkCLIOptions, config userConfig, configExists bool) []whodis.Request {
+	operation := whodis.OperationInspect
+	if options.active {
+		operation = whodis.OperationDiagnose
+	}
+	dnssec := true
+	if configExists && config.DNSSEC != nil {
+		dnssec = *config.DNSSEC
+	}
+	dns := whodis.DNSOptions{EDNS: whodis.EDNSOptions{DNSSEC: dnssec}}
+	if configExists {
+		dns.Resolvers = append([]string(nil), config.DNSResolvers...)
+		dns.Strategy = whodis.ResolverStrategy(config.ResolverStrategy)
+	}
+	requests := make([]whodis.Request, 0, len(options.targets))
+	for _, target := range options.targets {
+		requests = append(requests, whodis.Request{
+			Operation: operation, Target: target, Timeout: options.timeout,
+			Registration: whodis.LookupOptions{
+				Protocol: whodis.ProtocolAuto, Fallback: whodis.FallbackUnavailable, Timeout: options.timeout,
+			},
+			DNS: dns, Diagnose: whodis.DiagnoseOptions{DNS: dns, Timeout: options.timeout},
+		})
+	}
+	return requests
+}
+
+func loadCheckChanges(against string, requests []whodis.Request, batch whodis.BatchReport, currentStored *audit.Snapshot, store *audit.FileStore) (*audit.ChangeSet, error) {
+	if against == "" {
+		return nil, nil
+	}
+	baseline, err := store.Get(against)
+	if err != nil {
+		return nil, err
+	}
+	current, err := currentCheckSnapshot(requests, batch, currentStored)
+	if err != nil {
+		return nil, err
+	}
+	changes, err := audit.Diff(baseline, current, audit.DiffOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return &changes, nil
+}
+
+func currentCheckSnapshot(requests []whodis.Request, batch whodis.BatchReport, stored *audit.Snapshot) (audit.Snapshot, error) {
+	if stored != nil {
+		return *stored, nil
+	}
+	return audit.NewSnapshot(requests, batch, audit.GeneratorInfo{Name: "whodis", Version: resolvedVersion()}, "")
+}
+
+func loadCheckPolicy(path string) (*audit.Policy, error) {
+	if path == "" {
+		return nil, nil
+	}
+	policy, err := audit.LoadPolicy(path)
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func saveCheckSnapshot(options checkCLIOptions, requests []whodis.Request, batch whodis.BatchReport, stderr io.Writer) int {
+	if !options.save || len(requests) == 0 {
+		return 0
+	}
+	id, err := saveBatchSnapshot(requests, batch, options.label)
+	if err != nil {
+		fmt.Fprintln(stderr, "whodis: could not save snapshot:", err)
+		return 1
+	}
+	fmt.Fprintln(stderr, "whodis: saved snapshot", id)
+	return 0
+}
+
+func deliverCheckWebhook(options checkCLIOptions, check audit.CheckReport, stderr io.Writer, runtime cliRuntime) int {
 	webhook, err := resolveWebhook(options, runtime)
 	if err != nil {
 		fmt.Fprintln(stderr, "whodis:", err)
 		return 2
 	}
-	if webhook != "" && (check.Summary.Failed > 0 || check.Summary.Unknown > 0) {
-		if err := postCheckWebhook(webhook, check); err != nil {
-			fmt.Fprintln(stderr, "whodis: webhook delivery failed:", err)
-			return 1
-		}
+	if webhook == "" || (check.Summary.Failed == 0 && check.Summary.Unknown == 0) {
+		return 0
 	}
+	if err := postCheckWebhook(webhook, check); err != nil {
+		fmt.Fprintln(stderr, "whodis: webhook delivery failed:", err)
+		return 1
+	}
+	return 0
+}
+
+func checkExitCode(check audit.CheckReport) int {
 	if check.Summary.Failed > 0 {
 		return 5
 	}
@@ -613,7 +703,6 @@ func runCheckCommand(args []string, stdout, stderr io.Writer, runtime cliRuntime
 	}
 	return 0
 }
-
 func resolveWebhook(options checkCLIOptions, runtime cliRuntime) (string, error) {
 	count := 0
 	for _, value := range []string{options.webhook, options.webhookEnv, options.webhookFile} {
