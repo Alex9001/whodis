@@ -30,12 +30,12 @@ jobs:
           - runner: ubuntu-22.04
             arch: amd64
             tool_arch: x86_64
-            linuxdeploy_sha256: 421ca71d5c69ea97c6309276232990d43df1dcece0edfaa26bbf926ff96ed12e
+            linuxdeploy_sha256: 36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62
             qt_plugin_sha256: cfc1055b2b9dbc08412b579f20990b7b41a17b61beaa5847dc9477c96c9e9617
           - runner: ubuntu-22.04-arm
             arch: arm64
             tool_arch: aarch64
-            linuxdeploy_sha256: 9f04c4c2a8b69c392c4bbcc1a88bdd4d0a8ac03f587cf5242814cb7ae47b78e5
+            linuxdeploy_sha256: 556ab80baa98e600aa80f0dcedfb70bca0e1ce7e9f147fb345be3fcc3e91b2b1
             qt_plugin_sha256: d5b5a9020065cefda8c7af7c9500f686b23640eac50c88201a81752c6ee2e49c
     runs-on: ${{ matrix.runner }}
     steps:
