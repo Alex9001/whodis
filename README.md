@@ -16,7 +16,7 @@
   <a href="https://github.com/Alex9001/whodis/releases"><img src="https://img.shields.io/github/downloads/Alex9001/whodis/total?style=flat&amp;color=0ea5e9" alt="Release downloads"></a>
   <a href="https://deepwiki.com/Alex9001/whodis"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6366f1?style=flat" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/Linux%20%7C%20macOS%20%7C%20Windows-111827?style=flat" alt="Linux, macOS, and Windows">
+  <a href="#install"><img src="https://img.shields.io/badge/Linux%20%7C%20macOS%20%7C%20Windows-111827?style=flat" alt="Install Whodis on Linux, macOS, or Windows"></a>
 </p>
 
 <p align="center">
