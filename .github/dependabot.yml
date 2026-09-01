@@ -5,21 +5,54 @@ updates:
     schedule:
       interval: monthly
     groups:
-      go-runtime-dependencies:
+      go-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+      go-runtime-patch-updates:
+        applies-to: version-updates
         dependency-type: production
-      go-development-dependencies:
+        update-types: ["patch"]
+      go-development-patch-updates:
+        applies-to: version-updates
         dependency-type: development
+        update-types: ["patch"]
+      go-runtime-dependencies:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: ["minor", "major"]
+      go-development-dependencies:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: ["minor", "major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
     groups:
+      actions-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+      actions-patch-updates:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["patch"]
       github-actions:
         patterns: ["*"]
+        applies-to: version-updates
+        update-types: ["minor", "major"]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: monthly
     groups:
+      docker-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+      docker-patch-updates:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["patch"]
       container-base:
         patterns: ["*"]
+        applies-to: version-updates
+        update-types: ["minor", "major"]

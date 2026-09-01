@@ -327,3 +327,18 @@ jobs:
           build-args: VERSION=ci
       - name: Smoke-test container entrypoint
         run: docker run --rm whodis:ci --version | grep '^whodis ci$'
+
+  required-ci:
+    name: Required CI gate
+    if: ${{ always() }}
+    needs:
+      - aur-metadata
+      - release-snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every upstream check to pass
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s\n' "$REQUIRED_RESULTS" |
+            jq --exit-status 'all(.[]; .result == "success")'
