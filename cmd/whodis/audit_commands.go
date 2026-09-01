@@ -735,12 +735,14 @@ func postCheckWebhook(endpoint string, check audit.CheckReport) error {
 	if err != nil {
 		return err
 	}
+	// #nosec G704 -- endpoint is explicitly selected by the local CLI user.
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "whodis/"+resolvedVersion())
+	// #nosec G704 -- intentional delivery to the user-selected webhook.
 	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
 	if err != nil {
 		return err
