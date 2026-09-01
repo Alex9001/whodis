@@ -15,7 +15,7 @@ sha256sums=('@SHA256@')
 
 prepare() {
   cd "${pkgname}_${pkgver}"
-  go mod download
+  go -C v2 mod download
 }
 
 build() {
@@ -27,15 +27,15 @@ build() {
   export CGO_LDFLAGS="${LDFLAGS}"
   export GOFLAGS='-buildmode=pie -trimpath -mod=readonly -modcacherw -buildvcs=false'
 
-  go build \
+  go -C v2 build \
     -ldflags="-linkmode=external -X main.version=${pkgver} -X github.com/Alex9001/whodis/v2.version=${pkgver}" \
-    -o whodis \
+    -o ../whodis \
     ./cmd/whodis
 }
 
 check() {
   cd "${pkgname}_${pkgver}"
-  go test ./...
+  go -C v2 test ./...
 }
 
 package() {

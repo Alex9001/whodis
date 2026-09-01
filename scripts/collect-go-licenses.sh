@@ -9,6 +9,9 @@ fi
 
 output_dir=$1
 mkdir -p "$output_dir"
+output_dir=$(CDPATH= cd -- "$output_dir" && pwd)
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 index_file="$output_dir/MODULES.txt"
 missing_file="$output_dir/.missing"
 rm -f "$missing_file"
@@ -16,11 +19,11 @@ tab=$(printf '\t')
 
 printf '%s\n\n' \
     'Go module license material bundled with Whodis.' \
-    'Exact dependency versions are recorded in go.mod, go.sum, and the release SBOM.' \
+    'Exact dependency versions are recorded in v2/go.mod, v2/go.sum, and the release SBOM.' \
     > "$index_file"
 
-go mod download
-go list -deps -f '{{with .Module}}{{if and (not .Main) .Dir}}{{.Path}}{{"\t"}}{{.Dir}}{{end}}{{end}}' \
+go -C "$repo_root/v2" mod download
+go -C "$repo_root/v2" list -buildvcs=false -deps -f '{{with .Module}}{{if and (not .Main) .Dir}}{{.Path}}{{"\t"}}{{.Dir}}{{end}}{{end}}' \
     ./cmd/whodis ./cmd/whodis-gui-engine | sort -u |
 while IFS="$tab" read -r module module_dir; do
     [ -n "$module" ] && [ -d "$module_dir" ] || continue

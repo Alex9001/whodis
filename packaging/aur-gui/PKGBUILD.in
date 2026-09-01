@@ -15,7 +15,7 @@ sha256sums=('@SHA256@')
 
 prepare() {
   cd "whodis_${pkgver}"
-  go mod download
+  go -C v2 mod download
 }
 
 build() {
@@ -30,7 +30,7 @@ build() {
 
 check() {
   cd "whodis_${pkgver}"
-  go test ./...
+  go -C v2 test ./...
   QT_QPA_PLATFORM=offscreen ctest --test-dir build-gui --output-on-failure
 }
 

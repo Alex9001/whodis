@@ -23,20 +23,21 @@ Ninja, Qt 6 Core/Gui/Widgets/Test, and a C++17 compiler.
 ```sh
 git clone https://github.com/Alex9001/whodis.git
 cd whodis
-go test -race ./...
-go vet ./...
-go test ./... -run '^$' -bench . -benchtime=100ms
+go -C v2 test -race ./...
+go -C v2 vet ./...
+go -C v2 test ./... -run '^$' -bench . -benchtime=100ms
 ```
 
-The root package and `audit` package include native Go fuzz targets for subject
-and endpoint parsing, registration text parsing, DNS wire normalization,
-rendering, and policy/snapshot imports. Run one locally with, for example:
+The module's root package and `audit` package include native Go fuzz targets
+for subject and endpoint parsing, registration text parsing, DNS wire
+normalization, rendering, and policy/snapshot imports. Run one locally with,
+for example:
 
 ```sh
-go test . -run '^$' -fuzz=FuzzSubjectAndEndpointParsing -fuzztime=30s
+go -C v2 test . -run '^$' -fuzz=FuzzSubjectAndEndpointParsing -fuzztime=30s
 ```
 
-See [desktop/README.md](desktop/README.md) for GUI build instructions. Keep
+See [desktop/README.md](../desktop/README.md) for GUI build instructions. Keep
 network-dependent behavior behind injectable providers or local fixtures;
 tests must not consume public registry or Globalping quota.
 
