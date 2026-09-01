@@ -39,7 +39,7 @@ jobs:
             qt_plugin_sha256: d5b5a9020065cefda8c7af7c9500f686b23640eac50c88201a81752c6ee2e49c
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -62,7 +62,7 @@ jobs:
           printf '%s  %s\n' "$QT_PLUGIN_SHA256" linuxdeploy-plugin-qt | sha256sum --check --strict
           chmod +x linuxdeploy linuxdeploy-plugin-qt
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Build AppImage
@@ -142,7 +142,7 @@ jobs:
 
           cleanup_weston
           trap - EXIT
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: whodis-gui-linux-${{ matrix.arch }}
           path: release-assets/*
@@ -164,7 +164,7 @@ jobs:
             msvc_arch: amd64_arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -177,7 +177,7 @@ jobs:
           arch: ${{ matrix.qt_arch }}
           cache: true
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Build and deploy
@@ -220,7 +220,7 @@ jobs:
             "/DVERSION=$version" `
             "/DOUTPUT_FILE=$PWD\release-assets\whodis-gui_windows_${{ matrix.arch }}_setup.exe" `
             desktop/packaging/windows/installer.nsi
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: whodis-gui-windows-${{ matrix.arch }}
           path: release-assets/*
@@ -230,7 +230,7 @@ jobs:
     name: Build universal macOS GUI
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -240,7 +240,7 @@ jobs:
           arch: clang_64
           cache: true
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Build universal app and DMG
@@ -297,7 +297,7 @@ jobs:
           test -d "$app/Contents/Frameworks/QtCore.framework"
           hdiutil create -volname Whodis -srcfolder "$app" -ov -format UDZO \
             "release-assets/whodis-gui_macos_universal.dmg"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: whodis-gui-macos-universal
           path: release-assets/*
@@ -315,7 +315,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -323,13 +323,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: whodis-gui-*
           path: .release-assets/gui
           merge-multiple: true
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Vet, test, and analyze release source
@@ -383,7 +383,7 @@ jobs:
           fi
       - name: Upload private preflight bundle
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: whodis-${{ inputs.version }}-release-preflight
           path: |
@@ -394,7 +394,7 @@ jobs:
           if-no-files-found: error
       - name: Attest release artifacts
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: |
             dist/**/*.tar.gz
@@ -458,7 +458,7 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "AUR publishing skipped: no deploy key or this is a prerelease tag."
           fi
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.aur.outputs.enabled == 'true'
         with:
           persist-credentials: false
@@ -491,18 +491,18 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Sign in to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate image metadata
         id: metadata
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/alex9001/whodis
           tags: |
@@ -510,7 +510,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - name: Build and publish multi-architecture image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
