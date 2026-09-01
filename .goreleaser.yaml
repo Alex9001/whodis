@@ -2,12 +2,16 @@ version: 2
 
 project_name: whodis
 
+gomod:
+  dir: ./v2
+
 before:
   hooks:
     - ./scripts/collect-go-licenses.sh .release-assets/go-licenses
 
 builds:
   - id: whodis
+    dir: ./v2
     main: ./cmd/whodis
     binary: whodis
     env:
@@ -39,7 +43,8 @@ archives:
           - zip
     files:
       - README.md
-      - MIGRATING_TO_V2.md
+      - src: docs/MIGRATING_TO_V2.md
+        dst: MIGRATING_TO_V2.md
       - LICENSE
       - src: ./.release-assets/go-licenses/*
         dst: Go-Licenses
@@ -75,7 +80,7 @@ nfpms:
         dst: /usr/share/licenses/whodis/LICENSE
       - src: ./README.md
         dst: /usr/share/doc/whodis/README.md
-      - src: ./MIGRATING_TO_V2.md
+      - src: ./docs/MIGRATING_TO_V2.md
         dst: /usr/share/doc/whodis/MIGRATING_TO_V2.md
       - src: ./.release-assets/go-licenses
         dst: /usr/share/licenses/whodis/third-party

@@ -51,6 +51,15 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/go.sum
+      - name: Validate Go module layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(go -C v2 list -m)" = "github.com/Alex9001/whodis/v2"
+          test ! -e go.mod
+          test ! -e go.sum
+          test -z "$(find . -maxdepth 1 -type f -name '*.go' -print -quit)"
       - name: Validate Unix installer syntax
         run: |
           sh -n scripts/install.sh
@@ -144,18 +153,18 @@ jobs:
             echo "installer accepted a corrupted archive" >&2
             exit 1
           fi
-      - run: go vet ./...
+      - run: go -C v2 vet ./...
       - name: Validate GitHub Actions workflows
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -config-file .github/actionlint.yaml .github/workflows/*.yml
+        run: go -C v2 run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -config-file "$GITHUB_WORKSPACE/.github/actionlint.yaml" "$GITHUB_WORKSPACE"/.github/workflows/*.yml
       - name: Run staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        run: go -C v2 run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
       - name: Enforce Go complexity guardrails
         run: scripts/check-complexity.sh go
-      - run: go test -race ./...
+      - run: go -C v2 test -race ./...
       - name: Run Go security static analysis
-        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -exclude-generated -quiet ./...
+        run: go -C v2 run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -exclude-generated -quiet ./...
       - name: Scan Go dependencies and reachable code
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+        run: go -C v2 run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
   powershell-installer:
     name: Test Windows and PowerShell installer
@@ -165,8 +174,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/go.sum
       - name: Test Windows build
-        run: go test ./...
+        run: go -C v2 test ./...
       - name: Parse installer
         shell: pwsh
         run: |
@@ -213,6 +223,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/go.sum
       - name: Install Qt build dependencies
         run: |
           sudo apt-get update
@@ -267,6 +278,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/go.sum
       - name: Install GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
@@ -304,12 +316,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/go.sum
       - name: Cross-build pure-Go CLI
         env:
           CGO_ENABLED: 0
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath ./cmd/whodis
+        run: go -C v2 build -trimpath ./cmd/whodis
 
   container-build:
     name: Build OCI image

@@ -61,7 +61,7 @@ set_target_properties(whodis-gui PROPERTIES
 
 find_program(GO_EXECUTABLE go REQUIRED)
 file(GLOB_RECURSE WHODIS_ENGINE_GO_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/../*.go"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../v2/*.go"
 )
 if(WIN32)
     set(WHODIS_ENGINE_FILENAME "whodis-gui-engine.exe")
@@ -75,11 +75,11 @@ add_custom_command(
             "-ldflags=-s -w -X main.version=${WHODIS_VERSION} -X github.com/Alex9001/whodis/v2.version=${WHODIS_VERSION}"
             -o "${WHODIS_ENGINE_OUTPUT}"
             ./cmd/whodis-gui-engine
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../v2"
     DEPENDS
         ${WHODIS_ENGINE_GO_SOURCES}
-        "${CMAKE_CURRENT_SOURCE_DIR}/../go.mod"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../go.sum"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../v2/go.mod"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../v2/go.sum"
     VERBATIM
 )
 add_custom_target(whodis-gui-engine ALL DEPENDS "${WHODIS_ENGINE_OUTPUT}")

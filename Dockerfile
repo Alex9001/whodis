@@ -1,11 +1,11 @@
 FROM golang:1.27-alpine AS build
 
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
+COPY v2/go.mod v2/go.sum ./v2/
+RUN go -C v2 mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 go -C v2 build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X github.com/Alex9001/whodis/v2.version=${VERSION}" \
     -o /out/whodis ./cmd/whodis
 RUN ./scripts/collect-go-licenses.sh /out/licenses/third-party && cp LICENSE /out/licenses/LICENSE

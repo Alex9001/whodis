@@ -5,7 +5,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 
 check_go() {
-  cd "$repo_root"
+  cd "$repo_root/v2"
   echo "Checking Go cyclomatic complexity (maximum 50)..."
   if ! go run github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0 \
     -ignore '_test\.go$' -over 50 .; then

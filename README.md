@@ -595,19 +595,23 @@ The native GUI's private newline-delimited JSON-RPC protocol is version 5 and
 carries schema-v5 reports through the same operation engine as the CLI, plus
 progress, cancellation, the research-provider catalog, short-lived in-memory
 result tokens, and exports. See
-[MIGRATING_TO_V2.md](MIGRATING_TO_V2.md) when upgrading an embedded v1 client.
+[v2 migration guide](docs/MIGRATING_TO_V2.md) when upgrading an embedded v1
+client.
 
 ## Development and release integrity
 
 ```bash
 git clone https://github.com/Alex9001/whodis.git
 cd whodis
-go test -race ./...
-go vet ./...
+go -C v2 test -race ./...
+go -C v2 vet ./...
 scripts/check-complexity.sh go
-go test ./... -run '^$' -bench . -benchtime=100ms
-go run ./cmd/whodis example.com
+go -C v2 test ./... -run '^$' -bench . -benchtime=100ms
+go -C v2 run ./cmd/whodis example.com
 ```
+
+The Go module uses the standard `v2/` major-version directory. Its public
+module path remains `github.com/Alex9001/whodis/v2`.
 
 The desktop build additionally needs CMake, Ninja, Qt 6 Core/Gui/Widgets/Test,
 and a C++17 compiler; source builds require Go 1.25 or newer. With Clang and

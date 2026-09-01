@@ -21,4 +21,4 @@ licenses: miekg/dns and the Go extended libraries (BSD), quic-go and qpack
 (MIT), ProjectDiscovery wappalyzergo (MIT), dnscrypt and dnsstamps (Unlicense),
 go-runewidth (MIT), and yaml.v3 (MIT/Apache-style notice). Their exact license
 texts are bundled in the `Go-Licenses` directory; versions are recorded by
-`go.mod`, `go.sum`, and each release's generated SBOM.
+`v2/go.mod`, `v2/go.sum`, and each release's generated SBOM.
