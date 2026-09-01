@@ -368,17 +368,34 @@ jobs:
           args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate and bundle release SBOMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find .release-assets/gui -maxdepth 1 -type f -name '*.sbom.json' | wc -l)" -eq 5
+          for sbom in .release-assets/gui/*.sbom.json; do
+            jq --exit-status '.packages | length >= 10' "$sbom" >/dev/null
+          done
+          scripts/bundle-sboms.sh "$WHODIS_BUILD_VERSION" dist/checksums.txt dist \
+            cli=dist gui=.release-assets/gui
       - name: Verify staged release identities and SBOMs
         shell: bash
         run: |
           set -euo pipefail
+          version=${WHODIS_BUILD_VERSION#v}
+          sbom_bundle="dist/whodis_${version}_sboms.zip"
           test -s dist/checksums.txt
           grep -q 'whodis-gui_' dist/checksums.txt
-          for sbom in .release-assets/gui/*.sbom.json; do
-            jq --exit-status '.packages | length >= 10' "$sbom" >/dev/null
-            grep -qi whodis "$sbom"
-          done
-          test "$(find .release-assets/gui -maxdepth 1 -type f -name '*.sbom.json' | wc -l)" -eq 5
+          test -s "$sbom_bundle"
+          unzip -tqq "$sbom_bundle"
+          test "$(unzip -Z1 "$sbom_bundle" | grep -c '^gui/.*\.sbom\.json$')" -eq 5
+          test "$(unzip -Z1 "$sbom_bundle" | grep -c '^cli/.*\.sbom\.json$')" -gt 0
+          test -z "$(find dist .release-assets/gui -type f -name '*.sbom.json' -print -quit)"
+          if grep -q '\.sbom\.json$' dist/checksums.txt; then
+            echo "checksums.txt still contains an individual SBOM" >&2
+            exit 1
+          fi
+          (cd dist && grep "  $(basename "$sbom_bundle")$" checksums.txt | sha256sum --check --strict -)
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             version=${GITHUB_REF_NAME#v}
             cli=$(find dist -type f -path '*linux_amd64*/whodis' -print -quit)

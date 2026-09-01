@@ -71,6 +71,7 @@ jobs:
           sh -n scripts/render-community-packages.sh
           sh -n scripts/collect-qt-licenses.sh
           sh -n scripts/collect-go-licenses.sh
+          sh -n scripts/bundle-sboms.sh
       - name: Validate AUR template rendering
         run: |
           aur_test_dir="$(mktemp -d)"
@@ -293,6 +294,12 @@ jobs:
         run: goreleaser check
       - name: Build release snapshot
         run: goreleaser release --snapshot --clean
+      - name: Bundle release snapshot SBOMs
+        run: |
+          scripts/bundle-sboms.sh snapshot dist/checksums.txt dist cli=dist
+          test -s dist/whodis_snapshot_sboms.zip
+          test -z "$(find dist -type f -name '*.sbom.json' -print -quit)"
+          (cd dist && grep '  whodis_snapshot_sboms.zip$' checksums.txt | sha256sum --check --strict -)
 
   platform-builds:
     name: Build CLI (${{ matrix.goos }}/${{ matrix.goarch }})
