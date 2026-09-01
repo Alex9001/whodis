@@ -626,8 +626,9 @@ and advisory so ordinary CI stays deterministic and offline.
 Release automation has a non-publishing preflight that cross-builds the pure-Go
 CLI and every native desktop bundle before a tag is created. It runs race and
 vulnerability checks, generates staged-content SBOMs and SHA-256 checksums,
-attests the exact release bytes, and only then publishes them. Releases remain
-split into CLI and GUI assets so a server never needs to install Qt.
+bundles the SBOMs into one auditor-friendly download, attests the exact release
+bytes, and only then publishes them. Releases remain split into CLI and GUI
+assets so a server never needs to install Qt.
 
 ## Boundaries and honest limitations
 
