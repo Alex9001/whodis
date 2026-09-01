@@ -269,6 +269,7 @@ void ResultWidgetTest::displaysSchemaV5WorkbenchTabs()
 void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
 {
     ResultWidget widget;
+    widget.resize(1100, 800);
     widget.show();
     widget.setInvestigationLinkProviders(QJsonArray{
         QJsonObject{{QStringLiteral("label"), QStringLiteral("BuiltWith")},
@@ -449,10 +450,16 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
 
     tabs->setCurrentIndex(researchTab);
     QTreeWidgetItem *builtWith = research->topLevelItem(0)->child(0);
+    research->scrollToItem(builtWith);
+    QCoreApplication::processEvents();
     research->selectionModel()->select(
         QItemSelection(research->indexFromItem(builtWith, 0), research->indexFromItem(builtWith, 1)),
         QItemSelectionModel::ClearAndSelect);
     QCOMPARE(widget.selectionText(), QStringLiteral("BuiltWith\tTechnology profile"));
+
+    const QRect builtWithRect = research->visualRect(research->indexFromItem(builtWith, 0));
+    QVERIFY(!builtWithRect.isEmpty());
+    QVERIFY(research->viewport()->rect().contains(builtWithRect.center()));
 
     bool openLinkFound = false;
     bool copyLinkFound = false;
@@ -475,8 +482,7 @@ void ResultWidgetTest::displaysInvestigationStackAndRelatedTabs()
         }
     });
     QApplication::clipboard()->clear();
-    emit research->customContextMenuRequested(
-        research->visualRect(research->indexFromItem(builtWith, 0)).center());
+    emit research->customContextMenuRequested(builtWithRect.center());
     QVERIFY(openLinkFound);
     QVERIFY(copyLinkFound);
     QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("https://builtwith.com/example.com"));
