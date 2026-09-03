@@ -2,7 +2,11 @@
   <img src="docs/whodis_logo.png" width="150" alt="Whodis logo">
 </p>
 
-<h1 align="center">whodis</h1>
+<h1 align="center">WHODIS: Web Host Observatory Domain Investigation Suite</h1>
+
+<p align="center">
+  <img src="docs/whodis_preview.png" alt="WHODIS preview">
+</p>
 
 <p align="center">
   <strong>A full, evidence-backed domain investigation suite.</strong><br>
