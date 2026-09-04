@@ -128,7 +128,7 @@ MainWindow::MainWindow(QWidget *parent)
     helpMenu->addSeparator();
     helpMenu->addAction(tr("About Whodis"), this, [this] {
         QMessageBox::about(this, tr("About Whodis"),
-                           tr("Whodis %1\n\nA full, evidence-backed domain investigation suite for registration, DNS, infrastructure, diagnostics, technology detection, research, and change monitoring.\n\nHomepage: https://cyberbrand.net/whodis/\nSource and releases: https://github.com/Alex9001/whodis\n\nMIT © 2026 Aleksandr Oreshkin")
+                           tr("Whodis %1\nWeb Host Observatory Domain Investigation Suite\n\nA full, evidence-backed domain investigation suite for registration, DNS, infrastructure, diagnostics, technology detection, research, and change monitoring.\n\nHomepage: https://cyberbrand.net/whodis/\nSource and releases: https://github.com/Alex9001/whodis\n\nMIT © 2026 Aleksandr Oreshkin")
                                .arg(QStringLiteral(WHODIS_GUI_VERSION)));
     });
 
