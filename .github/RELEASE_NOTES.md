@@ -1,40 +1,35 @@
 <!-- Update this heading and body before each stable release. The release
 workflow uses this file only when the heading matches the tag. -->
-# Whodis v2.5.2
+# Whodis v2.5.3
 
-Whodis 2.5.2 hardens registration target handling, makes native desktop results
-substantially easier to copy and research, and adds maintainability guardrails.
+Whodis 2.5.3 introduces the expanded WHODIS identity, reorganizes the source
+tree for clearer Go module boundaries, and improves release artifact auditing.
 CLI behavior, report schema, and the GUI engine protocol remain compatible with
-2.5.1.
+2.5.2.
 
-## Lookup reliability
+## Branding and documentation
 
-- Hostname and URL normalization now rejects ambiguous AS-number prefixes while
-  preserving valid domains, including compatibility cases such as
-  `askjeeves.com`.
-- Homepage redirect handling keeps the effective response URL without losing
-  the originally requested investigation target.
-- New regression, fuzz, and benchmark coverage exercises target parsing,
-  redirect resolution, and bounded homepage analysis.
+- WHODIS is now presented as Web Host Observatory Domain Investigation Suite
+  in the README and the desktop About dialog.
+- The README includes refreshed logo and product-preview artwork, clearer badge
+  styling, and a direct link from the platform badge to installation guidance.
 
-## Desktop result interaction
+## Source layout
 
-- Result grids and trees support selectable cells and multi-cell copying.
-- Copy Selection and Copy Full Result are separate actions in the Edit menu and
-  toolbar, with correct enabled states for the focused field.
-- Research rows provide Copy and Open Link actions through their context menu;
-  double-click opening remains available.
-- Stack detail text, raw output, overview fields, DNS results, evidence, related
-  domains, and research results can now be selected without retyping values.
+- The Go module and its packages now live under `v2/`, matching the public
+  module version while retaining the existing
+  `github.com/Alex9001/whodis/v2` import path.
+- Contributor, security, migration, build, packaging, and CI paths have been
+  updated for the new layout.
 
-## Maintenance and dependencies
+## Release integrity and maintenance
 
-- Large CLI parsing, audit-check, and custom-policy functions are divided into
-  focused components with equivalent behavior and expanded tests.
-- CI now prevents severe Go cyclomatic/cognitive complexity and C++ cognitive
-  complexity regressions.
-- Go runtime dependencies, the container build image, and pinned GitHub Actions
-  have been refreshed to their reviewed Dependabot versions.
+- Release SBOMs are consolidated into one versioned bundle with checksum and
+  content validation, while individual SBOM files are omitted from the public
+  asset set.
+- Dependabot can automatically merge reviewed patch and minor updates when the
+  required checks pass.
+- Documentation badges have consistent styling and include the DeepWiki entry.
 
 ## Compatibility
 
