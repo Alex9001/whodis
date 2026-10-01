@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
-	github.com/mattn/go-runewidth v0.0.28
+	github.com/mattn/go-runewidth v0.0.30
 	github.com/miekg/dns v1.1.73
 	github.com/projectdiscovery/wappalyzergo v0.2.95
 	github.com/quic-go/quic-go v0.61.0
