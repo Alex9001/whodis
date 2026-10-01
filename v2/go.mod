@@ -1,16 +1,16 @@
 module github.com/Alex9001/whodis/v2
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/miekg/dns v1.1.73
-	github.com/projectdiscovery/wappalyzergo v0.2.95
-	github.com/quic-go/quic-go v0.61.0
-	golang.org/x/net v0.58.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
+	github.com/projectdiscovery/wappalyzergo v0.3.3
+	github.com/quic-go/quic-go v0.63.0
+	golang.org/x/net v0.59.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -18,9 +18,8 @@ require (
 	github.com/AdguardTeam/golibs v0.32.7 // indirect
 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
