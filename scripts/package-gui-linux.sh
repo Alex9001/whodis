@@ -8,6 +8,9 @@ if [ "$#" -ne 3 ]; then
 fi
 
 version=${1#v}
+printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || {
+    echo "invalid release version: $version" >&2; exit 2;
+}
 build_dir=$2
 output_dir=$3
 linuxdeploy=${LINUXDEPLOY:-linuxdeploy}
@@ -45,8 +48,8 @@ export EXTRA_PLATFORM_PLUGINS=$wayland_platform_plugins
 export EXTRA_QT_MODULES=waylandcompositor
 
 case "$(uname -m)" in
-    x86_64|amd64) release_arch=amd64 ;;
-    aarch64|arm64) release_arch=arm64 ;;
+    x86_64|amd64) release_arch=x86_64 ;;
+    aarch64|arm64) release_arch=aarch64 ;;
     *) echo "unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -66,14 +69,28 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 "$script_dir/collect-go-licenses.sh" \
     "$app_dir/usr/share/licenses/whodis-gui/Go-Licenses"
 
-output="$output_dir/whodis-gui_linux_${release_arch}.AppImage"
-NO_STRIP=1 OUTPUT="$output" "$linuxdeploy" \
+desktop="$app_dir/usr/share/applications/net.cyberbrand.whodis.desktop"
+metadata="$app_dir/usr/share/metainfo/net.cyberbrand.whodis.appdata.xml"
+desktop-file-validate "$desktop"
+appstreamcli validate --no-net "$metadata"
+
+output="$output_dir/whodis-gui-${version}-${release_arch}.AppImage"
+channel=latest
+case "$version" in *-*) channel="v$version" ;; esac
+update_information="gh-releases-zsync|Alex9001|whodis|$channel|whodis-gui-*-${release_arch}.AppImage.zsync"
+NO_STRIP=1 LDAI_VERSION="$version" LDAI_OUTPUT="$output" LDAI_UPDATE_INFORMATION="$update_information" "$linuxdeploy" \
     --appdir "$app_dir" \
     --desktop-file "$app_dir/usr/share/applications/net.cyberbrand.whodis.desktop" \
     --icon-file "$app_dir/usr/share/pixmaps/net.cyberbrand.whodis.png" \
     --plugin qt \
     --output appimage
+# linuxdeploy's bundled zsyncmake writes the sidecar into the working directory.
+zsync="$(basename "$output").zsync"
+if [ -f "$zsync" ] && [ ! "$zsync" -ef "$output.zsync" ]; then
+    mv "$zsync" "$output.zsync"
+fi
 test -f "$output"
+python3 "$script_dir/check-appimage-update.py" "$output" --expected-channel "$update_information"
 test -f "$app_dir/usr/plugins/platforms/libqxcb.so"
 wayland_platform_deployed=false
 for plugin in libqwayland.so libqwayland-egl.so libqwayland-generic.so; do

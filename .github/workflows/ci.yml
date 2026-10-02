@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: 1.26.6
+  GO_VERSION: 1.26.8
   GORELEASER_VERSION: v2.17.1
   SYFT_VERSION: v1.51.0
 
@@ -72,6 +72,11 @@ jobs:
           sh -n scripts/collect-qt-licenses.sh
           sh -n scripts/collect-go-licenses.sh
           sh -n scripts/bundle-sboms.sh
+      - name: Test AppImage update validation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsync
+          python3 -m unittest discover -s scripts -p 'test_check_*.py'
       - name: Validate AUR template rendering
         run: |
           aur_test_dir="$(mktemp -d)"
@@ -262,7 +267,7 @@ jobs:
           test -x "$RUNNER_TEMP/whodis-gui-install/libexec/whodis/whodis-gui-engine"
           test -s "$RUNNER_TEMP/whodis-gui-install/share/licenses/whodis-gui/Go-Licenses/MODULES.txt"
           desktop-file-validate "$RUNNER_TEMP/whodis-gui-install/share/applications/net.cyberbrand.whodis.desktop"
-          appstreamcli validate --no-net "$RUNNER_TEMP/whodis-gui-install/share/metainfo/net.cyberbrand.whodis.metainfo.xml"
+          appstreamcli validate --no-net "$RUNNER_TEMP/whodis-gui-install/share/metainfo/net.cyberbrand.whodis.appdata.xml"
 
   release-snapshot:
     needs:
@@ -336,9 +341,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build local image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true

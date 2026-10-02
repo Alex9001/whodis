@@ -99,7 +99,10 @@ the user explicitly checks the third-party remote-probe option.
 One stable tag builds both applications:
 
 - GoReleaser publishes the cross-platform `whodis` CLI archives and installers.
-- Linux jobs publish amd64 and arm64 AppImages.
+- Linux jobs publish versioned x86_64 (amd64) and aarch64 (arm64) AppImages,
+  each with embedded external-update information and a matching `.zsync` file.
+  See [packaging guidance](../.github/maintainers/PACKAGING.md) for catalog and
+  release validation.
 - Windows jobs publish amd64 and arm64 per-user installers and portable ZIPs.
 - macOS publishes one universal DMG for Intel and Apple silicon.
 

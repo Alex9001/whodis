@@ -1,43 +1,39 @@
 <!-- Update this heading and body before each stable release. The release
 workflow uses this file only when the heading matches the tag. -->
-# Whodis v2.5.3
+# Whodis v2.5.4
 
-Whodis 2.5.3 introduces the expanded WHODIS identity, reorganizes the source
-tree for clearer Go module boundaries, and improves release artifact auditing.
-CLI behavior, report schema, and the GUI engine protocol remain compatible with
-2.5.2.
+Whodis 2.5.4 updates its runtime dependencies and adds AppImage catalog and
+external update compatibility to the Linux desktop packages.
 
-## Branding and documentation
+## Linux AppImage integration
 
-- WHODIS is now presented as Web Host Observatory Domain Investigation Suite
-  in the README and the desktop About dialog.
-- The README includes refreshed logo and product-preview artwork, clearer badge
-  styling, and a direct link from the platform badge to installation guidance.
+- AppImages use versioned, architecture-specific names:
+  `whodis-gui-2.5.4-x86_64.AppImage` and
+  `whodis-gui-2.5.4-aarch64.AppImage`.
+- Each image embeds a GitHub Releases update channel and ships a matching
+  `.AppImage.zsync` sidecar for external AppImageUpdate-compatible tools.
+  Stable builds track the latest stable release; prereleases use their own tag.
+  No in-app updater or automatic background update check is added.
+- Desktop and AppStream metadata are validated during packaging and installed
+  with a filename understood by the AppImage catalog worker.
+- Release gates verify update metadata, sidecar contents and exact zsync
+  reconstruction, audit packaged ELF compatibility and dependencies, run the
+  pinned upstream catalog worker, and capture visible x86_64 application startup
+  on Ubuntu 22.04 and 24.04 without a Qt SDK.
+- Both architecture builds retain X11 and Wayland smoke tests. AppImage and
+  sidecar files are included in release checksums and artifact attestations.
 
-## Source layout
+These changes prepare Whodis for AppImage catalog submission; this release does
+not itself add a listing to appimage.github.io.
 
-- The Go module and its packages now live under `v2/`, matching the public
-  module version while retaining the existing
-  `github.com/Alex9001/whodis/v2` import path.
-- Contributor, security, migration, build, packaging, and CI paths have been
-  updated for the new layout.
+## Maintenance and release verification
 
-## Release integrity and maintenance
+- Update go-runewidth, wappalyzergo, quic-go, and the Go networking, terminal,
+  cryptography, system, and text dependencies.
+- Update Docker Buildx, Docker build/push, QEMU, and Qt installation actions.
+- Source builds now require Go 1.26 or newer; CI uses Go 1.26.8.
+- The non-publishing release preflight now also builds the multi-architecture
+  OCI image before release publication is allowed.
 
-- Release SBOMs are consolidated into one versioned bundle with checksum and
-  content validation, while individual SBOM files are omitted from the public
-  asset set.
-- Dependabot can automatically merge reviewed patch and minor updates when the
-  required checks pass.
-- Documentation badges have consistent styling and include the DeepWiki entry.
-
-## Compatibility
-
-- Public report schema remains version 5.
-- The private GUI protocol remains version 5.
-- Existing commands, formats, configuration files, and snapshot imports remain
-  compatible.
-
-The release pipeline builds and verifies the CLI and native GUI for Linux,
-Windows, and macOS, then publishes checksums, SBOMs, provenance, installers,
-archives, native packages, and the multi-architecture container image.
+Existing CLI commands, output schemas, GUI engine protocol, configuration files,
+and snapshot imports remain compatible. Desktop packages remain unsigned.

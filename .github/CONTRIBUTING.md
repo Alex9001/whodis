@@ -17,7 +17,7 @@ Security vulnerabilities should be reported privately as described in
 
 ## Development
 
-Whodis requires Go 1.25 or newer. The native desktop build also needs CMake,
+Whodis requires Go 1.26 or newer. The native desktop build also needs CMake,
 Ninja, Qt 6 Core/Gui/Widgets/Test, and a C++17 compiler.
 
 ```sh

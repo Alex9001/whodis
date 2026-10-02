@@ -6,7 +6,7 @@ on:
       version:
         description: Version identity used by non-publishing preflight packages
         required: true
-        default: 2.5.3
+        default: 2.5.4
   push:
     tags:
       - "v*"
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: 1.26.6
+  GO_VERSION: 1.26.8
   GORELEASER_VERSION: v2.17.1
   SYFT_VERSION: v1.51.0
   WHODIS_BUILD_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
@@ -47,7 +47,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libgl1-mesa-dev libfuse2 file weston xauth xvfb
+          sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-tools-dev-tools qt6-wayland libgl1-mesa-dev libfuse2 file weston xauth xvfb desktop-file-utils appstream zsync
       - name: Install linuxdeploy
         env:
           LINUXDEPLOY_SHA256: ${{ matrix.linuxdeploy_sha256 }}
@@ -173,7 +173,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: ${{ matrix.msvc_arch }}
-      - uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+      - uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
           version: '6.10.2'
           arch: ${{ matrix.qt_arch }}
@@ -237,7 +237,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: v2/go.sum
-      - uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+      - uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
           version: '6.10.2'
           arch: clang_64
@@ -306,12 +306,126 @@ jobs:
           path: release-assets/*
           if-no-files-found: error
 
+  appimage-compatibility:
+    name: Verify AppImage runtime (${{ matrix.os }})
+    needs: gui-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: whodis-gui-linux-amd64
+          path: candidates
+      - name: Install runtime tools without a Qt SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth libfuse2 libxcb-cursor0 libxkbcommon-x11-0 libgl1 libegl1 libopengl0 zsync binutils libc-bin xdotool imagemagick
+      - name: Validate exact AppImage and update sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${WHODIS_BUILD_VERSION#v}
+          image="candidates/whodis-gui-${version}-x86_64.AppImage"
+          chmod +x "$image"
+          channel=latest
+          case "$version" in *-*) channel="v$version" ;; esac
+          python3 scripts/check-appimage-update.py "$image" --expected-channel \
+            "gh-releases-zsync|Alex9001|whodis|$channel|whodis-gui-*-x86_64.AppImage.zsync"
+          xvfb-run -a python3 scripts/check-linux-appimage.py "$image" \
+            --evidence build/linux-evidence
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: appimage-runtime-evidence-${{ matrix.os }}
+          path: build/linux-evidence/
+
+  container-preflight:
+    name: Verify multi-architecture OCI build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          outputs: type=oci,dest=/tmp/whodis-container.tar
+          build-args: VERSION=${{ env.WHODIS_BUILD_VERSION }}
+          provenance: mode=max
+          sbom: true
+
+  appimage-catalog:
+    name: Verify upstream AppImage catalog compatibility
+    needs: gui-linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      DISPLAY: ':99'
+      IS_PULLREQUEST: 'true'
+      STRICT: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: whodis-gui-linux-amd64
+          path: candidates
+      - name: Record candidate identity
+        run: sha256sum candidates/*.AppImage > candidate-sha256.txt
+      - name: Check out pinned upstream catalog worker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AppImage/appimage.github.io
+          ref: f1249e9e1ff840dd53a6218aec3451ebd6bf476d
+          path: catalog
+      - name: Install upstream worker dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sudo imagemagick libasound2-dev pulseaudio-utils alsa-utils alsa-oss libjack0 desktop-file-utils xmlstarlet xsel xterm xvfb icewm x11-utils x11-apps netpbm xdotool libgl1-mesa-dri libgl1-mesa-dev mesa-utils libosmesa6 libsdl1.2-dev libsdl2-2.0-0 fonts-wqy-microhei libfile-mimeinfo-perl tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim tesseract-ocr-ara tesseract-ocr-rus tesseract-ocr-ell libfuse2 stalonetray
+          cd catalog
+          bash code/fetch-deps.sh
+          cp -a deps/. .
+          sudo bash code/prep-dummy-soundcard.sh
+          sudo gem install dupervisor -v 1.0.5
+          sudo npm install -g asar
+      - name: Run unmodified catalog worker against candidate bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory candidates > server.log 2>&1 &
+          Xvfb :99 -screen 0 800x600x24 > xvfb.log 2>&1 &
+          mkdir -p "$HOME/.icewm"
+          echo 'ShowTaskBar = 0' > "$HOME/.icewm/preferences"
+          sleep 2
+          cd catalog
+          echo "http://127.0.0.1:8765/whodis-gui-${WHODIS_BUILD_VERSION#v}-x86_64.AppImage" > data/Whodis
+          timeout --kill-after=30 600 bash -e code/worker.sh "$PWD/data/Whodis" 2>&1 | tee ../catalog.log
+          cmp BeingTested.AppImage "../candidates/whodis-gui-${WHODIS_BUILD_VERSION#v}-x86_64.AppImage"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: appimage-catalog-evidence
+          path: |
+            catalog.log
+            candidate-sha256.txt
+            catalog/database/Whodis/
+            catalog/failure-screens/
+            server.log
+            xvfb.log
   release:
     name: Assemble, verify, and optionally publish release
     needs:
       - gui-linux
       - gui-windows
       - gui-macos
+      - appimage-compatibility
+      - appimage-catalog
+      - container-preflight
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -385,7 +499,16 @@ jobs:
           version=${WHODIS_BUILD_VERSION#v}
           sbom_bundle="dist/whodis_${version}_sboms.zip"
           test -s dist/checksums.txt
-          grep -q 'whodis-gui_' dist/checksums.txt
+          grep -q 'whodis-gui-' dist/checksums.txt
+          for arch in x86_64 aarch64; do
+            image="whodis-gui-${version}-${arch}.AppImage"
+            for asset in "$image" "$image.zsync"; do
+              test -s ".release-assets/gui/$asset"
+              checksum=$(awk -v asset="$asset" '$2 == asset { print }' dist/checksums.txt)
+              test "$(printf '%s\n' "$checksum" | grep -c .)" -eq 1
+              (cd .release-assets/gui && printf '%s\n' "$checksum" | sha256sum --check --strict -)
+            done
+          done
           test -s "$sbom_bundle"
           unzip -tqq "$sbom_bundle"
           test "$(unzip -Z1 "$sbom_bundle" | grep -c '^gui/.*\.sbom\.json$')" -eq 5
@@ -513,8 +636,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Sign in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -531,7 +654,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - name: Build and publish multi-architecture image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64

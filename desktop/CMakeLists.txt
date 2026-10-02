@@ -95,7 +95,10 @@ if(NOT APPLE)
     else()
         install(PROGRAMS "${WHODIS_ENGINE_OUTPUT}" DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/whodis")
         install(FILES packaging/net.cyberbrand.whodis.desktop DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
-        install(FILES packaging/net.cyberbrand.whodis.metainfo.xml DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
+        # Older AppImage catalog workers consume the appdata.xml filename.
+        install(FILES packaging/net.cyberbrand.whodis.metainfo.xml
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo"
+            RENAME net.cyberbrand.whodis.appdata.xml)
         install(FILES resources/whodis-512.png
             DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps"
             RENAME net.cyberbrand.whodis.png)

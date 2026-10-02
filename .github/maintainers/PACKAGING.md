@@ -32,3 +32,30 @@ Prepare those submissions from the signed or checksum-verified v2 assets, but
 do not claim availability until the upstream merge is live. AppStream metadata
 for the Linux GUI is maintained at
 `desktop/packaging/net.cyberbrand.whodis.metainfo.xml` and is validated in CI.
+
+## AppImage catalog and external updates
+
+Linux packages are built on Ubuntu 22.04 and named
+`whodis-gui-<version>-x86_64.AppImage` / `whodis-gui-<version>-aarch64.AppImage`.
+Each has a checksummed `.AppImage.zsync` sidecar and embedded
+`gh-releases-zsync|Alex9001|whodis|latest|whodis-gui-*-<architecture>.AppImage.zsync`
+update information. Prereleases use their exact tag instead of `latest`, so they
+do not silently switch to the stable channel. Updates are performed by external
+AppImageUpdate-compatible tools, not by the Whodis application. Users of
+AppImages older than 2.5.4 must download 2.5.4 or later once manually, since those
+older images do not contain an update channel.
+
+CMake installs the source metadata as `net.cyberbrand.whodis.appdata.xml` for
+older AppImage catalog workers. Before a release, update its release version and
+date alongside `.github/RELEASE_NOTES.md`. The release workflow validates both
+metadata files, update information and zsync reconstruction, packaged ELF symbol
+ceilings (GLIBC 2.35, GLIBCXX 3.4.30, CXXABI 1.3.13), dependency resolution,
+relocatable runtime paths, Ubuntu 22.04/24.04 visible startup with screenshots,
+and the pinned upstream AppImage catalog worker against
+the exact candidate bytes. These gates also run during non-publishing preflight.
+
+The catalog gate only tests a local candidate; it does not submit Whodis to
+AppImageHub. Any later listing submission must use the published stable release
+and must not be claimed live until accepted upstream. Do not publish duplicate
+AppImage aliases: catalog discovery and update patterns should select one asset
+per architecture.

@@ -21,9 +21,7 @@
     </p>
   </description>
   <launchable type="desktop-id">net.cyberbrand.whodis.desktop</launchable>
-  <developer id="net.cyberbrand">
-    <name>Aleksandr Oreshkin</name>
-  </developer>
+  <developer_name>Aleksandr Oreshkin</developer_name>
   <url type="homepage">https://cyberbrand.net/whodis/</url>
   <url type="bugtracker">https://github.com/Alex9001/whodis/issues</url>
   <url type="vcs-browser">https://github.com/Alex9001/whodis</url>
@@ -37,5 +35,14 @@
       <caption>Public DNS inventory</caption>
     </screenshot>
   </screenshots>
+  <releases>
+    <release version="2.5.4" date="2026-10-02"/>
+  </releases>
+  <provides>
+    <binary>whodis-gui</binary>
+  </provides>
+  <categories>
+    <category>Network</category>
+  </categories>
   <content_rating type="oars-1.1"/>
 </component>

@@ -212,7 +212,12 @@ The README does not claim a channel is live until its upstream page exists.
 Download `whodis-gui` from the
 [latest GitHub Release](https://github.com/Alex9001/whodis/releases/latest):
 
-- **Linux:** run the amd64 or arm64 AppImage.
+- **Linux:** run the `whodis-gui-<version>-x86_64.AppImage` (amd64) or
+  `whodis-gui-<version>-aarch64.AppImage` (arm64) package. The matching `.zsync`
+  file is published beside each release asset for external AppImageUpdate-compatible
+  tools, which fetch it automatically. Stable packages track the latest stable
+  release. AppImages from before 2.5.4 need a one-time manual download to enable
+  this update support.
 - **Windows:** use the per-user setup executable or portable ZIP.
 - **macOS:** open the universal DMG and drag Whodis into Applications.
 
@@ -618,7 +623,7 @@ The Go module uses the standard `v2/` major-version directory. Its public
 module path remains `github.com/Alex9001/whodis/v2`.
 
 The desktop build additionally needs CMake, Ninja, Qt 6 Core/Gui/Widgets/Test,
-and a C++17 compiler; source builds require Go 1.25 or newer. With Clang and
+and a C++17 compiler; source builds require Go 1.26 or newer. With Clang and
 Clang-Tidy installed, `scripts/check-complexity.sh all` also enforces the Go
 and C++ complexity regression guardrails used by CI. See
 [desktop/README.md](desktop/README.md). Tests use
