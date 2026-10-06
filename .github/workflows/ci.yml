@@ -1,8 +1,8 @@
 name: CI
 
+# Automatic runs are disabled; run manually only after explicit approval.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -1,8 +1,7 @@
 name: Maintenance
 
+# Automatic runs are disabled; run manually only after explicit approval.
 on:
-  schedule:
-    - cron: "17 7 1 * *"
   workflow_dispatch:
     inputs:
       live_compatibility:

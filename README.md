@@ -40,7 +40,7 @@
   </tr>
   <tr>
     <td><img src="docs/whodis-cli.png" alt="Whodis terminal dashboard showing an automatic RDAP lookup for cyberbrand.net"></td>
-    <td><img src="docs/whodis-gui-registration.png" alt="Whodis native desktop registration view for cyberbrand.net"></td>
+    <td><img src="docs/whodis-gui-registration.png" alt="Whodis current native desktop registration view with synthetic example.com data"></td>
   </tr>
   <tr>
     <td>Fast in shells, scripts, SSH sessions, and servers.</td>
@@ -142,14 +142,27 @@ at the top of this page; the examples below show deeper desktop workflows.
     <th width="50%">Domain diagnosis</th>
   </tr>
   <tr>
-    <td><img src="docs/whodis-gui-dns.png" alt="Whodis DNS query showing A and AAAA records for cyberbrand.net"></td>
-    <td><img src="docs/whodis-gui-diagnose.png" alt="Whodis diagnosis showing DNS, web, TLS, mail, and policy findings for cyberbrand.net"></td>
+    <td><img src="docs/whodis-gui-dns.png" alt="Whodis DNS view showing synthetic example.com records"></td>
+    <td><img src="docs/whodis-gui-diagnose.png" alt="Whodis diagnosis showing synthetic DNS, web, TLS, mail, and policy findings"></td>
   </tr>
 </table>
 
 <p align="center"><strong>Concurrent batch lookup</strong> · Check and export many domains in one run</p>
 
 ![Whodis batch lookup showing four completed domain checks](docs/whodis-gui-batch.png)
+
+The native screenshots were refreshed from commit
+`595274828e83935c87e0bb24dd939055e36cad1d` on 2026-10-06. They are actual Qt
+application captures at 2× display scale with synthetic example-domain data,
+not live lookup results. [Capture details](docs/screenshots.md).
+
+<table>
+  <tr><th width="50%">Technology evidence</th><th width="50%">Research pivots</th></tr>
+  <tr>
+    <td><img src="docs/whodis-gui-investigate.png" alt="Current Whodis Stack view with synthetic technology evidence"></td>
+    <td><img src="docs/whodis-gui-research.png" alt="Current Whodis Research view with example-domain links"></td>
+  </tr>
+</table>
 
 The GUI and every terminal renderer consume the same normalized report. Long
 registry notices are deduplicated and summarized; `--details` expands them.
