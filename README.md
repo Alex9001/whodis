@@ -54,6 +54,12 @@ desktop application presents the same normalized investigation engine through
 focused native views. Start with the original question; go deeper when you
 need the whole story.
 
+## Video demo
+
+[Watch the 14-second demo](docs/media/whodis-demo-14s.mp4): `whodis example.com`, the native Investigation and Stack views, and terminal output.
+
+[Video provenance and music license](docs/media/whodis-demo-14s.md).
+
 ## One target. The answer you need
 
 Whodis accepts a domain, IP address, network, or ASN. Registration identity is
