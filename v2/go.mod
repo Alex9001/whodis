@@ -7,7 +7,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/miekg/dns v1.1.73
 	github.com/projectdiscovery/wappalyzergo v0.3.3
-	github.com/quic-go/quic-go v0.63.0
+	github.com/quic-go/quic-go v0.64.1
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
