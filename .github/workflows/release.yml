@@ -61,7 +61,7 @@ jobs:
           printf '%s  %s\n' "$QT_PLUGIN_SHA256" linuxdeploy-plugin-qt | sha256sum --check --strict
           chmod +x linuxdeploy linuxdeploy-plugin-qt
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Build AppImage
@@ -141,7 +141,7 @@ jobs:
 
           cleanup_weston
           trap - EXIT
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: whodis-gui-linux-${{ matrix.arch }}
           path: release-assets/*
@@ -177,7 +177,7 @@ jobs:
           arch: ${{ matrix.qt_arch }}
           cache: true
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Build and deploy
@@ -220,7 +220,7 @@ jobs:
             "/DVERSION=$version" `
             "/DOUTPUT_FILE=$PWD\release-assets\whodis-gui_windows_${{ matrix.arch }}_setup.exe" `
             desktop/packaging/windows/installer.nsi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: whodis-gui-windows-${{ matrix.arch }}
           path: release-assets/*
@@ -241,7 +241,7 @@ jobs:
           arch: clang_64
           cache: true
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Build universal app and DMG
@@ -298,7 +298,7 @@ jobs:
           test -d "$app/Contents/Frameworks/QtCore.framework"
           hdiutil create -volname Whodis -srcfolder "$app" -ov -format UDZO \
             "release-assets/whodis-gui_macos_universal.dmg"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: whodis-gui-macos-universal
           path: release-assets/*
@@ -314,7 +314,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: whodis-gui-linux-amd64
           path: candidates
@@ -336,7 +336,7 @@ jobs:
           xvfb-run -a python3 scripts/check-linux-appimage.py "$image" \
             --evidence build/linux-evidence
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: appimage-runtime-evidence-${{ matrix.os }}
           path: build/linux-evidence/
@@ -369,7 +369,7 @@ jobs:
       STRICT: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: whodis-gui-linux-amd64
           path: candidates
@@ -405,7 +405,7 @@ jobs:
           timeout --kill-after=30 600 bash -e code/worker.sh "$PWD/data/Whodis" 2>&1 | tee ../catalog.log
           cmp BeingTested.AppImage "../candidates/whodis-gui-${WHODIS_BUILD_VERSION#v}-x86_64.AppImage"
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: appimage-catalog-evidence
           path: |
@@ -439,13 +439,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: v2/go.sum
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: whodis-gui-*
           path: .release-assets/gui
           merge-multiple: true
       - name: Install pinned Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: ${{ env.SYFT_VERSION }}
       - name: Vet, test, and analyze release source
@@ -525,7 +525,7 @@ jobs:
           fi
       - name: Upload private preflight bundle
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: whodis-${{ inputs.version }}-release-preflight
           path: |
